@@ -4,8 +4,7 @@
 
 ## 開発進捗
 
-最新: GUIDE_01 に従いプロジェクト立ち上げ中
-※ 本欄は**最新ステップ 1 行のみ上書き更新**．詳細な進捗履歴（動機・設計判断・失敗パターン）は [docs/PROGRESS.md](docs/PROGRESS.md) に追記する．運用ルールは `.claude/rules/progress-log.md` を参照（該当ファイル編集時に自動ロードされる）．
+進捗・タスクは GitHub Issues と git 履歴で追う（GUIDE_03）．現在のタスクは `gh issue list` で確認する．`CLAUDE.md` と `docs/PROGRESS.md` には進捗を書かない．
 
 ## 必須ルール（コード実装時）
 
@@ -20,6 +19,7 @@
     - `/auto-refactor`（リファクタ／ドキュメント整理ループ）→ `refactor/` 専用ブランチ
     - `/auto-audit`（バグ／脆弱性の巡回監査ループ）→ `fix/` 専用ブランチ
   - **例外（`main` へのマージ）**: `/deps-update` は，Dependabot が作成した依存更新 PR に限り，ゲート（メジャー更新でない・競合なし・CI 緑またはローカル検証緑）を満たすものを `gh pr merge` で `main` に取り込む（ユーザーが明示的に起動した時のみ．メジャー更新・CI 赤・PR が付かない alert は報告して人間が判断する）
+- セッション開始時に `[sync-check]` の警告（ローカルが origin と同期していない等）が表示されたら，必ず認識し，作業前にユーザーへ伝えて `git pull` 等の対処を促す
 - **ops-runner によるマージは承認済みの定常操作**: `/commit merge` および `/deps-update` では，ユーザーが明示的に起動したことを受けて，ops-runner サブエージェント（軽量モデル）が手順書に従い `git push` → `gh pr create` → `gh pr merge --merge --delete-branch` で自リポジトリの PR を `main` にマージする．force push・`--admin`・`main` への直接 push は行わない（権限設定は `docs/01_GUIDE/GUIDE_01` の「Claude Code の権限設定」）
 
 ### テンプレート同期
@@ -32,6 +32,14 @@
 - やるべきことを GitHub Issues で管理してよい（solo / team 共通）．`/task-create`（起票・事前計画）→ `/task-start <Issue番号>`（着手準備）→ `/task-handoff`（中断時の引継ぎメモ投稿）を使う
 - Issue は必須ではない．小さい変更や試験的作業は Issue 無しで進めてよい
 - solo モードでは進捗記録（`.claude/rules/progress-log.md`）は従来どおり運用し，Issue はタスクの管理・引継ぎの補助として使う
+
+### チーム開発（GUIDE_03 準拠）
+
+- 原則として並行作業をせず，1 人ずつ直列で開発する．タスクは小さく保つ
+- タスクは GitHub Issues で管理する（`/task-create` → `/task-start <Issue番号>` → 中断時は `/task-handoff`）．Claude へのタスク文脈は `gh issue view <Issue番号>` で Issue から取得する
+- GitHub Projects（ボード）は使わない．2 日間・同じ会場での開発のため，Issue の担当者と open / closed で管理する．Projects 用のスコープ（`gh auth refresh -s project`）は勧めない
+- 通常の機能 PR は条件付きセルフマージ（CI 緑・作者の動作確認済み・`/implement` 完走・Issue の完了条件を満たす・共有設定を含まない）
+- 共有設定（`CLAUDE.md` のルール部・`.claude/`）を変更する PR は機能 PR に混ぜず専用 PR とし，他メンバー 1 名の Approve を必須とする（セルフマージ不可）
 
 ### エージェントチーム（GUIDE_02 準拠）
 
@@ -66,6 +74,7 @@
 
 - プロジェクト立ち上げフロー: docs/01_GUIDE/GUIDE_01_プロジェクト立ち上げフロー.md
 - エージェント運用ルール: docs/01_GUIDE/GUIDE_02_エージェント運用ルール.md
+- チーム開発ルール: docs/01_GUIDE/GUIDE_03_チーム開発ルール.md
 - ※ Git 規約・ドキュメント書式・命名規則・進捗記録・テンプレート改変記録・フックのクロスプラットフォーム対応は `.claude/rules/`（git-conventions / markdown-style / docs-naming / progress-log / template-customization / hooks-cross-platform）に定義されている（git-conventions は常時，他は該当ファイル編集時に自動ロード）
 - ※ コーディング規約，テスト方針等はプロジェクト立ち上げ時に path-scoped rules（`.claude/rules/`）として作成する（GUIDE_01 参照）
 
