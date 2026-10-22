@@ -1,0 +1,33 @@
+# 個人・マシン固有の Claude 設定（共有 settings.json を汚さない．GUIDE_03）
+.claude/settings.local.json
+
+# /implement が /commit に渡すコンテキストファイル
+.claude/commit-context.md
+
+# /auto-refactor のローカル運用状態（スキップ台帳・要確認リスト）
+.claude/auto-refactor-skip.md
+.claude/auto-refactor-doc-review.md
+.claude/auto-refactor-test-review.md
+
+# /auto-audit のローカル運用状態（報告台帳・修正済み台帳・スキップ台帳）
+.claude/auto-audit-report.md
+.claude/auto-audit-fixed.md
+.claude/auto-audit-skip.md
+
+# /deps-update のローカル運用状態（マージ済み台帳・報告台帳・スキップ台帳）
+.claude/deps-update-merged.md
+.claude/deps-update-report.md
+.claude/deps-update-skip.md
+
+# .claude/hooks/ の Python フックとそのテスト（tests/test_hooks.py）が生成するバイトコードキャッシュ
+__pycache__/
+
+# tests/test_hooks.py が一時的に作る作業ディレクトリ（テストが強制終了された場合の取り残し対策）
+.claude/hooks/tests/_restrict_sandbox_*/
+
+# -- プロジェクト立ち上げ時に有効化する（.claude/rules/git-conventions.md 参照） --
+# .env
+# .env.*
+# node_modules/
+# build/
+# dist/

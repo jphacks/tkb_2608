@@ -1,0 +1,152 @@
+# チーム開発ルール (Team Development Rules)
+
+チーム全員が Claude Code を用い，人間が直接コードを書くことはほぼない前提で，並行開発を破綻させずに進めるための協調ルールを定義する．
+
+> 本ガイドは**チーム開発モード**（`/setup` で team を選択したプロジェクト）でのみ有効．個人開発モード（solo）のプロジェクトには本ファイルは配置されない．なお `/task-create`・`/task-start`・`/task-handoff` は共通層の skill であり，solo でも Issue ベースのタスク管理に使用できる（その場合，本ガイドのチーム協調ルールは適用されない）．
+
+Git の規約は `.claude/rules/git-conventions.md`（push・PR・マージ手順は `.claude/skills/commit/reference.md`），1 タスクの実装パイプラインは [GUIDE_02](GUIDE_02_エージェント運用ルール.md) に従う．本ガイドはそれらの上に立つ「複数人が同時に動くときの調整」を扱う．
+
+## 基本方針 (Basic Policy)
+
+- 全員が Claude Code で開発し，実装はエージェントが行う（チーム規模はプロジェクトによる）．
+- 原則として並行作業を行わず，1 人ずつ直列で開発する．急ぎではないため，スループットより単純さと `main` の整合性を優先する．これは禁止ではなく既定のスタンスであり，状況に応じた判断は妨げない（詳細は「作業の直列化」）．
+- 人間の本質的な役割は「AI にできない判断と確認」（GUIDE_02 と同じ）．加えて「共有設定の番人」を担う．
+- 進捗・タスクは GitHub Issues と git 履歴で追う．`CLAUDE.md` には進捗を書かない（この点は solo 既定の進捗記録ルール `.claude/rules/progress-log.md` を**上書き**する）．
+- `main` は常に動作可能な状態を保つ（`.claude/rules/git-conventions.md`）．壊れたら他の作業より優先して直す．
+
+## タスク管理 (Task Management)
+
+進捗管理の補助として GitHub Issues と Projects を用いる．`gh` コマンドでの具体的な操作手順（スコープ・Projects 操作・トラブル対応）は `.claude/skills/task-start/reference.md` を参照．
+
+### Issue (Issue)
+
+Issue は**進捗管理の補助**として使う．追跡したい作業に対して立て，PR と紐付けてボードで可視化する．
+
+- 作業 1 単位 = 1 Issue を推奨する．既に Issue がある作業は，新たに作らずそれに従って進める（重複 Issue を作らない）．
+- **Issue は着手・PR 作成・マージのいずれの段階でも必須としない**．小さい変更（typo・1 行修正等）や試験的・探索的な作業は Issue 無しで進めてよい．
+- ただし**追跡する価値のある作業には Issue を立てるのが望ましい**（後追いと進捗可視化のため）．特に複数回の `/implement` に跨る作業や，他メンバーに見えていてほしい作業は Issue を作る．
+- PR と Issue を紐付ける場合は本文に `Closes #<Issue番号>` を記載する．マージ時に Issue が自動クローズされ，ボードのカードも `Done` へ移る．
+- Issue 本文には少なくとも「やること」を書く．「完了条件（受け入れ基準）」は非自明な作業のみで構わない．
+- 担当者は明確にしておくのが望ましい（重複着手を避けるため）．
+- Issue は最初に書き切らなくてよい．作業途中の進捗・確定事項は `/task-handoff` の進捗メモとして Issue に集約し，完了は PR の `Closes #<番号>` によるマージ時の自動クローズで反映する（`/implement` のフローでは Issue を更新しない）．
+
+### Project ボード (Project Board)
+
+> ⚠ **既定では未使用**．タスク管理は Issue ベース（`gh issue list`）で運用する．Project ボードはチームが拡大したり Issue が常時 10 件超になった等の局面で再導入する想定．以下は将来導入時の参考．
+
+- 列: `Todo` / `In Progress` / `In Review` / `Done`．
+- Issue をカードとして配置し，状態を移動して可視化する．
+- マージ連動の自動化を設定し，カード移動の手作業を最小化する（設定は管理者作業．「管理者の初期設定」参照）．
+
+### タスクの流れ (Task Flow)
+
+Issue を立てる場合の標準フロー（小さい変更や探索的作業はこの限りでない）．
+
+```text
+1. Issue 起票（完了条件を明記）
+2. 自分にアサイン（ボード未使用のためアサインのみ．ボード運用復活時は In Progress へ移動）
+3. main から作業ブランチ作成（git-conventions ルール）
+4. /implement に Issue の内容を渡して実装（GUIDE_02）
+5. PR 作成，本文に "Closes #<番号>"
+6. セルフマージ条件を確認 → マージ
+7. マージで Issue 自動クローズ → カード自動 Done
+```
+
+- 上記 1 は `/task-create`（事前定義用），2 と 3 は `/task-start <Issue番号>`（既存 Issue から着手）で半自動化できる．Issue 無しで進める場合はどちらも不要．
+- Claude へのタスク文脈は `CLAUDE.md` ではなく Issue から渡す．`gh issue view <Issue番号>` で取得する．
+
+## ブランチと PR (Branch & PR)
+
+`.claude/rules/git-conventions.md` に従う．チーム運用上の追加事項のみ以下に定める．
+
+- ブランチ命名は git-conventions ルールの基本形式（`[プレフィックス][概要]`）に従う．ブランチ名に Issue 番号は含めなくてよい．
+- branch↔Issue の紐付けは PR 本文の `Closes #<番号>` で行う．マージ時に Issue が自動クローズされる．既存 Issue からブランチを作る場合は `gh issue develop` でネイティブにリンクできる（`.claude/skills/task-start/reference.md`）．
+- PR の `--title` はコミットメッセージと同じ書式（`[タグ] 内容`，`.claude/rules/git-conventions.md`）．
+
+## レビューとマージ (Review & Merge)
+
+誰も手書きしない体制では，マージ条件が唯一の品質ゲートとなる．本プロジェクトは**条件付きセルフマージ**を採用する．他メンバーの Approve 待ちは原則作らない代わりに，作者自身が満たすべき条件を実質的なゲートとして定める．
+
+### 通常の機能 PR (Feature PR)
+
+次を全て満たせば，作者がセルフマージしてよい．
+
+- CI で全テストが緑である．
+- 作者自身が Phase 1 の動作確認（実機・ブラウザ等，AI にできない確認）を済ませている（GUIDE_02）．
+- `/implement` のパイプラインをスキップせず完走している．
+- 対応 Issue がある場合は完了条件を満たしている（Issue 無しの PR は不要）．
+- 共有設定（`CLAUDE.md` のルール部・`.claude/`）の変更を含まない．
+
+※ レビューは任意．他メンバーはコメントしてよいが，マージをブロックしない．
+
+### 共有設定を変更する PR (Shared Config PR)
+
+`CLAUDE.md` のルール部や `.claude/` を変更する PR は，全員の Claude の挙動を変えるため例外とする．
+
+- 機能 PR に混ぜず，専用 PR とする（「共有設定の扱い」参照）．
+- 他メンバー 1 名の Approve を必須とする（セルフマージ不可）．
+
+### Dependabot の依存更新 PR (Dependabot PR)
+
+Dependabot が作成する依存更新 PR（security updates / version updates）は，人間が書いた PR ではないため上記の「`/implement` 完走」「Phase 1 動作確認」を満たせない．代わりに `/deps-update` のゲートを品質ゲートとする（`.claude/skills/deps-update/SKILL.md`）．
+
+- **`/deps-update` がマージしてよいもの**: メジャー更新でなく，競合が無く，CI 緑（CI 未構築ならローカル検証緑）の PR．`gh pr merge --merge` で取り込む．これは「AI が `main` へマージする」唯一の例外である（GUIDE_02「コミットルール」）．
+- **人間が判断するもの**: メジャー更新（`0.x` のマイナー更新を含む），CI 赤，修正版の無い alert，Dependabot が PR を作れなかった alert．`/deps-update` が影響分析と推奨（そのままマージ／`/implement` で追従／`@dependabot ignore` で見送り）を PR コメントと完了報告に出すので，それを見て決める．
+- 依存更新 PR は共有設定（`CLAUDE.md`・`.claude/`）を変更しないため，他メンバーの Approve は不要．`main` にブランチ保護（必須レビュー）を設定している場合は `/deps-update` はマージできないので，マージ可と判定した一覧を提示するにとどまり，人間がマージする．
+- `/deps-update` を実行するのは原則 1 名（管理者またはその週の担当）とし，マージ後はチームに周知して全員が `git pull` する（直列運用のため，他メンバーの作業ブランチは次の rebase で追従する）．
+
+### CI 構築までの暫定ゲート (Interim Gate)
+
+CI が未構築の間は「CI 緑」を以下で代替する．CI 構築後はこの節を削除する．
+
+- `/implement` を完走している．
+- ローカルで全テストが緑である．
+- 作者自身が Phase 1 の動作確認を済ませている．
+
+## 共有設定の扱い (Shared Configuration)
+
+`CLAUDE.md` と `.claude/`（agents・skills・rules・hooks・settings.json・template-overrides.md）は全員の Claude の挙動を決める共有インフラである．
+
+- **git 追跡を継続する**．untrack や `.gitignore` 化はしない（履歴の保全と挙動の統一のため）．
+- **進捗は `CLAUDE.md` に書かない**．進捗は Issues と git 履歴で追う（「タスク管理」参照）．
+- **変更は「チームルール変更」カテゴリ**として扱う．
+  - 機能 PR に混ぜない．専用 PR とする（ブランチは `chore/` または `docs/`）．
+  - 他メンバー 1 名の Approve を必須とする．
+  - マージ後はチームに周知し，全員が `git pull` して Claude セッションを再起動する．
+    - ※ Claude はセッション開始時に `CLAUDE.md` を読むため，古いまま動くと文脈がずれる．
+- **例外: ドキュメント一覧への追記**は，そのドキュメントを追加する PR と同じ PR で行ってよい．衝突しても両方の行を残せば解決できる．
+- **個人・マシン固有の設定**は `.claude/settings.local.json` に置く．これは `.gitignore` 対象とし，共有の `settings.json` を個人都合で汚さない．
+
+## 作業の直列化 (Serialized Work)
+
+- 原則として，同時に進行中のコード作業は 1 件とする（進行中の Issue は原則 1 件．Project ボード運用復活時は `In Progress` 列も同様）．
+- 次の作業に着手してよいのは，前の作業の PR が `main` にマージされた後とする（マージ条件は「レビューとマージ」参照）．
+- タスクは小さく保つ．直列運用では，1 単位が小さいほど次の人の待ち時間が短くなる．
+- 直列運用により並行コンフリクトと共有設定のドリフトは原理的にほぼ発生しない．例外的に並行が生じてコンフリクトした場合は `.claude/skills/commit/reference.md` の rebase 手順をフォールバックとして用いる．
+- `main` を壊した場合は他作業より優先して復旧する．自分で対処できない場合は直ちにチームへ報告する（`.claude/skills/commit/reference.md`「間違えて main にコミットしてしまった場合」）．
+
+## メンバーのオンボーディング (Onboarding)
+
+新メンバー参加時の手順．
+
+1. リポジトリへのコラボレーター招待を承認する（GitHub の通知，または `https://github.com/<owner>/<repo>/invitations`）．
+2. リポジトリを clone する．
+3. `ENV_02_環境構築手順.md`（GUIDE_01 参照，立ち上げ時に作成）に従い開発環境を構築する．
+4. `gh auth login` で GitHub CLI を認証する．Projects も操作する場合は `project` スコープを含める（`.claude/skills/task-start/reference.md`「必要なスコープ」）．
+5. 必要なら `.claude/settings.local.json` を用意する（個人設定．git 追跡されない）．
+6. 最初に `CLAUDE.md` と `docs/01_GUIDE/` を読む（特に本ガイドと GUIDE_02）．Git 規約は `.claude/rules/git-conventions.md` にある．
+7. `.gitignore` が整備されていることを確認する（`.claude/rules/git-conventions.md`）．
+
+## 管理者の初期設定 (Admin Setup)
+
+以下は外部サービス操作を含み，原則として AI には実施できない（`gh` で操作できる設定のみ例外として注記する）．ルール確定後に管理者（人間）が一度だけ行う．
+
+- GitHub リポジトリの作成，メンバー招待．
+  - リポジトリ作成後，**GitHub リポジトリのセキュリティ設定**（Dependabot alerts / security updates の有効化）は AI が `gh api` で行う（`/setup` の Phase 3・7 で実行．コマンド・検証・トラブル対応は `.claude/skills/setup/reference.md`「GitHub リポジトリのセキュリティ設定」，背景は GUIDE_01「環境構築」）．`/setup` 完了後にリポジトリを作成した場合は，同 `reference.md` または `ENV_03_管理者用環境構築手順.md` に転記したコマンドを実行する（管理者が直接実行してもよい）．
+- （既定では未使用）GitHub Project の作成，列（`Todo` / `In Progress` / `In Review` / `Done`）の定義．
+- （既定では未使用）マージ連動の自動化設定（PR マージ時に Issue クローズ・カードを `Done` へ移動）．
+- Issue テンプレートの用意（「やること」「完了条件」欄）．
+- 共有設定変更 PR に他メンバー Approve を求める運用の周知（必要なら `main` のブランチ保護設定）．
+- CI の構築（全テストを実行し，緑をマージ条件にできる状態にする）．
+
+※ 完了するまでは本ガイドの「CI 構築までの暫定ゲート」を適用する．
