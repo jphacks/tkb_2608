@@ -25,9 +25,12 @@ __pycache__/
 # tests/test_hooks.py が一時的に作る作業ディレクトリ（テストが強制終了された場合の取り残し対策）
 .claude/hooks/tests/_restrict_sandbox_*/
 
+# 環境変数ファイル（API キー等の秘密を含むため必ず除外する．共有用の雛形 .env.example のみ追跡する）
+.env
+.env.*
+!.env.example
+
 # -- プロジェクト立ち上げ時に有効化する（.claude/rules/git-conventions.md 参照） --
-# .env
-# .env.*
 # node_modules/
 # build/
 # dist/

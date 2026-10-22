@@ -39,7 +39,8 @@
 - タスクは GitHub Issues で管理する（`/task-create` → `/task-start <Issue番号>` → 中断時は `/task-handoff`）．Claude へのタスク文脈は `gh issue view <Issue番号>` で Issue から取得する
 - GitHub Projects（ボード）は使わない．2 日間・同じ会場での開発のため，Issue の担当者と open / closed で管理する．Projects 用のスコープ（`gh auth refresh -s project`）は勧めない
 - 通常の機能 PR は条件付きセルフマージ（CI 緑・作者の動作確認済み・`/implement` 完走・Issue の完了条件を満たす・共有設定を含まない）
-- 共有設定（`CLAUDE.md` のルール部・`.claude/`）を変更する PR は機能 PR に混ぜず専用 PR とし，他メンバー 1 名の Approve を必須とする（セルフマージ不可）
+- 共有設定（`CLAUDE.md` のルール部・`.claude/`）を変更する PR は機能 PR に混ぜず専用 PR とし，他メンバー 1 名の Approve を必須とする（セルフマージ不可．`.github/CODEOWNERS` と `main` の Ruleset で強制）
+- `main` は Ruleset で保護している（直接 push・force push・削除の禁止．GUIDE_03「main ブランチの保護」）．admin の例外（bypass）は人間が GitHub の画面で使うものであり，Claude は `gh pr merge --admin` 等で保護を迂回しない．マージが拒否されたら停止して報告する
 
 ### エージェントチーム（GUIDE_02 準拠）
 
