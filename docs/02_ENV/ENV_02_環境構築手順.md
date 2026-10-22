@@ -109,11 +109,26 @@ claude                              # 起動後の案内に従ってログイン
 認証情報は名前付きボリューム（`tkb2608-claude-config`，`tkb2608-gh-config`）に保存されるため，Rebuild してもログインし直す必要は無い．
 Git のユーザー名・メールアドレスは WSL 側の `~/.gitconfig` が Dev Containers によりコンテナへ自動でコピーされる．
 
+### 動作確認 (Verification)
+
+環境構築が終わったら，コンテナ内のターミナルで確認スクリプトを実行する．`.devcontainer/` を変更して Rebuild した後も同様に実行する．
+
+```bash
+bash .devcontainer/check.sh   # 最後に「✓ すべて OK」と出れば成功．✗ の行には対処方法が表示される
+```
+
+スクリプトでは確認できない以下の項目は目視で確認する．
+
+- [ ] ウィンドウ左下に `Dev Container: tkb_2608` と表示されている
+- [ ] VS Code の Claude Code 拡張（サイドバー）を開くと，ログイン済みの状態で使える
+- [ ] 一度 `Dev Containers: Rebuild Container` を実行した後も，ログインし直さずに `bash .devcontainer/check.sh` が「✓ すべて OK」になる
+- [ ] Claude Code に「README を読んで」等と頼み，Read・Bash がフックにブロックされずに動く
+
 ### コンテナの構成 (Container Configuration)
 
 | 項目 | 内容 |
 | --- | --- |
-| 設定ファイル | `.devcontainer/devcontainer.json`，`.devcontainer/post-create.sh` |
+| 設定ファイル | `.devcontainer/devcontainer.json`，`.devcontainer/post-create.sh`，`.devcontainer/check.sh`（動作確認） |
 | ベースイメージ | `mcr.microsoft.com/devcontainers/base:ubuntu-24.04`（ユーザー `vscode`，タイムゾーン `Asia/Tokyo`） |
 | 導入ツール | GitHub CLI・Python 3（Dev Container Feature．Python は Claude Code のフック用で，Ubuntu 標準の `python3` のみ），Claude Code（post-create でネイティブインストーラから導入．ボリュームに本体があればダウンロードしない） |
 | VS Code 拡張 | Claude Code（`anthropic.claude-code`） |
