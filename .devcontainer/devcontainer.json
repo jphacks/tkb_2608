@@ -1,0 +1,38 @@
+{
+  "name": "tkb_2608",
+  // アプリの技術スタックが決まるまでは Claude Code と GitHub CLI（＋フック用の Python）だけを入れた最小構成とする．
+  // 配信用サーバー等が必要になったら compose.yaml を作り dockerComposeFile 参照に切り替える
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+  "remoteUser": "vscode",
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    // .claude/settings.json のフックは Python 3 で動き，見つからないと Read・Bash 等をすべてブロックする
+    // フック用なので Ubuntu 標準の python3 だけを入れる（開発ツール一式は入れない）
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "os-provided",
+      "installTools": false
+    }
+  },
+  // CLAUDE_CONFIG_DIR を指定すると ~/.claude.json もこのディレクトリ内に置かれ，
+  // 認証・設定がすべて下の名前付きボリュームに収まる
+  // TZ はコミット時刻・ログ・進捗記録の日時を日本時間に揃えるため
+  "containerEnv": {
+    "CLAUDE_CONFIG_DIR": "/home/vscode/.claude",
+    "TZ": "Asia/Tokyo"
+  },
+  // 認証情報はコンテナ内に置くと Rebuild で消えるため，名前付きボリュームに逃がす．
+  // Claude Code 本体（~/.local/share/claude）も置き，Rebuild のたびに再ダウンロードしないようにする
+  "mounts": [
+    "source=tkb2608-claude-config,target=/home/vscode/.claude,type=volume",
+    "source=tkb2608-claude-bin,target=/home/vscode/.local/share/claude,type=volume",
+    "source=tkb2608-gh-config,target=/home/vscode/.config/gh,type=volume"
+  ],
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "anthropic.claude-code"
+      ]
+    }
+  }
+}

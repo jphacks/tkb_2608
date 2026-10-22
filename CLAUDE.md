@@ -71,6 +71,8 @@
 
 ### 02_ENV（環境）
 
+- 環境構築手順（WSL + Docker + Dev Containers）: docs/02_ENV/ENV_02_環境構築手順.md
+
 <!-- プロジェクト立ち上げ時に追加する -->
 
 ### 03_PLAN（計画）
