@@ -1,0 +1,226 @@
+# deps-update リファレンス (deps-update Reference)
+
+`/deps-update`（`SKILL.md`）から参照される，`gh` コマンド・GraphQL クエリ・分類規則・ローカル検証手順・台帳と PR コメントの書式．`{owner}/{repo}` は `gh` がカレントリポジトリから自動補完する．
+
+## 不変条件 (Invariants)
+
+`/deps-update` に関わる全エージェント（司令塔・ops-runner・deps-analyst）が厳守する．
+
+1. **触るのは Dependabot が作った PR だけ**: author が `app/dependabot` の open PR のみを対象にする．人間や他のボットの PR には一切操作しない
+2. **`main` への取り込みは `gh pr merge --merge` のみ**: ローカルで `main` に直接コミット・push しない．依存ファイル（マニフェスト・ロックファイル）を自分で書き換えて別 PR を作ることもしない（競合やビルド失敗の解消は `@dependabot rebase` / `@dependabot recreate` コメントで Dependabot にやり直させる）
+3. **ゲートを満たした PR だけをマージする**（SKILL.md「判定表」）．**メジャー更新は自動マージしない**．検証（CI 緑またはローカル検証）無しにマージしない
+4. **Dependabot PR を close しない**: 不要な PR の整理（supersede・`@dependabot ignore`）は Dependabot と人間に任せる．`@dependabot ignore ...` のコメントも自分では投稿しない（無視は人間の決定）
+5. **作業ツリーを汚さない**: 開始時に作業ツリーがクリーンであることを確認し，ローカル検証で作ったブランチ・マージ状態は必ず破棄し，終了時に開始時のブランチへ戻す
+6. **二重処理しない**: 台帳を読み，既に報告済み・スキップ指定の項目は再報告しない．PR コメントも同じ PR に同じ趣旨で 2 度投稿しない
+7. **ユーザーが起動した時だけ動く**: Claude が自発的に本スキルを呼んではならない（`/loop /deps-update` でのラップはユーザー起動とみなす）
+
+## 実行手順 A: セットアップと収集 (Execution A: Setup & Collect)
+
+司令塔（`/deps-update` のメインループ）から委譲された ops-runner が実行する．振り分けの判断はせず，結果を構造化して返す．
+
+1. **前提の確認**: 「前提の確認」のコマンド一式を実行する．作業ツリーが汚れている・`gh` 未認証・リモートが GitHub でない場合は停止して報告する（stash もしない）．開始時のブランチ名を控える
+2. **検証スイートの特定**: `docs/02_ENV/ENV_04_開発コマンド.md` があればそれを唯一の参照先とする．無ければ構成ファイル（`package.json`，`pubspec.yaml`，`Cargo.toml`，`go.mod`，`pyproject.toml` 等）から依存インストール・テスト・（あれば）ビルド／型チェック／リンタのコマンドを特定する．推測で試さず，特定できなければ「ローカル検証不可」として返す
+3. **台帳の読み込み**: `.claude/deps-update-merged.md`・`.claude/deps-update-report.md`・`.claude/deps-update-skip.md`（無ければ空扱い．`.gitignore` で追跡除外されていなければ追記する）
+4. **収集**: 「PR の収集」「alert の収集」に従い取得する
+5. **分類**: 各 PR を「更新規模の分類」に従い，規模（`patch` / `minor` / `major` / `unknown`）・依存スコープ（本番 / 開発）・種別（security / version）・`mergeable` / `mergeStateStatus`・CI 状況で整理する
+6. **返すもの**: 前提状態（Dependabot 設定・CI の有無・検証スイート・開始ブランチ）・分類付き PR 一覧・alert 一覧（紐づく PR・エラー含む）・台帳の既出項目・skip 該当項目
+
+## 実行手順 B: 検証とマージ (Execution B: Verify & Merge)
+
+司令塔がマージ候補と判定した PR を，指定された順に 1 件ずつ処理する ops-runner の手順．
+
+1. **rebase 依頼のみ指定の PR**: `@dependabot rebase` をコメントして次へ進む（マージしない）
+2. **状態の取り直し**: マージのたびに Dependabot が残りの PR を自動 rebase するため，各 PR の処理前に `mergeable`・CI 状況を取り直す．`CONFLICTING` / `BEHIND` になっていれば rebase 依頼に切り替える
+3. **検証**: CI があれば「CI の完了待ち」，無ければ「ローカル検証」を実行し，到達 Tier（A / B / C．「ローカル検証」の「検証結果の解釈」に従う）を判定する
+4. **到達 Tier が司令塔の指定したマージ条件を満たす場合**: 「マージ」の手順どおり `gh pr merge <番号> --merge --delete-branch` でマージし，`deps-update-merged.md` へ「台帳の書式」で追記し，ローカル `main` を pull する
+5. **満たさない場合（赤・Tier 不足・検証不能）**: マージせず，到達 Tier と失敗したコマンド／チェックの要約を添えて「分析行き」として結果に含める．マージ条件が渡されていない PR はマージせず確認事項として返す
+6. **後片付け**: 全件終了後，ローカル検証で作ったブランチ・マージ状態を破棄して開始時のブランチへ戻り，`git status --short` が空であることを確認して結果（マージ済み・rebase 依頼済み・分析行き）を返す
+
+## 前提の確認 (Prerequisites)
+
+```bash
+gh auth status
+gh repo view --json nameWithOwner -q .nameWithOwner
+git status --short                                          # 空であること
+git branch --show-current                                   # 開始時のブランチを控える
+gh api repos/{owner}/{repo}/vulnerability-alerts            # 204 なら Dependabot alerts 有効（404 なら無効）
+gh api repos/{owner}/{repo}/automated-security-fixes        # {"enabled":true,...} なら security updates 有効
+test -f .github/dependabot.yml && echo "dependabot.yml: あり" || echo "dependabot.yml: なし"
+ls .github/workflows/*.yml 2>/dev/null                      # CI の有無
+```
+
+## PR の収集 (Collect PRs)
+
+```bash
+gh pr list --author app/dependabot --state open --limit 100 \
+  --json number,title,body,url,headRefName,baseRefName,labels,mergeable,mergeStateStatus,statusCheckRollup,createdAt,isDraft
+```
+
+- 個別の詳細: `gh pr view <番号> --json number,title,body,mergeable,mergeStateStatus,statusCheckRollup,files,commits`
+- チェック状況: `gh pr checks <番号>`（CI が無いリポジトリでは何も返らない）
+- 変更ファイル: `gh pr diff <番号> --name-only`（マニフェストとロックファイルだけのはず．それ以外が含まれていたら報告に回す）
+- 本スキルが既にコメント済みか: `gh pr view <番号> --json comments -q '.comments[].body' | grep -c "<!-- deps-update -->"`
+
+## alert の収集 (Collect Alerts)
+
+GraphQL で「紐づく PR」と「PR を作れなかった理由」まで一度に取る（REST の `/deps-update/alerts` には PR との紐づけが無い）．
+
+```bash
+OWNER=$(gh repo view --json owner -q .owner.login)
+REPO=$(gh repo view --json name -q .name)
+gh api graphql -f owner="$OWNER" -f repo="$REPO" -f query='
+query($owner: String!, $repo: String!) {
+  repository(owner: $owner, name: $repo) {
+    vulnerabilityAlerts(states: OPEN, first: 100) {
+      nodes {
+        number
+        vulnerableManifestPath
+        vulnerableRequirements
+        securityVulnerability {
+          package { name ecosystem }
+          severity
+          vulnerableVersionRange
+          firstPatchedVersion { identifier }
+        }
+        securityAdvisory { ghsaId summary permalink }
+        dependabotUpdate {
+          pullRequest { number url }
+          error { title body errorType }
+        }
+      }
+    }
+  }
+}'
+```
+
+- `dependabotUpdate.pullRequest` があれば，その PR は **security update**
+- `dependabotUpdate.error` があれば，Dependabot は修正 PR を作れなかった（推移的依存・対応外マニフェスト・上限超過等）．`errorType` と `body` を報告に転記する
+- `firstPatchedVersion` が `null` なら修正版が無い
+- フォールバック（GraphQL が使えない場合）: `gh api "repos/{owner}/{repo}/dependabot/alerts?state=open&per_page=100"`．PR との紐づけは PR 本文の GHSA リンク（`securityAdvisory.ghsaId`）で照合する
+
+## 更新規模の分類 (Classifying the Bump)
+
+### 単独 PR (Single-package PR)
+
+タイトル `Bump <pkg> from <A> to <B>`（`Update <pkg> requirement from ... to ...` の形もある）から版を取り，semver で比較する．
+
+| 条件 | 規模 |
+| --- | --- |
+| メジャーが上がる（`1.x` → `2.x`） | `major` |
+| メジャーが `0` でマイナーが上がる（`0.3.x` → `0.4.x`） | `major` 相当（破壊的変更を含みうる） |
+| メジャー同じでマイナーが上がる | `minor` |
+| パッチだけ上がる | `patch` |
+| semver として解釈できない（日付版・ハッシュ・範囲指定等） | `unknown` |
+
+- プレリリース（`-beta` 等）への更新は `unknown` として扱う
+- `github-actions` の `v3` → `v4` のようなメジャータグ更新は `major`
+
+### グループ PR (Grouped PR)
+
+タイトル `Bump the <group> group (across N directories )?with N updates` の PR は，本文の `Updates \`<pkg>\` from <A> to <B>` 行（または本文の表）を全て取り，**最大の規模**で判定する．テンプレートの `dependabot.yml` では `minor-and-patch` グループがマイナー／パッチだけを含むので定義上 `minor` になるが，本文から実際に確認する．
+
+### 依存スコープ (Dependency Scope)
+
+マニフェストのセクションで判定する（`package.json` の `devDependencies`，`pubspec.yaml` の `dev_dependencies`，`pyproject.toml` の dev グループ／`[project.optional-dependencies]`，`Cargo.toml` の `[dev-dependencies]` 等）．`github-actions`・`docker` は CI／実行環境への影響として本番扱いにする．
+
+## CI の完了待ち (Waiting for CI)
+
+```bash
+gh pr checks <番号> --watch --interval 30        # 全チェック完了まで待つ（Bash ツールの timeout を 10 分程度にする）
+```
+
+- 待ち切れなければ，CI が無い場合と同じく「ローカル検証」に切り替えるか，今回は見送って「CI 待ち」として報告する
+- マージ直後は Dependabot が残りの PR を自動 rebase して CI が再実行される．次の PR に進む前にチェック状況を取り直す
+
+## ローカル検証 (Local Verification)
+
+CI が無い／CI 待ちに使う．**最新 `main` を取り込んだ状態**で検証し，終わったら必ず元に戻す．push は一切しない．
+
+```bash
+START_BRANCH=$(git branch --show-current)
+git fetch origin
+gh pr checkout <番号>                               # PR のブランチをローカルに取得して切り替え
+PR_BRANCH=$(git branch --show-current)
+git merge --no-edit origin/main                     # 失敗（コンフリクト）なら: git merge --abort → この PR は見送り（@dependabot rebase）
+# 依存インストール → 検証スイート（ENV_04_開発コマンド.md のコマンド）
+# 例: npm ci && npm test && npm run build / flutter pub get && flutter test && flutter analyze / cargo test / go test ./...
+git checkout "$START_BRANCH"
+git branch -D "$PR_BRANCH"
+git status --short                                  # 空であることを確認
+```
+
+- 依存インストール後にロックファイル等が変わる（`git status` に差分が出る）場合は，`git checkout -- .` で破棄してからブランチを戻す
+- 検証結果の解釈:
+  - テスト＋（あれば）ビルド／型チェック／リンタが全緑 → **Tier A**
+  - テストが無いがインストールとビルド／型チェックは通る → **Tier B**
+  - インストール自体が失敗／検証コマンドが特定できない → **Tier C**
+  - 赤 → 「CI 赤」と同じ扱いで報告（失敗したコマンドと要約を添える）
+
+## マージ (Merge)
+
+```bash
+gh pr merge <番号> --merge --delete-branch          # Git 規約どおりマージコミット
+git checkout main && git pull origin main            # ローカル main を追従（開始時のブランチが main でない場合は戻す）
+```
+
+マージできなかった場合は，次の 2 つの失敗モードを区別して報告する（どちらの場合もマージを迂回しない）．
+
+| 失敗モード | 兆候 | 対処・報告内容 |
+| --- | --- | --- |
+| リポジトリ側の制約 | `gh` が実行され，ブランチ保護・必須レビュー・必須チェック未完了・権限不足でエラーを返す | その PR を「マージ可と判定したが権限・保護設定で拒否された」として報告し，人間の対応（Approve・設定変更）を促す |
+| auto mode 分類器によるブロック | コマンドが**実行される前に**遮断され，`gh` の出力が返らない | `.claude/settings.json` の `permissions.allow` に `Bash(gh pr merge:*)` があるか確認する．無ければユーザーが手で追加してセッションを再起動する必要がある旨を報告する（Claude 自身は permissions を編集できず，設定変更はセッション再起動後に反映される）．その PR は「マージ可と判定したが未実行」として報告する |
+
+- `--delete-branch` が「既に削除済み」で失敗しても無視してよい（Dependabot 側の設定でブランチが自動削除されることがある）
+
+## Dependabot へのコメント指示 (Dependabot Commands)
+
+PR コメントで Dependabot を操作できる．本スキルが使ってよいのは次の 2 つだけ．
+
+```bash
+gh pr comment <番号> --body "@dependabot rebase"     # base に追従させる（競合・BEHIND のとき）
+gh pr comment <番号> --body "@dependabot recreate"   # PR を作り直させる（一時的なビルド失敗・壊れたブランチのとき）
+```
+
+- `@dependabot ignore this major version` / `@dependabot ignore this dependency` / `@dependabot close` は**人間が判断して投稿する**（本スキルは推奨として提示するだけ）
+
+## メジャー更新の影響分析 (Analyzing a Major Bump)
+
+報告に回す PR（`major`・`0.x` マイナー・`unknown`）は，人間が「そのままマージ」「`/implement` で追従」「見送り」を選べるだけの材料を揃える．
+
+1. **変更内容**: PR 本文の Release notes / Changelog / Commits 節から **Breaking changes** を抜き出す．本文に無ければ `gh api repos/<upstream-owner>/<upstream-repo>/releases` や CHANGELOG を参照する（取れなければ「リリースノート未確認」と明記する）
+2. **利用箇所**: コードベース内で当該パッケージを import／呼び出している箇所を Grep で列挙し，破壊的変更に該当する API を使っているか確認する
+3. **影響範囲と推奨**:
+   - 該当 API を使っていない／開発依存のみ → 「そのままマージ可（検証 Tier と根拠を添える）」
+   - 該当 API を使っている → 「`/implement` で追従が必要（修正箇所の一覧）」
+   - 互換性が取れない・移行コストが見合わない → 「見送り（`@dependabot ignore this major version` を人間が投稿）」
+4. `github-actions` のメジャー更新は workflow の入力・出力の変更点を確認する（CI が通っていれば「マージ可」でよい）
+
+## PR コメントの書式 (PR Comment Format)
+
+報告に回した PR には，通常モードで次の書式のコメントを 1 回だけ投稿する（先頭の HTML コメントは二重投稿防止のマーカー．削除しない）．
+
+```markdown
+<!-- deps-update -->
+## /deps-update による分析
+
+- **判定**: 自動マージ対象外（{メジャー更新 / 0.x マイナー更新 / CI 赤 / 検証不能}）
+- **更新**: `{pkg}` {A} → {B}（{本番依存 / 開発依存}，{security / version}）
+- **検証**: {CI 緑 / ローカル検証緑 / ビルドのみ / 未検証}
+- **破壊的変更**: {抜き出した要点，無ければ「記載なし」}
+- **影響箇所**: {ファイル:行 の一覧，無ければ「該当 API の利用なし」}
+- **推奨**: {そのままマージ可 / `/implement` で追従後にマージ / 見送り（`@dependabot ignore this major version`）}
+```
+
+## 台帳の書式 (Ledger Formats)
+
+いずれも `.claude/` 直下のローカル運用状態（`.gitignore` 対象）．1 行 1 エントリ．
+
+- `.claude/deps-update-merged.md`:
+  - `- [merged] #<番号> | <pkg> <A>→<B>（グループは件数） | <security / version> | <patch / minor> | <検証: CI / ローカル / ビルドのみ> | <推奨する動作確認（無ければ -）> | <日付>`
+- `.claude/deps-update-report.md`:
+  - `- [major] #<番号> | <pkg> <A>→<B> | <本番 / 開発> | <破壊的変更の要点> | <影響箇所> | <推奨> | <日付>`
+  - `- [ci-fail] #<番号> | <pkg> <A>→<B> | <失敗したチェック／コマンドと要約> | <推奨> | <日付>`
+  - `- [alert] <pkg>（<ecosystem>） | <重大度> | <GHSA> | <修正版 or 修正版なし> | <PR を作れなかった理由> | <推奨対応> | <日付>`
+  - `- [other] #<番号> | <内容（依存以外のファイル変更・unknown 規模 等）> | <推奨> | <日付>`
+- `.claude/deps-update-skip.md`（ユーザーが編集する）:
+  - `- #<番号> または <pkg> | <理由> | <日付>`
