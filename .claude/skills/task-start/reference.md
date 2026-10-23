@@ -1,7 +1,7 @@
 # Issues・Projects gh 操作リファレンス (gh Operations Reference)
 
 `/task-create`・`/task-start`・`/task-handoff` の Issue・ボード操作で参照する詳細手順（solo / team 両モード共通）．
-team モードでの運用方針（Issue = 作業単位，直列運用，ボードの列等）は [GUIDE_03_チーム開発ルール](../../../docs/01_GUIDE/GUIDE_03_チーム開発ルール.md) に従う．solo モードでは GUIDE_03 は配置されないため，本ファイルと各 skill の記述を基準とする．
+team モードでの運用方針（Issue = 作業単位，並行開発，ボードの列等）は [GUIDE_03_チーム開発ルール](../../../docs/01_GUIDE/GUIDE_03_チーム開発ルール.md) に従う．solo モードでは GUIDE_03 は配置されないため，本ファイルと各 skill の記述を基準とする．
 
 - 操作は GitHub CLI（`gh`）に統一する．Web UI でも同じことはできるが，再現性とドキュメント化のため `gh` を基準とする．
 - AI に Issue を読ませる場合は `gh issue view <Issue番号>` を使う（構造化出力は `--json title,body,assignees,labels`）．
@@ -61,8 +61,8 @@ gh issue develop <Issue番号> --name feature/<概要> --base main
 
 `/task-start` の司令塔から Issue 番号を受け取った ops-runner が実行する．ブランチ命名は `.claude/rules/git-conventions.md` に従う．
 
-1. **前提確認**: `git status` を確認し，未コミットの変更があれば停止して報告する．`git branch --show-current` を確認し，`main` 以外にいる場合は `git log main..HEAD --oneline` で未マージコミットを確認し，残っていれば停止して報告する（直列運用の原則）
-2. **直列運用チェック**: 「ボード設定の判定」に従い `.claude/project-board` の有無を確認する．進行中の作業を数える（`.claude/project-board` があればその Project の `item-list` で Status が `In Progress` のもの，無ければ `gh issue list --assignee @me --state open`）．対象 Issue 以外に 1 件以上あれば，該当タスクの一覧を添えて停止して報告する（禁止ではなく原則）
+1. **前提確認**: `git status` を確認し，未コミットの変更があれば停止して報告する．`git branch --show-current` を確認し，`main` 以外にいる場合は `git log main..HEAD --oneline` で未マージコミットを確認し，残っていれば停止して報告する（1 人 1 タスクの原則）
+2. **1 人 1 タスクチェック**: 「ボード設定の判定」に従い `.claude/project-board` の有無を確認する．進行中の作業を数える（`.claude/project-board` があればその Project の `item-list` で Status が `In Progress` のもの，無ければ `gh issue list --assignee @me --state open`）．対象 Issue 以外に 1 件以上あれば，該当タスクの一覧を添えて停止して報告する（禁止ではなく原則）
 3. **対象 Issue の確認・アサイン**: `gh issue view <Issue番号>` で内容を確認する（存在しない・クローズ済み・他人がアサイン済みの場合は停止して報告する）．`gh issue edit <Issue番号> --add-assignee @me` で自分をアサインする
 4. **ボードを In Progress へ**（`.claude/project-board` がある場合のみ）: 「Projects の操作」に従い，未追加なら `item-add` → Status を `In Progress` に変更 → `item-list` で結果を確認する
 5. **作業ブランチ作成**: `git checkout main && git pull origin main` で `main` を最新化し，`git checkout -b <ブランチ名>` する．ブランチ名は司令塔から渡されていればそれを使い，無ければ Issue タイトルから規約どおり（プレフィックス＋英単語 2〜4 語．Issue 番号は含めない）決めて，決めた名前とプレフィックスの選択理由を報告に含める

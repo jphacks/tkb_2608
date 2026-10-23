@@ -35,7 +35,7 @@
 
 ### チーム開発（GUIDE_03 準拠）
 
-- 原則として並行作業をせず，1 人ずつ直列で開発する．タスクは小さく保つ
+- 期限が短いため，できるだけ多くの人が並行して作業する（1 人が同時に持つタスクは 1 件）．衝突を減らすため，タスクは触るファイルが重ならないように分け，小さく保って早めにマージする（GUIDE_03「並行開発」）
 - タスクは GitHub Issues で管理する（`/task-create` → `/task-start <Issue番号>` → 中断時は `/task-handoff`）．Claude へのタスク文脈は `gh issue view <Issue番号>` で Issue から取得する
 - GitHub Projects（ボード）は使わない．2 日間・同じ会場での開発のため，Issue の担当者と open / closed で管理する．Projects 用のスコープ（`gh auth refresh -s project`）は勧めない
 - 通常の機能 PR は条件付きセルフマージ（CI 緑・作者の動作確認済み・`/implement` 完走・Issue の完了条件を満たす・共有設定を含まない）
