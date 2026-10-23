@@ -39,13 +39,14 @@
 - タスクは GitHub Issues で管理する（`/task-create` → `/task-start <Issue番号>` → 中断時は `/task-handoff`）．Claude へのタスク文脈は `gh issue view <Issue番号>` で Issue から取得する
 - GitHub Projects（ボード）は使わない．2 日間・同じ会場での開発のため，Issue の担当者と open / closed で管理する．Projects 用のスコープ（`gh auth refresh -s project`）は勧めない
 - 通常の機能 PR は条件付きセルフマージ（CI 緑・作者の動作確認済み・`/implement` 完走・Issue の完了条件を満たす・共有設定を含まない）
-- 共有設定（`CLAUDE.md` のルール部・`.claude/`）を変更する PR は機能 PR に混ぜず専用 PR とし，他メンバー 1 名の Approve を必須とする（セルフマージ不可）
+- 共有設定（`CLAUDE.md` のルール部・`.claude/`）を変更する PR は機能 PR に混ぜず専用 PR とし，他メンバー 1 名の Approve を必須とする（セルフマージ不可．`.github/CODEOWNERS` と `main` の Ruleset で強制）
+- `main` は Ruleset で保護している（直接 push・force push・削除の禁止．GUIDE_03「main ブランチの保護」）．admin の例外（bypass）は人間が GitHub の画面で使うものであり，Claude は `gh pr merge --admin` 等で保護を迂回しない．マージが拒否されたら停止して報告する
 
 ### エージェントチーム（GUIDE_02 準拠）
 
-- 実装は `/implement <タスク>` で開始する（コーディング → テスト → リファクタリング → ドキュメント更新）
+- 実装は `/implement <タスク>` で開始する（コーディング → テスト →（指定時のみ）リファクタリング → ドキュメント更新）
 - Phase 1 後に人間が動作確認，Phase 2 でテスト失敗時のみ方針判断
-- Phase 2 成功後は Phase 3 → Phase 4 まで自動で進む（Phase 4 で更新がある場合のみ確認）
+- Phase 2 成功後は Phase 4 まで自動で進む（Phase 3 は実行する場合のみ挟む．Phase 4 で更新がある場合のみ確認）
 - テストをスキップしない
 - リファクタリング（Phase 3）は既定では実行しない．`/implement` の指示で明示された場合と，Phase 1 の追加行数（テスト・ドキュメント・ロックファイル・自動生成を除く）が 2000 行を超えて人間が実行を選んだ場合のみ行う（GUIDE_02）
 - 区切りのよいところ（1 日目の終わり・提出前等）で，人間の指示により一度だけコード全体を整理する（refactorer にコード全体を対象として委譲する）

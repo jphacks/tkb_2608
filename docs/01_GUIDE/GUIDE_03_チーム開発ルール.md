@@ -93,7 +93,26 @@ Issue を立てる場合の標準フロー（小さい変更や探索的作業�
 `CLAUDE.md` のルール部や `.claude/` を変更する PR は，全員の Claude の挙動を変えるため例外とする．
 
 - 機能 PR に混ぜず，専用 PR とする（「共有設定の扱い」参照）．
-- 他メンバー 1 名の Approve を必須とする（セルフマージ不可）．
+- 他メンバー 1 名の Approve を必須とする（セルフマージ不可）．`.github/CODEOWNERS` と `main` の Ruleset で GitHub が強制する（「main ブランチの保護」参照）．
+
+### main ブランチの保護 (Branch Protection)
+
+`main` には 2 つの Ruleset を設定し，Claude の誤操作でも人の誤操作でも `main` が壊れないようにする．
+
+| Ruleset | ルール | 例外（bypass） |
+| --- | --- | --- |
+| `main: 履歴の保護` | `main` の削除禁止・force push 禁止 | なし（admin も不可） |
+| `main: PR 必須と共有設定のレビュー` | 直接 push 禁止（PR 必須．必要な Approve 数は 0）・CODEOWNERS 対象（`.claude/`・`CLAUDE.md`・`.github/CODEOWNERS`）を変える PR はコードオーナー 1 名の Approve 必須 | リポジトリ admin のみ，PR のマージ時に限る（直接 push はできない） |
+
+- 機能 PR は Approve 不要のため，条件付きセルフマージで今までどおり自分でマージできる．
+- マージ方法は merge commit のみ（squash・rebase は無効）．マージ後のブランチは GitHub が自動で削除する．
+- **admin の例外を使ってよいのは 2 つの場合だけ**: 管理者（rintoHasegawa）自身による共有設定の変更（開発環境の整備等．緊急時に限らずいつでも使ってよい）と，`main` が壊れて Approve を待てない本当の緊急時．例外は人間が PR の画面で「要件を待たずにマージ」を選んで使う（`/commit push` で PR を作り，マージは画面で行う）．
+- **Claude は例外を使わない**．`gh pr merge --admin` 等で保護を迂回せず，Approve が無いためにマージが拒否されたら停止して人間に報告する．
+- 緊急時の修正も PR を作ってからマージする（例外で外すのは Approve 待ちのみ）．
+- **秘密情報の流出を防ぐ**: `.env` 等は `.gitignore` で除外し（雛形 `.env.example` のみ追跡），GitHub の Push Protection（secret scanning）で API キー等を含む push を受け付け前に止める．
+- **秘密情報・個人情報を push してしまった場合**: リポジトリは public のため，push した時点で漏れた前提で動く．
+  1. API キー・パスワード等はすぐに失効させて作り直す（履歴から消しても漏れは取り消せないため，これが最優先）．
+  2. 失効できない情報（個人情報等）は履歴から消す．管理者が `main: 履歴の保護` を一時的に無効化して履歴を書き換え・force push し，直ちに有効に戻す（常設の例外は作らない）．GitHub 上のキャッシュ削除は GitHub Support に依頼し，全員がクローンし直す．
 
 ### Dependabot の依存更新 PR (Dependabot PR)
 
@@ -120,7 +139,7 @@ CI が未構築の間は「CI 緑」を以下で代替する．CI 構築後は�
 - **進捗は `CLAUDE.md` に書かない**．進捗は Issues と git 履歴で追う（「タスク管理」参照）．
 - **変更は「チームルール変更」カテゴリ**として扱う．
   - 機能 PR に混ぜない．専用 PR とする（ブランチは `chore/` または `docs/`）．
-  - 他メンバー 1 名の Approve を必須とする．
+  - 他メンバー 1 名の Approve を必須とする（CODEOWNERS で強制．管理者自身の変更は例外．「main ブランチの保護」参照）．
   - マージ後はチームに周知し，全員が `git pull` して Claude セッションを再起動する．
     - ※ Claude はセッション開始時に `CLAUDE.md` を読むため，古いまま動くと文脈がずれる．
 - **例外: ドキュメント一覧への追記**は，そのドキュメントを追加する PR と同じ PR で行ってよい．衝突しても両方の行を残せば解決できる．
@@ -162,7 +181,7 @@ CI が未構築の間は「CI 緑」を以下で代替する．CI 構築後は�
   3. マージ後，全員が `git pull` し，`gh auth refresh -s project` で `project` スコープを追加する．
   - ボードをやめる場合は `.claude/project-board` を削除する（以後 `/task-*` は Projects に触れない）．
 - Issue テンプレートの用意（「やること」「完了条件」欄）．
-- 共有設定変更 PR に他メンバー Approve を求める運用の周知（必要なら `main` のブランチ保護設定）．
+- 共有設定変更 PR に他メンバー Approve を求める運用の周知と，`main` のブランチ保護設定（設定済み．内容は「main ブランチの保護」）．
 - CI の構築（全テストを実行し，緑をマージ条件にできる状態にする）．
 
 ※ 完了するまでは本ガイドの「CI 構築までの暫定ゲート」を適用する．

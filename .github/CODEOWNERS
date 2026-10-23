@@ -1,0 +1,5 @@
+# 共有設定（全員の Claude の挙動を決めるファイル）の変更には，作者以外のコードオーナー 1 名の Approve を必須とする（GUIDE_03「共有設定を変更する PR」）．
+# Approve の強制は main の Ruleset（Require review from Code Owners）で行う．
+/.claude/          @rintoHasegawa @ttakahashi-cpu @radio2400727 @ryuki022886-svg
+/CLAUDE.md         @rintoHasegawa @ttakahashi-cpu @radio2400727 @ryuki022886-svg
+/.github/CODEOWNERS @rintoHasegawa @ttakahashi-cpu @radio2400727 @ryuki022886-svg
