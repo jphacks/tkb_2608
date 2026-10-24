@@ -2,13 +2,15 @@
 // - 既定: 空間のビューア（?scene=room 等．PC 確認用．従来どおり）
 // - ?app: 体験の流れ（開始画面 → ロビー → シナリオ → 結果）
 // - ?debrief: 結果画面だけを，デモの校舎と手で作った記録で表示する（開発用．?app が優先）
+// - ?editor: 教員用のエディタ（本番でも使う．?app・?debrief が優先）
 
-export type LaunchMode = "viewer" | "app" | "debrief";
+export type LaunchMode = "viewer" | "app" | "debrief" | "editor";
 
 export function resolveLaunchMode(search: string): LaunchMode {
   const params = new URLSearchParams(search);
   if (isOn(params.get("app"))) return "app";
   if (isOn(params.get("debrief"))) return "debrief";
+  if (isOn(params.get("editor"))) return "editor";
   return "viewer";
 }
 
