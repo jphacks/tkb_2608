@@ -12,7 +12,7 @@
 | CI の合格を `main` へのマージの必須条件にする | 済み（2026-10-24．Ruleset `main: CI 必須`．設定内容は `gh api` で確認済み） |
 | Dependabot alerts / security updates の有効化 | 済み（2026-10-24．`/setup` が `gh api` で有効化・検証） |
 | 依存バージョン更新（`.github/dependabot.yml`） | 済み（npm・devcontainers・github-actions を週 1 回） |
-| Cloudflare Pages の準備（アカウント・プロジェクト・API トークン・Secrets） | 未実施（下記「Cloudflare Pages の準備」） |
+| Cloudflare Pages の準備（アカウント・プロジェクト・API トークン・Secrets） | 済み（2026-10-24．プロジェクト `tkb2608`・本番ブランチ `main`．staging への配信と iPhone での表示を確認済み．本番へのタグでの配信は未実施） |
 
 ## GitHub リポジトリのセキュリティ設定 (GitHub Repository Security Settings)
 
