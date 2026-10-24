@@ -13,7 +13,7 @@
 | `src/scenes/index.ts` | 実装済みの空間の一覧（`SPACE_FACTORIES`・`AVAILABLE_SPACE_IDS`）と `createSpace()` |
 | `src/scenes/spaceParam.ts` | `?scene=` の解釈（`SpaceId`・`parseSpaceId()`・`resolveSpaceId()`） |
 | `src/scenes/common/` | 空間をまたいで使う部品（乱数・手続きテクスチャ・壁の分割と壁の板・家具の Group・メッシュの生成と解放・`InstancedMesh` とジオメトリの結合・引き戸の扉の配置 `slidingDoor.ts`） |
-| `src/scenes/room/` | 部屋（リビング）．`roomLayout.ts` に寸法と家具の定義（three 非依存），`room.ts` に組み立て |
+| `src/scenes/room/` | 部屋（リビング・シナリオ H1）．`roomLayout.ts` に寸法・配置・エリアと userData の型（three 非依存），`room.ts` に組み立て（部屋の殻・窓ガラス・ドア・廊下），`roomFurniture.ts` に家具の Group（テーブルの脚・コンロのつまみと火・ブレーカーのスイッチを含む），`roomMaterials.ts` に見た目 |
 | `src/scenes/train/` | 電車（通勤電車 1 両のうちドア 2 か所分）．`trainLayout.ts` に寸法・配置と userData の型（three 非依存），`train.ts` に組み立て，`trainFixtures.ts` に座席・手すり・つり革・ドア等の Group，`trainMaterials.ts`・`trainTextures.ts` に見た目 |
 | `src/scenes/elevator/` | エレベーター（かご内と扉の外の乗り場）．`elevatorLayout.ts` に寸法・配置と userData の型（three 非依存），`elevator.ts` に組み立て，`elevatorFixtures.ts` に操作盤・ボタン・手すり・扉・階の表示・照明の Group，`elevatorMaterials.ts`・`elevatorTextures.ts` に見た目 |
 | `src/controls/` | ドラッグで視点を回す操作（`lookAngles.ts` は純粋関数，`dragLook.ts` は Pointer Events） |
@@ -43,15 +43,59 @@
 2. `src/scenes/index.ts` の `SPACE_FACTORIES` に 1 行足す
 3. 寸法・配置の定数は `roomLayout.test.ts` と同様に Vitest でテストする
 
-## 後の機能のための構造 (Hooks for Later Features)
+## 部屋の構成 (Room)
 
-当たり判定・ドアの開閉・地震の物理演算を後から足せるよう，部屋は以下の形で作ってある．
+`?scene=room`（既定）で表示する．シナリオ H1 で使う物が揃う配置にしてある．寸法・配置はすべて `roomLayout.ts` の定数（`root` から見た座標．部屋の殻と家具の Group は原点に置くため，揺らしていない時はワールド座標と同じ）．
 
-- 家具は 1 つずつ独立した `Group`．`userData` に `{ id, kind, size, mass, anchored, mount, origin, tipRisk, restsOn }` を持つ（物理エンジンの剛体 1 つに対応させる想定）
-- 床での占有範囲は `furnitureFootprint(group)`（回転後の外接 AABB）で求める
-- テーブルは天板と脚を別の Mesh にしている（机の下に潜る当たり判定のため）
-- 本は 1 冊ずつ Mesh（`bookshelf-book-N`）
-- ドアはヒンジ位置を原点とする独立した `Group`（name `door`）．開閉に要る値は `userData`（`DoorUserData`）にある．壁はドアの開口部を空けて作っている
+- 範囲: 6m（X）× 5m（Z）× 高さ 2.4m．床の中心が原点．窓は -Z（北）の壁，廊下へ出るドアは +Z（南）の壁，キッチンは +X（東）の壁，テレビは -X（西）の壁
+- 目の高さ: `EYE_HEIGHT`（立ち 1.6m・しゃがみ 0.55m）．しゃがみはテーブルの下に頭が収まるよう，天板の下面（0.68m）より低くしている（電車・エレベーターの 0.9m とは別）
+- 開始位置: 居間の中央付近 (-0.6, 1.6, 0.2) で +X（奥のコンロ）を向く（`startYaw` = -π/2）．正面 0.85m 先にテーブル，その奥（3m 先）にカウンターとコンロ．左に窓（約 78°）と本棚（約 46°），右前にドア（約 57°）とブレーカー（約 44°），真後ろにソファとテレビ
+- テーブル（`dining-table`）: 中心 (0.8, 0, 0.2)，1.1m × 0.7m × 高さ 0.72m（天板の下面 0.68m）．長辺が X に沿い，開始位置側（-X）の端は椅子を置かずに空けて潜り込めるようにしている．潜り込んで +X を向くと，奥の脚 2 本（`dining-table-leg-2`・`-4`）が正面の左右およそ 20〜30° に入る．脚の位置は `tableLegLocalPositions()` で求める
+- 本棚（`bookshelf`）: 窓と同じ北の壁の東寄り（中心 x=1.85，窓の端から 0.4m）．高さ 1.8m．本は 1 冊ずつ Mesh
+- キッチン: 東の壁にカウンター（`kitchen-counter`．長さ 1.8m・高さ 0.85m・奥行 0.6m．扉 3 枚・シンク・水栓）とガスコンロ（`gas-stove`．カウンターの上，開始位置の正面 z=0.25）．口 2 つに火（`stove-flame-1`・`-2`．既定は点火），正面につまみ（`stove-knob-1`・`-2`．高さ 0.91m）．上の壁にレンジフード
+- ブレーカー: ドアの左（+X 側）の南の壁に分電盤（`breaker-panel`．中心 (1.75, 1.3)，0.3m × 0.36m）．切る対象のメインスイッチ（`breaker-main-switch`）は高さ 1.33m（実際より低いが，正面を向いた時に背面カメラの画角に入る高さにしている）
+- ドア（`door`）: 南の壁の中心 x=0.9，開口 0.85m × 2.0m．内開きで，内側から見て右（-X）にヒンジ，ブレーカー側にレバー．壁の厚み 0.1m（`WALL_THICKNESS`）の小口はドア枠で覆う
+- 窓（`window-glass`）: 北の壁の中心 x=0，幅 2.0m・高さ 1.2m（下端 0.8m）．窓の外に景色の板．割れた後の破片（`glass-shards`．小さな三角・四角の板 12 枚を 1 Mesh にまとめたもの）を窓の前の床（窓から 0.15〜0.85m）に置き，既定は非表示
+- 廊下（`hallway`）: ドアの外に X に沿って伸びる（x -2〜3，幅 1.2m，高さ 2.4m）．床・天井・壁 4 面（部屋側の壁にドアと同じ開口部）・照明・西の端の玄関ドア（開かない飾り）．内側だけを描く閉じた空間で，ドアを開けると部屋から見える
+- その他の家具: 椅子 4 脚（テーブルの長辺に 2 脚ずつ），ソファ（開始位置の後ろでテレビを向く），テレビ台とテレビ（西の壁），ペンダントライト（テーブルの真上），観葉植物（北西の隅），掛け時計（北の壁）．開始位置→テーブル→コンロ→ブレーカー→ドアの通り道はふさがない
+
+### 部屋の殻と個別の Group (Shell & Parts)
+
+`createRoomScene()` は `Space` に `parts`（`RoomParts`）を加えた `RoomSpace` を返す（`isRoomSpace(space)` で判定できる）．部屋の殻は `parts.shell`（床・壁・天井・窓の枠・窓ガラス・ドア枠・ドア・レンジフード・ガラスの破片），家具は `parts.furniture`（1 つずつ独立した `Group`）にまとまっている．揺れの演出では `shell` を動かし，家具は剛体として個別に動かす想定．窓の外の景色・廊下（`parts.hallway`）・照明は `root` 直下なので動かない（揺れの間はドアが閉じているため，廊下とのずれは見えない）．
+
+| 一覧 | id の例 | kind | userData の主な欄 |
+| --- | --- | --- | --- |
+| `furniture` の子 | `dining-table`・`bookshelf`・`sofa` | `table`・`bookshelf`・`chair` 等 | 家具の欄 `{ id, kind, size, mass, anchored, mount, origin, tipRisk, restsOn }`（物理エンジンの剛体 1 つに対応させる想定）．床での占有範囲は `furnitureFootprint(group)`（回転後の外接 AABB） |
+| `tableLegs` | `dining-table-leg-1`〜`4` | `tableLeg` | `tableId`・`index`・`size`・`grabbed`．原点は脚の底面中央（テーブルの子）．テーブル本体の userData に `legIds` |
+| `books` | `bookshelf-book-1` | `book` | `size`・`mass`．1 冊 1 Mesh（`byId` には含めない） |
+| `stove.body` | `gas-stove` | `stove` | 家具の欄＋`knobIds`・`flameIds`．`restsOn` はカウンター |
+| `stove.knobs` | `stove-knob-1` | `stoveKnob` | `stoveId`・`flameId`・`diameter`・`on`．原点はつまみの付け根，正面がローカル +Z |
+| `stove.flames` | `stove-flame-1` | `stoveFlame` | `stoveId`・`knobId`・`lit`．原点は口の上面の中心．表示は `visible` で切り替える |
+| `breaker.panel` | `breaker-panel` | `breakerPanel` | 家具の欄（壁掛け）＋`switchIds` |
+| `breaker.mainSwitch` | `breaker-main-switch` | `breakerSwitch` | `panelId`・`leverName`（レバーの Mesh）・`on` |
+| `windowGlass` | `window-glass` | `windowGlass` | `width`・`height`・`broken`．原点は開口部の中心の壁面上 |
+| `glassShards` | `glass-shards` | `glassShards` | `count`．既定は `visible` が false |
+| `door` | `door` | `door` | `hingeSide`・`width`・`height`・`closedRotationY`・`openInwardSign`・`maxOpenAngle`（100°）・`open`・`openAngle`．原点はヒンジ．`rotation.y` は `roomDoorRotationY(userData, openAngle)` で求める |
+| `tv` | `tv` | `tv` | 家具の欄＋`screenName`・`on`．① でテレビの音を流す発生源．画面は点いている見た目（明るい Basic のマテリアル．消すときは色を暗くする） |
+| `pendant` | `pendant-light` | `pendant` | 家具の欄．原点が天井取付点（`rotation` で振り子状に揺らせる）．電球の子に `PointLight` |
+
+- 種類ごとの一覧に加え，`parts.byId` で id から引ける（家具・脚・つまみ・火・スイッチ・窓ガラス・破片・ドア．`shell`・`furniture`・`hallway`・本は除く）
+- 状態の欄（`grabbed`・`on`・`lit`・`broken`・`open`・`openAngle`）は今は初期値だけで，変える処理（握る・火を消す・ブレーカーを切る・割れる・開ける）は後の Issue で作る
+
+### エリア (Areas)
+
+シナリオの判定に使う床の範囲を `ROOM_AREAS`（`parts.areas`）に XZ の矩形（`id`・`minX`・`maxX`・`minZ`・`maxZ`）で定義している．家具・窓・ドアの定義から導くため，家具を動かすとエリアも動く．判定処理は後の Issue（#31）で作る．
+
+| id | 範囲 | 用途 |
+| --- | --- | --- |
+| `under-table` | テーブルの天板の範囲 | ③ テーブルの下に入った |
+| `near-window` | 窓の左右 0.3m 広げた幅，窓の壁から 1.0m | ② 窓に近づく（危険） |
+| `near-bookshelf` | 本棚の左右 0.3m 広げた幅，本棚の前面から 1.0m | ② 本棚に近づく（危険） |
+| `glass-shards` | 破片を置いた範囲 | ④ ガラスの破片の上を歩く（危険） |
+| `stove-front` | コンロの左右 0.25m 広げた幅，カウンターの前面から 0.8m | ④ コンロの前 |
+| `breaker-front` | 分電盤の左右 0.35m，南の壁から 0.8m | ④ ブレーカーの前 |
+| `door-front` | ドアの開口部の幅，南の壁から 0.8m | ④ ドアの前 |
+| `hallway` | ドアの開口部（壁の厚み）から廊下の奥まで | 終了（廊下へ出た） |
 
 ## 電車の構成 (Train)
 
@@ -121,6 +165,6 @@
 - 箱形の部品は単位の `BoxGeometry` を共有し，`scale` で大きさを変える
 - 影は使わない．`setPixelRatio` は 2 倍まで，異方性フィルタは 8 まで
 - テクスチャは画像ファイルを使わず canvas で手続き生成する（シード固定で毎回同じ見た目）
-- 部屋の Mesh 数はおよそ 150．重い場合は本を `InstancedMesh` にするのが次の候補
+- 部屋の Mesh 数（描画数）はおよそ 155（部屋の殻 36・家具 112・廊下 5・窓の外 1．本 17 冊が最も多い）．重い場合は本を `InstancedMesh` にするのが次の候補．ガラスの破片は 1 Mesh にまとめ，火は口ごとに 1 Mesh（光源は付けない）．光源は環境光・日光とペンダントの `PointLight` の 3 つ
 - 電車の Mesh 数（描画数）はおよそ 150．動かない部品（枠・支え・照明・広告・案内表示・窓ガラス）は材質ごとに `InstancedMesh`，壁は開口部を空けた片を 1 つのジオメトリに結合，形が同じ部品（扉の枠・座席・網棚）は結合したジオメトリを共有する．つり革（1 本 2 Mesh）が最も多いため，重い場合はまず本数を減らす
 - エレベーターの Mesh 数（描画数）はおよそ 60（かご 55・乗り場 5）．ボタン（1 つ 2 Mesh × 16）が最も多い．ボタンのジオメトリ（ラベルごとの面・台座の円柱）とマテリアルは両方の操作盤で共有する．光源は環境光 1 つとかごの `PointLight` 2 つ（照明・非常灯）
