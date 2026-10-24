@@ -17,7 +17,7 @@
 | `src/scenes/room/` | 部屋（リビング・シナリオ H1）．`roomLayout.ts` に寸法・配置・エリアと userData の型（three 非依存），`room.ts` に組み立て（部屋の殻・窓ガラス・ドア・廊下），`roomFurniture.ts` に家具の Group（テーブルの脚・コンロのつまみと火・ブレーカーのスイッチを含む），`roomMaterials.ts` に見た目 |
 | `src/scenes/train/` | 電車（通勤電車 1 両のうちドア 2 か所分）．`trainLayout.ts` に寸法・配置と userData の型（three 非依存），`train.ts` に組み立て，`trainFixtures.ts` に座席・手すり・つり革・ドア等の Group，`trainMaterials.ts`・`trainTextures.ts` に見た目 |
 | `src/scenes/elevator/` | エレベーター（かご内と扉の外の乗り場）．`elevatorLayout.ts` に寸法・配置と userData の型（three 非依存），`elevator.ts` に組み立て，`elevatorFixtures.ts` に操作盤・ボタン・手すり・扉・階の表示・照明の Group，`elevatorMaterials.ts`・`elevatorTextures.ts` に見た目 |
-| `src/scenes/school/` | 校舎のパーツと確認用の空間（`?scene=school-parts`）．`routeArrowsLayout.ts`・`routeArrows.ts` に床の正解経路の矢印，`dev/` に確認用のページ．`schoolLayout.ts` に床の面・辺の物・柱の寸法と当たり判定の範囲，`classroomLayout.ts` に教室の中身の並び，`schoolPartsPreviewLayout.ts` に確認用の空間に並べる一覧（いずれも three 非依存），`schoolParts.ts`・`classroom.ts` に組み立て，`schoolMerge.ts` に動かない Mesh の結合，`schoolPartsCollision.ts` に当たり判定の取り出し，`schoolMaterials.ts`・`schoolTextures.ts` に見た目．`schoolPlanLayout.ts`（three 非依存）・`schoolPlanScene.ts`・`schoolPlanWalk.ts` に `SchoolPlan` からの組み立て（`?scene=school`）．詳細は「校舎のパーツの構成」「SchoolPlan からの組み立て」 |
+| `src/scenes/school/` | 校舎のパーツと確認用の空間（`?scene=school-parts`）．`routeArrowsLayout.ts`・`routeArrows.ts` に床の正解経路の矢印，`fireSmokeLayout.ts`・`fireSmoke.ts` に火と煙，`dev/` に確認用のページ．`schoolLayout.ts` に床の面・辺の物・柱の寸法と当たり判定の範囲，`classroomLayout.ts` に教室の中身の並び，`schoolPartsPreviewLayout.ts` に確認用の空間に並べる一覧（いずれも three 非依存），`schoolParts.ts`・`classroom.ts` に組み立て，`schoolMerge.ts` に動かない Mesh の結合，`schoolPartsCollision.ts` に当たり判定の取り出し，`schoolMaterials.ts`・`schoolTextures.ts` に見た目．`schoolPlanLayout.ts`（three 非依存）・`schoolPlanScene.ts`・`schoolPlanWalk.ts` に `SchoolPlan` からの組み立て（`?scene=school`）．詳細は「校舎のパーツの構成」「SchoolPlan からの組み立て」 |
 | `src/scenes/walk/` | 歩行と当たり判定（three 非依存の純粋関数）．`collision.ts` に当たり判定，`areas.ts` にエリアの判定，`obstacles.ts`・`furnitureObstacles.ts` に障害物の生成，`locomotion.ts` に 1 フレーム分の移動（`stepWalk`），`walker.ts` に `ScenarioWorld` の実装（`SpaceWalker`） |
 | `src/scenes/<id>/<id>Walk.ts` | 各空間の `WalkWorld`（床の範囲・障害物・ドア・エリア・座席）．`createWalkWorld(space)`（`index.ts`）で作る |
 | `src/scenes/devDoors.ts` | 確認用: 近くのドアを開閉する（本物のドア開閉が入るまでのデバッグ用） |
@@ -265,6 +265,28 @@ if (arrows) root.add(arrows.object);
 | 同じマスの連続 | 1 つにまとめる |
 | 隣り合わないマス・別の階への飛び | そこで区切り，区切った部分ごとに描く（区切りの直前のマスは入ってきた向き，直後のマスは `straight`） |
 | 前後どちらにも続くマスが無いマス（1 マスだけの経路等） | 向きが決まらないので描かない |
+
+### 火と煙 (Fire & Smoke)
+
+`SpreadMap`（`sim/spread.ts` の `computeSpread(plan)`）と今の時刻から，火と煙を描く（F4．Issue #96）．校舎の組み立てとは別の部品にしてあり，校舎の `root` に足して毎フレーム時刻と目の位置を渡すだけで使える．
+
+```ts
+const fireSmoke = createFireSmoke(plan, computeSpread(plan));
+root.add(fireSmoke.object);
+scene.fog = fireSmoke.fog; // 空間全体に効くフォグは呼び出し側が付け，画面を切り替える時に外す
+// 毎フレーム．時刻は非常ベルからの秒数，目はワールド座標（camera の位置等．null ならフォグは 0）
+fireSmoke.update(secondsSinceAlarm, eyePosition);
+// 校舎を解放する時に fireSmoke.dispose()
+```
+
+- 濃さの計算は `fireSmokeLayout.ts`（three 非依存）．描画は `fireSmoke.ts` のシェーダーで，描くのは照り返し・煙の層・炎の粒の 3 つ（描画 3 回．マスの数によらない）．光源は使わない
+- マスごとの濃さ（R: 煙，G: 炎，B: 床の照り返し）を 1 マス 1 テクセルの `DataTexture` 1 枚に書き，シェーダーでなめらかに補間して読む（マスの境目を出さない）．全部の階を縦に積み，各階の周りに 0 の縁を 1 テクセル付ける．中身が変わった時だけ GPU へ送る
+- 火: 火が着く時刻ちょうどから燃える．強さは 0.35 で始まり 4 秒で 1 になる．600 個の粒（`FIRE_PARTICLES`）を燃えているマスの中のばらばらの位置（中心から 1.25 マスの範囲）から立ち上らせ，白黄の芯 → 橙 → 暗い赤 → 黒い煙へ変えて天井へ昇らせる．1 マスあたり 20 粒まで．粒の動きは時刻からシェーダーで計算し，CPU は生まれ直した粒の位置だけを書く．燃えているマスと周り 1 マスの床をうっすら赤橙に照らす
+- 煙: 着いた時刻ちょうどは 0 で，20 秒かけて濃くなる．天井に近いほど濃く，濃くなるほど下の端が天井（3 m）から 1.2 m まで下りる（立った目 1.6 m としゃがんだ目 0.9 m の間）．校舎全体を覆う 4 枚の水平な層（`SMOKE_LAYER_COUNT`．高さは 2.90・2.38・1.87・1.35 m に固定）に，流れるノイズでむらを付けて描く．壁・何もないマス・屋外の上には出さない
+- しゃがむと視界が晴れる: 目の位置の煙の濃さ（`eyeSmokeDensity`．周りの 4 マスの中心の濃さを距離で重み付けし，目の高さでの濃さにする）から，フォグの濃さを `0.8 × 目の位置の煙`（1/m）にする．最も濃い煙では，立つと約 3.5 m 先，しゃがむと約 18 m 先まで見える
+- 時刻が `NaN`・無限，着く時刻が `Infinity`・`NaN` の時は，火も煙も無いものとして扱う
+- 色・濃さ・粒の量は仮の値．見た目は `SMOKE_SHADE`・`FIRE_PARTICLE_LOOK`，粒の量は `FIRE_PARTICLES`，フォグは `SMOKE_FOG` で調整する．iPhone で重い時は，煙の層の数・ノイズの段の数・粒の数を下げる
+- 赤い表示（煙の中で立っている・火に近づいた時の画面の縁）と，燃えているマスの当たり判定はここでは扱わない
 
 ## SchoolPlan からの組み立て (School From Plan)
 
