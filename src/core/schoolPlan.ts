@@ -82,3 +82,19 @@ export interface SpreadSettings {
   /** 教員が手で足した延焼箇所（ES1．無ければ空）．atSeconds にそのマスが燃え始める */
   readonly extraFires: readonly { readonly cell: CellRef; readonly atSeconds: number }[];
 }
+
+/** 校舎データ（URL の `#p=`）を読み込めなかった理由の種類．開始画面が出す案内（読み直す／新しい版で開く）を分けるために使う */
+export type PlanLoadFailureKind =
+  /** base64url・圧縮・JSON・形のどこかが壊れている（QR の読み取りの失敗や URL の欠け） */
+  | "corrupted"
+  /** このアプリより新しい版のデータ */
+  | "unsupportedVersion"
+  /** 形は読めたが，中身が validatePlan の検査に通らない */
+  | "invalidPlan";
+
+/** 校舎データを読み込めなかった時の理由（share/ の decodePlan が返し，app/ が Session に書く） */
+export interface PlanLoadError {
+  readonly kind: PlanLoadFailureKind;
+  /** 画面に出す理由（日本語の 1 文） */
+  readonly reason: string;
+}

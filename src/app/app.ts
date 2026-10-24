@@ -56,7 +56,13 @@ export function startApp(): void {
   world.add(rig);
 
   const stage: Stage = { world, rig, overlay };
-  const session: Session = { calibration: null, result: null, recording: null };
+  const session: Session = {
+    calibration: null,
+    result: null,
+    recording: null,
+    plan: null,
+    planLoadError: null,
+  };
   // 開始画面で取れた機器．カメラは input/ の手の認識に渡す．AudioContext はホームの設定（音量の確認）に渡す（audio/ ができたらそちらにも渡す）
   const devices: { current: AcquiredDevices | null } = { current: null };
 

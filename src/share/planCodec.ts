@@ -5,6 +5,8 @@ import type {
   DrillMode,
   DrillSetup,
   Floor,
+  PlanLoadError,
+  PlanLoadFailureKind,
   Room,
   SchoolPlan,
   SpreadSettings,
@@ -22,24 +24,13 @@ const SUPPORTED_VERSION = 1;
  */
 const MAX_DECODED_BYTES = 1024 * 1024;
 
-/** decodePlan が失敗した理由の種類．呼ぶ側が出す案内（読み直す／新しい版で開く）を分けるために使う */
-export type DecodePlanFailureKind =
-  /** base64url・圧縮・JSON・形のどこかが壊れている（QR の読み取りの失敗や URL の欠け） */
-  | "corrupted"
-  /** このアプリより新しい版のデータ */
-  | "unsupportedVersion"
-  /** 形は読めたが，中身が validatePlan の検査に通らない */
-  | "invalidPlan";
+/** decodePlan が失敗した理由の種類（core の PlanLoadFailureKind と同じもの） */
+export type DecodePlanFailureKind = PlanLoadFailureKind;
 
-/** decodePlan の結果．失敗しても例外は投げず，画面に出せる理由を返す */
+/** decodePlan の結果．失敗しても例外は投げず，画面に出せる理由（PlanLoadError）を返す */
 export type DecodePlanResult =
   | { readonly ok: true; readonly plan: SchoolPlan }
-  | {
-      readonly ok: false;
-      readonly kind: DecodePlanFailureKind;
-      /** 画面に出す理由（日本語の 1 文） */
-      readonly reason: string;
-    };
+  | ({ readonly ok: false } & PlanLoadError);
 
 /** URL に載せる時の 1 フロア（cells は 1 マス 1 文字，roomOf は [値, 続く数, 値, 続く数, …]） */
 interface EncodedFloor {
