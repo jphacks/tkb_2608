@@ -1,10 +1,10 @@
-// ロビー（lobby，VR 表示）．簡単な部屋で開始ボタンを待ち，押されたら見え方の調整（二眼の像が重なるよう
-// ゴーグル側で合わせる．一定時間で次へ）の後に指示を出して
+// ロビー（lobby，VR 表示）．学校の防災学習室で開始ボタンを待ち，手のひらを 1 秒かざしたら（startGate.ts の
+// startMode: "hand"）見え方の調整（二眼の像が重なるようゴーグル側で合わせる．一定時間で次へ）の後に指示を出して
 // 正面 → 立つ → しゃがむ → しゃがみ歩き → 足踏み の順に行い，正面（yawOffset）と各手順の区間（segments．
-// 値の計算は input/ が行う）を CalibrationProfile として Session.calibration に書いてシナリオへ進む．
+// 値の計算は input/ が行う）を CalibrationProfile として Session.calibration に書く．
+// 続けて訓練の説明（今日の訓練の内容と避難の注意．drillBriefing.ts）を時間で進めてからシナリオへ進む．
 // ゴーグル装着中なので画面のタッチは使わない（各手順は制限時間で既定値に進むため詰まらない）．
-// 開始は今は一定時間で自動（ゴーグルを付ける時間）．input/ の手が揃ったら
-// DEFAULT_START_GATE_CONFIG.startMode を "hand" にして，手で開始ボタンに触れて始める方法に切り替える（startGate.ts）．
+// 開始ボタンを待つ間に手がしばらく見つからなければ，手を目の前に出すよう案内する（自動では始めない．handPrompt.ts）．
 // debug が有効な時だけ，注視での開始と Enter / Space による飛ばしを使える（デバッグ用）
 
 import type { FrameInfo, Scene, SceneContext } from "../core/scene";
@@ -21,17 +21,50 @@ import {
   toCalibrationProfile,
 } from "./calibration";
 import {
+  advanceBriefing,
+  type BriefingConfig,
+  type BriefingState,
+  DEFAULT_BRIEFING_CONFIG,
+  describeBriefing,
+  isBriefingFinished,
+  restartBriefingPage,
+  skipBriefingPage,
+  startBriefing,
+} from "./drillBriefing";
+import {
+  advanceHandSearch,
+  DEFAULT_HAND_PROMPT_CONFIG,
+  type HandPromptConfig,
+  type HandSearchState,
+  handPromptIndex,
+  INITIAL_HAND_SEARCH,
+  isAnyHandTracked,
+} from "./handPrompt";
+import {
   type AlignmentMarker,
   createAlignmentMarker,
+  createHandMarkers,
   createLobbyPanel,
   createLobbyRoom,
   createStartButton,
+  type HandMarkers,
   LOBBY_EYE_HEIGHT,
   LOBBY_PANEL_CENTER,
   type LobbyPanel,
   type StartButtonView,
 } from "./lobbyRoom";
 import { describeCalibration, describeStartGate, type LobbyInstruction } from "./lobbyScript";
+import {
+  advanceNarrationTrack,
+  DEFAULT_NARRATION_PACING_CONFIG,
+  isNarrationSettled,
+  markNarrationEnded,
+  type NarrationPacingConfig,
+  type NarrationTrack,
+  pacedCalibrationDt,
+  SILENT_NARRATION,
+  startNarrationTrack,
+} from "./narrationPacing";
 import { narrate, stopNarration } from "./narrator";
 import { angleDifference, yawOfQuat } from "./orientation";
 import { approachHighlight, isGazingAtPanel } from "./panelGaze";
@@ -52,6 +85,9 @@ import {
 export interface LobbySceneOptions {
   readonly config?: CalibrationConfig;
   readonly startGateConfig?: StartGateConfig;
+  readonly handPromptConfig?: HandPromptConfig;
+  readonly briefingConfig?: BriefingConfig;
+  readonly narrationPacingConfig?: NarrationPacingConfig;
   /**
    * デバッグ用の切り替え．true の時だけ，開始ボタンの注視での開始と，
    * Enter / Space による開始ボタン・手順の飛ばしを使える（本実装の開始は input/ の PlayerInput.hands の手だけ）
@@ -73,13 +109,22 @@ interface Active {
   readonly panel: LobbyPanel;
   readonly button: StartButtonView;
   readonly marker: AlignmentMarker;
+  readonly handMarkers: HandMarkers;
   readonly feed: SensorFeed;
   readonly dispose: () => void;
   gate: StartGateState;
   state: CalibrationState;
+  /** 開始ボタンを待つ間に，手が見つからない時間 */
+  handSearch: HandSearchState;
+  /** 訓練の説明．キャリブレーションを終えるまでは null */
+  briefing: BriefingState | null;
   /** 最後に届いた向きのサンプル（端末が水平かの判定用．センサーが無ければ null） */
   lastOrientation: OrientationSample | null;
   lastNarrationKey: string;
+  /** 今の読み上げ（時間で進む段階はこれが済むまで待つ．narrationPacing.ts） */
+  narration: NarrationTrack;
+  /** 読み上げの番号（end の知らせが今の読み上げのものかを見分ける） */
+  narrationCount: number;
   /** 指示の板の枠の明るさ（0〜1） */
   highlight: number;
   skipRequested: boolean;
@@ -91,6 +136,9 @@ interface Active {
 export function createLobbyScene(options: LobbySceneOptions = {}): Scene {
   const config = options.config ?? DEFAULT_CALIBRATION_CONFIG;
   const gateConfig = options.startGateConfig ?? DEFAULT_START_GATE_CONFIG;
+  const handPromptConfig = options.handPromptConfig ?? DEFAULT_HAND_PROMPT_CONFIG;
+  const briefingConfig = options.briefingConfig ?? DEFAULT_BRIEFING_CONFIG;
+  const pacingConfig = options.narrationPacingConfig ?? DEFAULT_NARRATION_PACING_CONFIG;
   const debug = options.debug ?? false;
   // 注視はデバッグ用．本実装は input/ の PlayerInput.hands（手と自動開始は gateConfig.startMode で決まる）
   const sources: StartGateSources = { gaze: debug };
@@ -106,7 +154,15 @@ export function createLobbyScene(options: LobbySceneOptions = {}): Scene {
     a.panel.show({ title: instruction.title, body: instruction.body, caption });
     if (instruction.key !== a.lastNarrationKey) {
       a.lastNarrationKey = instruction.key;
-      if (instruction.narration !== null) narrate(instruction.narration);
+      a.narrationCount += 1;
+      const id = a.narrationCount;
+      // 前の読み上げの end（narrate の中で止めた時の error を含む）は id が違うため無視される
+      const spoken =
+        instruction.narration !== null &&
+        narrate(instruction.narration, () => {
+          if (active === a) a.narration = markNarrationEnded(a.narration, id);
+        });
+      a.narration = startNarrationTrack(id, instruction.narration, spoken, pacingConfig);
     }
   };
 
@@ -140,22 +196,47 @@ export function createLobbyScene(options: LobbySceneOptions = {}): Scene {
     );
     if (a.skipRequested) {
       a.skipRequested = false;
+      stopNarration();
       a.gate = skipStartGate(a.gate);
     }
     a.button.setProgress(startGateProgress(a.gate, gateConfig));
+    // 手が見つからない時の案内は，手で始める時だけ（自動開始の時は手を使わない）
+    a.handSearch = advanceHandSearch(a.handSearch, frame.dt, isAnyHandTracked(frame.input.hands));
+    const handPrompt =
+      gateConfig.startMode === "hand" ? handPromptIndex(a.handSearch, handPromptConfig) : null;
     if (a.gate.startedBy === null) {
+      a.handMarkers.update(frame.input.head, frame.input.hands, true);
       show(
         a,
         describeStartGate(
           a.state.reused,
           autoStartRemainingSeconds(a.gate, gateConfig),
           sources.gaze,
+          handPrompt,
         ),
       );
       return false;
     }
     a.button.object.visible = false;
+    a.handMarkers.update(frame.input.head, frame.input.hands, false);
     return true;
+  };
+
+  /** 訓練の説明を進める．終えたらシナリオへ */
+  const updateBriefing = (a: Active, briefing: BriefingState, frame: FrameInfo): void => {
+    let next = advanceBriefing(briefing, frame.dt, briefingConfig, isNarrationSettled(a.narration));
+    if (a.skipRequested) {
+      a.skipRequested = false;
+      stopNarration();
+      next = skipBriefingPage(next);
+    }
+    a.briefing = next;
+    if (isBriefingFinished(next)) {
+      a.done = true;
+      a.ctx.goTo("scenario");
+      return;
+    }
+    show(a, describeBriefing(next, a.ctx.session.plan, briefingConfig));
   };
 
   return {
@@ -169,6 +250,8 @@ export function createLobbyScene(options: LobbySceneOptions = {}): Scene {
       const marker = createAlignmentMarker();
       marker.object.visible = false;
       ctx.stage.rig.add(marker.object);
+      const handMarkers = createHandMarkers();
+      ctx.stage.rig.add(handMarkers.object);
       const feed = createSensorFeed();
       ctx.stage.world.add(room.root, panel.object);
       ctx.stage.rig.position.set(0, LOBBY_EYE_HEIGHT, 0);
@@ -187,11 +270,16 @@ export function createLobbyScene(options: LobbySceneOptions = {}): Scene {
         panel,
         button,
         marker,
+        handMarkers,
         feed,
         gate: INITIAL_START_GATE,
         state: startCalibration(ctx.session.calibration),
+        handSearch: INITIAL_HAND_SEARCH,
+        briefing: null,
         lastOrientation: null,
         lastNarrationKey: "",
+        narration: SILENT_NARRATION,
+        narrationCount: 0,
         highlight: 0,
         skipRequested: false,
         wasPaused: false,
@@ -205,6 +293,8 @@ export function createLobbyScene(options: LobbySceneOptions = {}): Scene {
           button.dispose();
           ctx.stage.rig.remove(marker.object);
           marker.dispose();
+          ctx.stage.rig.remove(handMarkers.object);
+          handMarkers.dispose();
         },
       };
     },
@@ -228,19 +318,33 @@ export function createLobbyScene(options: LobbySceneOptions = {}): Scene {
           a.state = restartCalibrationStep(a.state, nowMs);
           a.lastNarrationKey = "";
         }
+        // 説明の途中で止めた時も，聞けていないためそのページを最初から読み直す
+        if (a.briefing !== null) {
+          a.briefing = restartBriefingPage(a.briefing);
+          a.lastNarrationKey = "";
+        }
       }
+      // 読み上げの経過は止めていない間だけ数える（上限の時間で必ず進むため）
+      a.narration = advanceNarrationTrack(a.narration, frame.dt);
       // 開始ボタンが押されるまでキャリブレーションを始めない（制限時間も数えない．サンプルは捨てる）
       if (a.gate.startedBy === null) {
         updateGate(a, frame, samples.orientation);
         return;
       }
+      if (a.briefing !== null) {
+        updateBriefing(a, a.briefing, frame);
+        return;
+      }
+      // 読み上げが済むまで，時間で進む段階は次へ進めず，測る手順は制限時間を数えない（サンプルは貯める）
+      const dt = pacedCalibrationDt(a.state, frame.dt, isNarrationSettled(a.narration), config);
       a.state = advanceCalibration(
         a.state,
-        { dt: frame.dt, nowMs, motion: samples.motion, orientation: samples.orientation },
+        { dt, nowMs, motion: samples.motion, orientation: samples.orientation },
         config,
       );
       if (a.skipRequested) {
         a.skipRequested = false;
+        stopNarration();
         a.state = skipCalibrationStep(a.state, config);
       }
       // 見え方の調整の間だけ，視野の中心（左右それぞれの目の画面の中心）に十字を出す
@@ -249,9 +353,11 @@ export function createLobbyScene(options: LobbySceneOptions = {}): Scene {
       a.marker.object.quaternion.set(h.x, h.y, h.z, h.w);
       show(a, describeCalibration(a.state, config));
       if (isCalibrationFinished(a.state)) {
-        a.done = true;
+        // 値は説明の前に書く（app/ が入力に渡して正面を合わせるため，説明の間に正面が定まる）
         a.ctx.session.calibration = toCalibrationProfile(a.state, Date.now());
-        a.ctx.goTo("scenario");
+        a.marker.object.visible = false;
+        a.briefing = startBriefing(a.state.reused);
+        show(a, describeBriefing(a.briefing, a.ctx.session.plan, briefingConfig));
       }
     },
 

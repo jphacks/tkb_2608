@@ -67,8 +67,8 @@ export function describeCalibration(
       return {
         key: "outro",
         title: "準備ができました",
-        body: "まもなく体験が始まります",
-        narration: "準備ができました．まもなく体験が始まります",
+        body: "続いて，今日の訓練について説明します",
+        narration: "準備ができました．続いて，今日の訓練について説明します",
         progressLabel,
         remainingSeconds,
       };
@@ -143,12 +143,15 @@ export function describeCalibration(
 /**
  * 開始ボタンを待っている間の指示（キャリブレーションを始める前）．
  * autoStartRemaining は自動開始までの残り秒数（startMode が "auto" の時．"hand" なら null）．
- * gazeEnabled はデバッグ用の注視での開始が有効な時（本実装は input/ の PlayerInput.hands の手）
+ * gazeEnabled はデバッグ用の注視での開始が有効な時（本実装は input/ の PlayerInput.hands の手）．
+ * handPrompt は手が見つからない案内の何回目か（handPrompt.ts の handPromptIndex．出さない時は null）．
+ * 回ごとに key を変えて読み上げを繰り返す
  */
 export function describeStartGate(
   reused: boolean,
   autoStartRemaining: number | null,
   gazeEnabled: boolean,
+  handPrompt: number | null = null,
 ): LobbyInstruction {
   // 「もう一度」は結果画面から同じ訓練を繰り返す時．ゴーグルを外して結果を見た後なので付け直してもらう
   const lead = reused ? "同じ訓練をもう一度始めます．" : "";
@@ -167,13 +170,24 @@ export function describeStartGate(
       remainingSeconds: null,
     };
   }
+  if (handPrompt !== null) {
+    const text = "手を目の前に出して，カメラに映るようにしてください";
+    return {
+      key: `startGate:handPrompt:${handPrompt}`,
+      title: "手が見つかりません",
+      body: `${text}．映ったら，目の前のボタンに手のひらを 1 秒かざしてください${debug}`,
+      narration: `手が見つかりません．${text}`,
+      progressLabel: null,
+      remainingSeconds: null,
+    };
+  }
   const prefix = reused
     ? `${lead}${goggles}，正面を向いてください．`
     : "ゴーグルを着けて，正面を向いてください．";
   return {
     key: "startGate:hand",
     title: "準備ができたら開始ボタンへ",
-    body: `${prefix}準備ができたら，目の前のボタンに手をかざしてください${debug}`,
+    body: `${prefix}準備ができたら，目の前のボタンに手のひらを 1 秒かざしてください${debug}`,
     narration: `${prefix}準備ができたら，目の前のボタンに手をかざしてください`,
     progressLabel: null,
     remainingSeconds: null,

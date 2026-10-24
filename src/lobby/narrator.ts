@@ -1,6 +1,9 @@
 // ロビーのナレーションの仮実装（Web Speech API の読み上げ）．
 // audio/ ができたら，Cue の narration と音声ファイルに置き換える
 
+/** 読み上げの速さ（SpeechSynthesisUtterance.rate） */
+export const NARRATION_RATE = 1.05;
+
 function synth(): SpeechSynthesis | null {
   return typeof window !== "undefined" && "speechSynthesis" in window
     ? window.speechSynthesis
@@ -18,18 +21,35 @@ export function unlockNarration(): void {
   }
 }
 
-/** 文を読み上げる．前の読み上げは止める */
-export function narrate(text: string): void {
+/**
+ * 文を読み上げる．前の読み上げは止める．
+ * onEnd は読み上げが終わった（end）か失敗した（error．止めた時も含む）時に 1 回だけ呼ぶ．
+ * 読み上げを始められなかった時は false を返し，onEnd は呼ばない（呼ぶ側がすぐ終わった扱いにする）．
+ * end が来ない端末もあるため，呼ぶ側は上限の時間でも先へ進むこと（narrationPacing.ts）
+ */
+export function narrate(text: string, onEnd?: () => void): boolean {
   const s = synth();
-  if (s === null) return;
+  if (s === null) return false;
   try {
     s.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = "ja-JP";
-    utterance.rate = 1.05;
+    utterance.rate = NARRATION_RATE;
+    if (onEnd !== undefined) {
+      let called = false;
+      const finish = (): void => {
+        if (called) return;
+        called = true;
+        onEnd();
+      };
+      utterance.addEventListener("end", finish);
+      utterance.addEventListener("error", finish);
+    }
     s.speak(utterance);
+    return true;
   } catch {
     // 同上
+    return false;
   }
 }
 

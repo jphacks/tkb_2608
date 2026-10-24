@@ -1,6 +1,7 @@
 // 開始画面（許可の画面，start，HTML）．安全確認の案内を出し，
 // ボタン 1 回でセンサー・カメラ・音の許可をまとめて取ってホームへ進む．
-// 起動直後の 1 回だけ出す（ゴーグル装着の案内はホームで出す．Issue #40）
+// 起動直後の 1 回だけ出す（ゴーグル装着の案内はホームで出す．Issue #40）．
+// カメラが使えない時は先へ進まず，再読み込みしてカメラを許可するよう案内する（ロビーの開始が手のため．Issue #110）
 
 import type { Scene, SceneContext } from "../core/scene";
 import { unlockNarration } from "./narrator";
@@ -19,8 +20,13 @@ export interface StartSceneOptions {
    * 「はじめる」のタップの処理の中で呼ぶ（app/ が画面の消灯を止める処理を頼む．ユーザーの操作の中で頼む必要がある端末のため）
    */
   readonly onStartTap?: () => void;
-  /** 案内（カメラが使えない等）を見せてから進むまでの秒数 */
+  /** 案内（音が出ない等）を見せてから進むまでの秒数 */
   readonly noticeSeconds?: number;
+  /**
+   * カメラが使えなければ先へ進まない（既定 true）．手をカメラ以外から作る入力（PC の mock・記録の再生）では
+   * app/ が false にする（startPolicy.ts の StartDecisionOptions.requireCamera）
+   */
+  readonly requireCamera?: boolean;
 }
 
 const STYLE = `
@@ -45,6 +51,7 @@ const STYLE = `
 
 export function createStartScene(options: StartSceneOptions = {}): Scene {
   const noticeSeconds = options.noticeSeconds ?? 4;
+  const requireCamera = options.requireCamera ?? true;
   let root: HTMLDivElement | null = null;
   let style: HTMLStyleElement | null = null;
   let timer: number | null = null;
@@ -114,19 +121,35 @@ export function createStartScene(options: StartSceneOptions = {}): Scene {
           void requestMotionPermission().then((motion) => {
             if (devices === null) return;
             devices = { ...devices, results: { ...devices.results, motion } };
-            handle(decideStart(devices.results));
+            handle(decideStart(devices.results, { allowWithoutMotion: false, requireCamera }));
           });
         });
         skip.addEventListener("click", () => {
           if (devices === null) return;
-          handle(decideStart(devices.results, { allowWithoutMotion: true }));
+          handle(decideStart(devices.results, { allowWithoutMotion: true, requireCamera }));
         });
+      };
+
+      // カメラは iOS の Safari では再読み込みするまで尋ね直さないため，再読み込みのボタンだけを出す
+      const showCameraHelp = (message: string): void => {
+        status.textContent = message;
+        const reload = document.createElement("button");
+        reload.type = "button";
+        reload.textContent = "再読み込み";
+        reload.addEventListener("click", () => {
+          window.location.reload();
+        });
+        actions.replaceChildren(reload);
       };
 
       const handle = (decision: StartDecision): void => {
         if (!active) return;
         if (decision.kind === "needsMotion") {
           showMotionHelp(decision.message);
+          return;
+        }
+        if (decision.kind === "needsCamera") {
+          showCameraHelp(decision.message);
           return;
         }
         if (devices !== null) options.onDevices?.(devices);
@@ -141,7 +164,7 @@ export function createStartScene(options: StartSceneOptions = {}): Scene {
         options.onStartTap?.();
         void requestAllPermissions().then((acquired) => {
           devices = acquired;
-          handle(decideStart(acquired.results));
+          handle(decideStart(acquired.results, { allowWithoutMotion: false, requireCamera }));
         });
       });
     },

@@ -20,6 +20,8 @@ import {
 const DEG = Math.PI / 180;
 const IDENTITY: Quat = { x: 0, y: 0, z: 0, w: 1 };
 const HAND_CONFIG: StartGateConfig = { ...DEFAULT_START_GATE_CONFIG, startMode: "hand" };
+/** 手が無かった頃の自動開始（既定ではない．config で明示して使う） */
+const AUTO_CONFIG: StartGateConfig = { ...DEFAULT_START_GATE_CONFIG, startMode: "auto" };
 
 function yawQuat(angle: number): Quat {
   return { x: 0, y: Math.sin(angle / 2), z: 0, w: Math.cos(angle / 2) };
@@ -58,8 +60,11 @@ function run(
 }
 
 describe("DEFAULT_START_GATE_CONFIG（決定事項）", () => {
-  it("既定は自動開始（15 秒）", () => {
-    expect(DEFAULT_START_GATE_CONFIG.startMode).toBe("auto");
+  it("既定は手で開始ボタンに触れて始める（Issue #110）", () => {
+    expect(DEFAULT_START_GATE_CONFIG.startMode).toBe("hand");
+  });
+
+  it("auto に切り替えた時の自動開始は 15 秒", () => {
     expect(DEFAULT_START_GATE_CONFIG.autoStartSeconds).toBe(15);
   });
 
@@ -162,17 +167,30 @@ describe("isDeviceLevel", () => {
 });
 
 describe("advanceStartGate", () => {
-  describe("startMode: auto（既定）", () => {
+  describe("既定の config（startMode: hand）", () => {
+    it("何もしなければ自動では始まらない", () => {
+      const s = run(INITIAL_START_GATE, frame(), 60);
+      expect(s.startedBy).toBeNull();
+    });
+
+    it("手のひらをボタンに 1 秒かざすと始まる", () => {
+      const f = frame({ hands: { left: UNTRACKED_HAND, right: hand({ x: 0, y: 0, z: -0.5 }) } });
+      expect(run(INITIAL_START_GATE, f, 0.875).startedBy).toBeNull();
+      expect(run(INITIAL_START_GATE, f, 1).startedBy).toBe("hand");
+    });
+  });
+
+  describe("startMode: auto（明示した時）", () => {
     it("何もしなくても 15 秒で自動で始まる", () => {
-      const before = run(INITIAL_START_GATE, frame(), 14.9);
+      const before = run(INITIAL_START_GATE, frame(), 14.9, AUTO_CONFIG);
       expect(before.startedBy).toBeNull();
-      const after = run(before, frame(), 0.2);
+      const after = run(before, frame(), 0.2, AUTO_CONFIG);
       expect(after.startedBy).toBe("auto");
     });
 
     it("手は無視する", () => {
       const f = frame({ hands: { left: UNTRACKED_HAND, right: hand({ x: 0, y: 0, z: -0.5 }) } });
-      const s = run(INITIAL_START_GATE, f, 2);
+      const s = run(INITIAL_START_GATE, f, 2, AUTO_CONFIG);
       expect(s.startedBy).toBeNull();
       expect(s.handHeld).toBe(0);
     });
@@ -256,14 +274,19 @@ describe("advanceStartGate", () => {
 
     it("startMode が auto でも注視で始められる", () => {
       const f = frame({ sources: { gaze: true } });
+      expect(run(INITIAL_START_GATE, f, 3, AUTO_CONFIG).startedBy).toBe("gaze");
+    });
+
+    it("既定の config（hand）でも注視で始められる", () => {
+      const f = frame({ sources: { gaze: true } });
       expect(run(INITIAL_START_GATE, f, 3).startedBy).toBe("gaze");
     });
   });
 
   it("開始後は状態を変えない", () => {
-    const started = run(INITIAL_START_GATE, frame(), 15);
+    const started = run(INITIAL_START_GATE, frame(), 15, AUTO_CONFIG);
     expect(started.startedBy).toBe("auto");
-    const next = advanceStartGate(started, frame({ sources: { gaze: true } }));
+    const next = advanceStartGate(started, frame({ sources: { gaze: true } }), AUTO_CONFIG);
     expect(next).toBe(started);
   });
 
@@ -296,13 +319,19 @@ describe("skipStartGate", () => {
 
 describe("autoStartRemainingSeconds", () => {
   it("auto では 15 秒から減っていき 0 で止まる", () => {
-    expect(autoStartRemainingSeconds(INITIAL_START_GATE)).toBeCloseTo(15);
-    expect(autoStartRemainingSeconds({ ...INITIAL_START_GATE, waited: 10 })).toBeCloseTo(5);
-    expect(autoStartRemainingSeconds({ ...INITIAL_START_GATE, waited: 20 })).toBe(0);
+    expect(autoStartRemainingSeconds(INITIAL_START_GATE, AUTO_CONFIG)).toBeCloseTo(15);
+    expect(
+      autoStartRemainingSeconds({ ...INITIAL_START_GATE, waited: 10 }, AUTO_CONFIG),
+    ).toBeCloseTo(5);
+    expect(autoStartRemainingSeconds({ ...INITIAL_START_GATE, waited: 20 }, AUTO_CONFIG)).toBe(0);
   });
 
   it("hand モードでは null", () => {
     expect(autoStartRemainingSeconds(INITIAL_START_GATE, HAND_CONFIG)).toBeNull();
+  });
+
+  it("既定の config（hand）では null（自動開始のカウントダウンを出さない）", () => {
+    expect(autoStartRemainingSeconds({ ...INITIAL_START_GATE, waited: 10 })).toBeNull();
   });
 
   it("開始後は null", () => {
@@ -319,18 +348,21 @@ describe("startGateProgress", () => {
   it("自動・手・注視のうち最も進んでいるもの", () => {
     const s: StartGateState = { waited: 3, handHeld: 0.5, gazeHeld: 0.3, startedBy: null };
     // auto 3/15 = 0.2，手 0.5/1 = 0.5，注視 0.3/3 = 0.1
-    expect(startGateProgress(s)).toBeCloseTo(0.5);
-    expect(startGateProgress({ ...s, waited: 12 })).toBeCloseTo(0.8);
+    expect(startGateProgress(s, AUTO_CONFIG)).toBeCloseTo(0.5);
+    expect(startGateProgress({ ...s, waited: 12 }, AUTO_CONFIG)).toBeCloseTo(0.8);
   });
 
   it("hand モードでは自動のカウントダウンを含めない", () => {
     const s: StartGateState = { waited: 12, handHeld: 0, gazeHeld: 0, startedBy: null };
     expect(startGateProgress(s, HAND_CONFIG)).toBe(0);
+    // 既定（hand）でも同じ
+    expect(startGateProgress(s)).toBe(0);
   });
 
   it("0〜1 に収める", () => {
     const s: StartGateState = { waited: 100, handHeld: 0, gazeHeld: 0, startedBy: null };
-    expect(startGateProgress(s)).toBe(1);
+    expect(startGateProgress(s, AUTO_CONFIG)).toBe(1);
+    expect(startGateProgress({ ...s, waited: 0, handHeld: 5 })).toBe(1);
   });
 });
 
@@ -342,16 +374,17 @@ describe("advanceStartGate（止めている間）", () => {
     let s = INITIAL_START_GATE;
     // 半分まで進める
     const half = Math.round(auto / 2 / 0.125);
-    for (let i = 0; i < half; i++) s = advanceStartGate(s, frame());
-    const remaining = autoStartRemainingSeconds(s);
+    for (let i = 0; i < half; i++) s = advanceStartGate(s, frame(), AUTO_CONFIG);
+    const remaining = autoStartRemainingSeconds(s, AUTO_CONFIG);
     // ここで自動開始の時間より長く止めたとする（lobbyScene は advanceStartGate を呼ばない）
     expect(s.startedBy).toBeNull();
-    expect(autoStartRemainingSeconds(s)).toBe(remaining);
+    expect(remaining).not.toBeNull();
+    expect(autoStartRemainingSeconds(s, AUTO_CONFIG)).toBe(remaining);
     // 再開すると残りの時間で自動開始する
     const rest = Math.ceil((remaining ?? 0) / 0.125);
-    for (let i = 0; i < rest - 1; i++) s = advanceStartGate(s, frame());
+    for (let i = 0; i < rest - 1; i++) s = advanceStartGate(s, frame(), AUTO_CONFIG);
     expect(s.startedBy).toBeNull();
-    s = advanceStartGate(s, frame());
+    s = advanceStartGate(s, frame(), AUTO_CONFIG);
     expect(s.startedBy).toBe("auto");
   });
 });

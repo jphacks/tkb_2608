@@ -166,3 +166,52 @@ describe("describeStartGate", () => {
     expect(d.remainingSeconds).toBeNull();
   });
 });
+
+describe("describeStartGate（手が見つからない案内．Issue #110）", () => {
+  it("handPrompt を省く・null なら元の手の案内", () => {
+    expect(describeStartGate(false, null, false).key).toBe("startGate:hand");
+    expect(describeStartGate(false, null, false, null).key).toBe("startGate:hand");
+  });
+
+  it("手での開始の案内は手のひらを 1 秒かざすことを伝える", () => {
+    const d = describeStartGate(false, null, false);
+    expect(d.body).toContain("手のひら");
+    expect(d.body).toContain("1 秒");
+  });
+
+  it("handPrompt があれば「手を目の前に出して，カメラに映るように」と案内し，読み上げる", () => {
+    const d = describeStartGate(false, null, false, 0);
+    expect(d.body).toContain("手を目の前に出して，カメラに映るようにしてください");
+    expect(d.narration).toContain("手を目の前に出して，カメラに映るようにしてください");
+    expect(d.key).not.toBe("startGate:hand");
+    expect(d.progressLabel).toBeNull();
+    expect(d.remainingSeconds).toBeNull();
+  });
+
+  it("回ごとに key が変わる（15 秒ごとに読み上げ直す）", () => {
+    const keys = [0, 1, 2].map((i) => describeStartGate(false, null, false, i).key);
+    expect(new Set(keys).size).toBe(3);
+    // 同じ回の中では変わらない
+    expect(describeStartGate(false, null, false, 1).key).toBe(keys[1]);
+  });
+
+  it("「もう一度」でも手が見つからない案内を出す", () => {
+    expect(describeStartGate(true, null, false, 0).body).toContain("手を目の前に出して");
+  });
+
+  it("debug の案内は表示するが読み上げない", () => {
+    const d = describeStartGate(false, null, true, 0);
+    expect(d.body).toContain("Enter");
+    expect(d.narration).not.toContain("Enter");
+  });
+});
+
+describe("describeCalibration（outro．Issue #110）", () => {
+  it("終わりの文は訓練の説明に続くことを伝える", () => {
+    const outro = allStates(null).find((s) => s.phase === "outro");
+    if (outro === undefined) throw new Error("outro が無い");
+    const d = describeCalibration(outro);
+    expect(d.body).toBe("続いて，今日の訓練について説明します");
+    expect(d.narration).toContain("続いて，今日の訓練について説明します");
+  });
+});
