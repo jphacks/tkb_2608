@@ -19,6 +19,7 @@ import {
 import {
   eyeSmokeDensity,
   FIRE_PARTICLES,
+  isEmberParticle,
   listFireSmokeCells,
   SMOKE_CEILING_HEIGHT,
   SMOKE_LAYER_COUNT,
@@ -394,6 +395,60 @@ describe("FireSmoke.update", () => {
     }
     expect(active).toBeGreaterThan(0);
     expect(active).toBeLessThanOrEqual(Math.min(FIRE_PARTICLES.count, burning.length * 20));
+    fs.dispose();
+  });
+});
+
+describe("FireSmoke の炎の粒（火の粉・先の細い炎）", () => {
+  it("aKind は粒ごとに isEmberParticle と同じ（火の粉は粒の数を増やさず，同じ描画で出す）", () => {
+    const fs = build();
+    const kind = meshByName(fs, FIRE_MESH_NAME).geometry.getAttribute("aKind");
+    expect(kind.count).toBe(FIRE_PARTICLES.count);
+    let embers = 0;
+    for (let i = 0; i < kind.count; i++) {
+      expect(kind.getX(i)).toBe(isEmberParticle(i) ? 1 : 0);
+      if (kind.getX(i) === 1) embers++;
+    }
+    expect(embers).toBeGreaterThan(0);
+    expect(embers).toBeLessThan(FIRE_PARTICLES.count);
+    fs.dispose();
+  });
+
+  it("出す粒の aCenter は燃えているマスの中心で，生まれる位置はそこから ±0.625 マス以内", () => {
+    const fs = build();
+    const t = 40;
+    fs.update(t, standingEye);
+    const geometry = meshByName(fs, FIRE_MESH_NAME).geometry;
+    const spawn = geometry.getAttribute("aSpawn");
+    const center = geometry.getAttribute("aCenter");
+    const burning = fs.cells.fire.filter((c) => c.seconds <= t);
+    let active = 0;
+    for (let i = 0; i < spawn.count; i++) {
+      if (spawn.getW(i) > t) continue;
+      active++;
+      const cx = center.getX(i);
+      const cz = center.getY(i);
+      expect(burning.some((c) => c.centerX === cx && c.centerZ === cz)).toBe(true);
+      expect(Math.abs(spawn.getX(i) - cx)).toBeLessThanOrEqual(0.625 + 1e-6);
+      expect(Math.abs(spawn.getZ(i) - cz)).toBeLessThanOrEqual(0.625 + 1e-6);
+    }
+    expect(active).toBeGreaterThan(0);
+    fs.dispose();
+  });
+
+  it("update で aCenter を作り直さず，生まれ直した粒がある時だけ GPU へ送る", () => {
+    const fs = build();
+    const center = meshByName(fs, FIRE_MESH_NAME).geometry.getAttribute(
+      "aCenter",
+    ) as THREE.InstancedBufferAttribute;
+    const array = center.array;
+    fs.update(20, null);
+    const v = center.version;
+    fs.update(20, null);
+    expect(center.version).toBe(v);
+    fs.update(25, null);
+    expect(center.version).toBeGreaterThan(v);
+    expect(center.array).toBe(array);
     fs.dispose();
   });
 });

@@ -18,6 +18,7 @@ import {
   createCellAtlas,
   createFireParticleSeeds,
   eyeSmokeDensity,
+  FIRE_EMBERS,
   FIRE_GLOW_SPREAD,
   FIRE_PARTICLES,
   type FireSmokeCell,
@@ -25,17 +26,21 @@ import {
   floorBaseY,
   HIDDEN_IGNITION_SECONDS,
   hash01,
+  isEmberParticle,
   listFireSmokeCells,
   type ParticleSpawn,
   particleCycle,
   particleCycleStart,
   SMOKE_CEILING_HEIGHT,
+  SMOKE_LOOK,
+  SMOKE_SHEET,
   smokeAtHeight,
   smokeDensity,
   smokeFogDensity,
   smokeLayerBottom,
   smokeLayerHeight,
   smokeLayerSpacing,
+  smokeShadeAtHeight,
   sortByIgnition,
   writeCellTexels,
 } from "./fireSmokeLayout";
@@ -97,7 +102,16 @@ function fireCell(seconds: number, overrides: Partial<FireSmokeCell> = {}): Fire
 }
 
 function newSpawn(): ParticleSpawn {
-  return { active: true, x: Number.NaN, y: Number.NaN, z: Number.NaN, ignition: 0, boost: 0 };
+  return {
+    active: true,
+    x: Number.NaN,
+    y: Number.NaN,
+    z: Number.NaN,
+    centerX: Number.NaN,
+    centerZ: Number.NaN,
+    ignition: 0,
+    boost: 0,
+  };
 }
 
 describe("fireIntensity", () => {
@@ -984,6 +998,19 @@ describe("chooseParticleSpawn", () => {
     }
   });
 
+  it("割り当てたマスの中心を centerX・centerZ に書く（炎の先を細くするため）", () => {
+    const sorted = burning(5, 2, 0);
+    const out = newSpawn();
+    for (let i = 0; i < 50; i++) {
+      chooseParticleSpawn(sorted, i, 2, seed, 2, null, out);
+      const cell = sorted.find((c) => c.centerX === out.centerX && c.centerZ === out.centerZ);
+      expect(cell).toBeDefined();
+      if (cell === undefined) continue;
+      expect(Math.abs(out.x - cell.centerX)).toBeLessThanOrEqual(0.625 * 2);
+      expect(Math.abs(out.z - cell.centerZ)).toBeLessThanOrEqual(0.625 * 2);
+    }
+  });
+
   it("燃えている全てのマスに粒が割り当てられる", () => {
     // マスの中心を 10 m ずつ離し，粒の位置からどのマスか分かるようにする
     const sorted = sortByIgnition(
@@ -1046,5 +1073,72 @@ describe("chooseParticleSpawn", () => {
     expect(out.active).toBe(true);
     expect(Number.isFinite(out.ignition)).toBe(true);
     expect(out.ignition).toBeLessThanOrEqual(0);
+  });
+});
+
+describe("smokeShadeAtHeight", () => {
+  const heights = [0, 0.5, 0.9, 1.2, 1.35, 1.6, 2, 2.5, 2.9, 3, 3.2];
+
+  it.each([0, 0.05, 0.3, 0.7, 1])("濃さ %d では，どの高さでも smokeAtHeight 以上で 1 以下", (d) => {
+    for (const h of heights) {
+      expect(smokeShadeAtHeight(d, h)).toBeGreaterThanOrEqual(smokeAtHeight(d, h));
+      expect(smokeShadeAtHeight(d, h)).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it("濃さ 0・NaN，高さ NaN は 0", () => {
+    expect(smokeShadeAtHeight(0, 2.9)).toBe(0);
+    expect(smokeShadeAtHeight(Number.NaN, 2.9)).toBe(0);
+    expect(smokeShadeAtHeight(0.5, Number.NaN)).toBe(0);
+  });
+
+  it("範囲外の濃さは 0〜1 に収めて扱う", () => {
+    expect(smokeShadeAtHeight(-1, 2.9)).toBe(0);
+    expect(smokeShadeAtHeight(5, 2.9)).toBe(smokeShadeAtHeight(1, 2.9));
+  });
+
+  it("着いたばかり（濃さ 0.1）は天井の近くだけが見える濃さで，下の層の高さでは薄い煙だけ", () => {
+    const d = 0.1;
+    // 天井の膜は strength × √d
+    expect(smokeShadeAtHeight(d, 2.9)).toBeCloseTo(SMOKE_SHEET.strength * Math.sqrt(d), 6);
+    expect(smokeShadeAtHeight(d, 2.9)).toBeGreaterThan(3 * smokeAtHeight(d, 2.9));
+    // 下の端（2.82 m）の softEdge より下は smokeAtHeight（薄い煙）のまま
+    expect(smokeShadeAtHeight(d, 2.3)).toBe(smokeAtHeight(d, 2.3));
+    expect(smokeShadeAtHeight(d, 1.35)).toBeCloseTo(SMOKE_LOOK.hazeRatio * d, 6);
+  });
+
+  it("時間とともに下へ厚くなる（2 m の高さの濃淡は濃さとともに増える）", () => {
+    let prev = -1;
+    for (const d of [0.05, 0.2, 0.4, 0.6, 0.8, 1]) {
+      const v = smokeShadeAtHeight(d, 2);
+      expect(v).toBeGreaterThanOrEqual(prev);
+      prev = v;
+    }
+    expect(smokeShadeAtHeight(0.05, 2)).toBeLessThan(0.05);
+    expect(smokeShadeAtHeight(1, 2)).toBeCloseTo(SMOKE_SHEET.strength, 6);
+  });
+
+  it("しゃがんだ目（0.9 m）の高さでは smokeAtHeight と同じ（しゃがむと晴れる挙動を変えない）", () => {
+    for (const d of [0.1, 0.5, 1]) {
+      expect(smokeShadeAtHeight(d, CROUCHING_EYE)).toBe(smokeAtHeight(d, CROUCHING_EYE));
+    }
+  });
+});
+
+describe("isEmberParticle", () => {
+  it("粒のうちおよそ FIRE_EMBERS.ratio の割合が火の粉になる", () => {
+    let embers = 0;
+    for (let i = 0; i < FIRE_PARTICLES.count; i++) if (isEmberParticle(i)) embers++;
+    const ratio = embers / FIRE_PARTICLES.count;
+    expect(ratio).toBeGreaterThan(FIRE_EMBERS.ratio * 0.6);
+    expect(ratio).toBeLessThan(FIRE_EMBERS.ratio * 1.4);
+  });
+
+  it("同じ粒はいつも同じ結果", () => {
+    for (let i = 0; i < 50; i++) expect(isEmberParticle(i)).toBe(isEmberParticle(i));
+  });
+
+  it("火の粉を決める塩は粒の位置の乱数（0・1・101・202）と重ならない", () => {
+    expect([0, 1, 101, 202]).not.toContain(FIRE_EMBERS.salt);
   });
 });

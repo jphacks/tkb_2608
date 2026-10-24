@@ -55,7 +55,7 @@ export const SMOKE_FOG = {
   /** 目の位置の煙が最も濃い（1）時のフォグの濃さ（1/m） */
   maxDensity: 0.8,
   /** 煙の色（灰色．0xRRGGBB） */
-  color: 0x5f5f5f,
+  color: 0x4a4744,
 } as const;
 
 /**
@@ -185,6 +185,36 @@ export function smokeLayerHeight(index: number, count = SMOKE_LAYER_COUNT): numb
   const top = SMOKE_CEILING_HEIGHT - SMOKE_LAYER_CEILING_GAP;
   if (count <= 1) return top;
   return top - ((top - SMOKE_LOWEST_LAYER) * index) / (count - 1);
+}
+
+/**
+ * 煙の層の見た目のための値（濃さの計算 smokeAtHeight・eyeSmokeDensity には使わない．描画の濃淡だけに使う）．
+ * 煙は天井に当たって薄い膜のように這って広がり，時間とともに下へ厚くなる．smokeAtHeight は着いたばかりの薄い煙を
+ * ほとんど見せないため，層の下の端より上では「天井の膜」の濃さを下限として見せ，先端が天井を這う様子を出す
+ */
+export const SMOKE_SHEET = {
+  /** 天井の膜の濃さの上限（0〜1．最も濃い煙で層の下の端より上に残る濃さ） */
+  strength: 0.8,
+  /** 膜の濃さの立ち上がり（濃さ d の何乗か）．1 より小さいほど着いてすぐ濃く見える */
+  exponent: 0.5,
+} as const;
+
+/**
+ * 描画する煙の濃淡（0〜1）．濃さ density（0〜1）のマスの床からの高さ（m）ごとの値．
+ * smokeAtHeight と，天井の膜（strength × density^exponent．層の下の端より上で効き，下の端の softEdge 下で 0）の大きい方．
+ * - 着いたばかり（density が小さい）: 下の端が天井の近くにあるので，天井の近くだけが薄く見える
+ * - 時間とともに下の端が下りて，膜が下へ厚くなる
+ * 目の位置の煙・フォグには使わない（しゃがむと晴れる挙動は smokeAtHeight のまま）
+ */
+export function smokeShadeAtHeight(density: number, heightAboveFloor: number): number {
+  const d = clamp01(density);
+  if (d === 0 || Number.isNaN(heightAboveFloor)) return 0;
+  const base = smokeAtHeight(d, heightAboveFloor);
+  const bottom = smokeLayerBottom(d);
+  const { softEdge } = SMOKE_LOOK;
+  const inside = smoothstep01((heightAboveFloor - (bottom - softEdge)) / softEdge);
+  const sheet = SMOKE_SHEET.strength * d ** SMOKE_SHEET.exponent * inside;
+  return Math.max(base, sheet);
 }
 
 /** 層と層の間の高さ（m）．1 枚の層が受け持つ煙の厚みとして，不透明度の計算に使う */
@@ -446,6 +476,22 @@ export const FIRE_PARTICLES = {
   candidates: 2,
 } as const;
 
+/**
+ * 火の粉の値．粒のうち一部は，炎として光った後に黒い煙にならず，火の粉（小さく明るい点）になって舞い上がる．
+ * 描画は炎の粒と同じ 1 回（粒の数も増やさない）
+ */
+export const FIRE_EMBERS = {
+  /** 粒のうち火の粉になる割合（0〜1） */
+  ratio: 0.15,
+  /** 火の粉か否かを決める乱数の塩（hash01 の salt．粒の位置の乱数と重ならない値） */
+  salt: 303,
+} as const;
+
+/** index 番目の粒が火の粉になるか（粒ごとに固定．作る時に 1 回だけ求めてシェーダーへ渡す） */
+export function isEmberParticle(index: number): boolean {
+  return hash01(index, 0, FIRE_EMBERS.salt) < FIRE_EMBERS.ratio;
+}
+
 /** 粒が出ない（隠す）時に書く火の着く時刻（s）．シェーダーで「まだ燃えていない」として描かない */
 export const HIDDEN_IGNITION_SECONDS = 1e6;
 
@@ -526,6 +572,9 @@ export interface ParticleSpawn {
   x: number;
   y: number;
   z: number;
+  /** 割り当てたマスの中心（ワールド座標，m）．炎の粒が昇りながら中心へ寄って先が細くなるのに使う．出さない時は前の値のまま */
+  centerX: number;
+  centerZ: number;
   /** 割り当てたマスに火が着く時刻（s）．出さない時は HIDDEN_IGNITION_SECONDS */
   ignition: number;
   /** 粒の大きさの倍率（1〜FIRE_PARTICLES.maxBoost） */
@@ -576,6 +625,8 @@ export function chooseParticleSpawn(
   out.x = chosen.centerX + (hash01(index, cycle, 101) - 0.5) * range;
   out.y = chosen.baseY;
   out.z = chosen.centerZ + (hash01(index, cycle, 202) - 0.5) * range;
+  out.centerX = chosen.centerX;
+  out.centerZ = chosen.centerZ;
   // 最初から燃えている扱い（-Infinity）でもシェーダーに有限の値を渡す
   out.ignition = Math.max(chosen.seconds, -HIDDEN_IGNITION_SECONDS);
   const perCell = count / burning;
