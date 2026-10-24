@@ -56,6 +56,21 @@
 - 記録を始めると，スマホは開発サーバーと時刻を合わせて `clock` を記録する．操作盤の PC も開いた時に合わせ，押した時刻を開発サーバーの時刻を介してスマホの時刻に換算する（合わせる前に付けた印は，スマホの壁時計で換算するため少しずれる．印の `clock` が `wall` になる）．開発サーバーを再起動すると，記録を送り直すまで操作盤にその端末が出ない
 - 誤判定の場面を回帰テストにする時は，再生と調整のページで表示の範囲を切り出し，判定の対象と同じフォルダの `fixtures/`（例: `src/input/body/fixtures/`）に `<端末>_<装着状態>_<動作>.jsonl` の名前で置き，テストに期待する判定を足す（`src/input/replay/regression.ts` の `checkExpectations`）
 - 開発サーバーにつながらない間の記録はページのメモリに残り，「記録をダウンロード」で `.jsonl` として保存できる（ページを閉じると消える）
+- 記録を取る間は `npm run dev` ではなく `npm run dev:record` を使う（誰かが `src/` を保存すると記録中のページが再読み込みされ，記録が途切れるため）．取り方は [TEST_01](../06_TEST/TEST_01_動きの記録の取り方.md)
+
+### 正解付きの記録の集計 (Replay & Evaluate)
+
+`protocol.html` で取った正解付きの記録を今の判定に流し直し，区間ごとの指標を SPEC_01「判定の安定性」の目安と照らして端末に表で出す（`src/input/replay/replayCli.ts`．実体は `scripts/replay.mjs`）．
+
+| コマンド | 内容 |
+| --- | --- |
+| `npm run replay` | `logs/input/` の記録をすべて流し直し，正解付きの記録ごとに指標と合否を出す |
+| `npm run replay -- <ファイル/フォルダ> --segments` | 対象を絞り，区間ごとの表も出す．`--unlabeled` で正解の無い記録の全体の数も出す |
+| `npm run replay -- --set "名前:key=値,..."` | しきい値の組を既定値に重ねて列に並べて比べる（何度でも指定できる．`--sets <JSON>` でも渡せる．`--no-default` で既定値の列を外す） |
+| `npm run --silent replay -- --slice <ファイル> <始まり秒> <終わり秒> > <出力>.jsonl` | 回帰テスト用に記録の一部を切り出す（秒は記録の始まりから） |
+| `npm run replay -- --help` | 使い方 |
+
+- `npm test` の `src/input/replay/labeledRecordings.test.ts` も，手元の `logs/input/` に正解付きの記録があれば同じ集計を表示する（目安に届かなくても失敗にはしない．記録が無ければ skip）
 
 ### ハンドトラッキングのモデルと wasm (Hand Tracking Assets)
 
