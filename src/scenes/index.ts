@@ -1,10 +1,14 @@
 // 空間の一覧（URL パラメータで選んだ 1 つだけを作る）
 
-import { createElevatorScene } from "./elevator/elevator";
-import { createRoomScene } from "./room/room";
+import { createElevatorScene, isElevatorSpace } from "./elevator/elevator";
+import { createElevatorWalkWorld } from "./elevator/elevatorWalk";
+import { createRoomScene, isRoomSpace } from "./room/room";
+import { createRoomWalkWorld } from "./room/roomWalk";
 import type { SpaceId } from "./spaceParam";
-import { createTrainScene } from "./train/train";
+import { createTrainScene, isTrainSpace } from "./train/train";
+import { createTrainWalkWorld } from "./train/trainWalk";
 import type { Space, SpaceBuildOptions, SpaceFactory } from "./types";
+import type { WalkWorld } from "./walk/locomotion";
 
 const SPACE_FACTORIES: Partial<Record<SpaceId, SpaceFactory>> = {
   room: createRoomScene,
@@ -20,4 +24,12 @@ export function createSpace(id: SpaceId, options: SpaceBuildOptions): Space {
   const factory = SPACE_FACTORIES[id];
   if (!factory) throw new Error(`未実装の空間です: ${id}`);
   return factory(options);
+}
+
+/** 空間の歩行の当たり判定・エリア・目の高さを作る（空間の物の今の位置から） */
+export function createWalkWorld(space: Space): WalkWorld {
+  if (isRoomSpace(space)) return createRoomWalkWorld(space);
+  if (isTrainSpace(space)) return createTrainWalkWorld(space);
+  if (isElevatorSpace(space)) return createElevatorWalkWorld(space);
+  throw new Error(`歩行の当たり判定が未実装の空間です: ${space.id}`);
 }
