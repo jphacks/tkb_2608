@@ -51,30 +51,64 @@ describe("decideStart", () => {
     });
   });
 
-  describe("カメラ", () => {
+  describe("カメラ（Issue #110: 手で開始ボタンに触れて始める）", () => {
     it.each<PermissionOutcome>(["denied", "unavailable", "error"])(
-      "%s の時は手を使わずに進み，案内を出す",
+      "%s の時は既定（requireCamera 省略）では進まず，再読み込みを案内する（needsCamera）",
       (camera) => {
         const d = decideStart(results({ camera }));
-        expect(d.kind).toBe("proceed");
-        if (d.kind === "proceed") {
-          expect(d.handsAvailable).toBe(false);
-          expect(d.notices.length).toBe(1);
+        expect(d.kind).toBe("needsCamera");
+        if (d.kind === "needsCamera") {
+          expect(d.message.length).toBeGreaterThan(0);
+          expect(d.message).toContain("再読み込み");
         }
       },
     );
 
-    it("拒否の時は再読み込みで使えることを案内する", () => {
+    it.each<PermissionOutcome>(["denied", "unavailable", "error"])(
+      "%s の時，requireCamera: true を明示しても進まない",
+      (camera) => {
+        expect(
+          decideStart(results({ camera }), { allowWithoutMotion: false, requireCamera: true }).kind,
+        ).toBe("needsCamera");
+      },
+    );
+
+    it("拒否の時はカメラを許可するよう案内する", () => {
       const d = decideStart(results({ camera: "denied" }));
-      if (d.kind !== "proceed") throw new Error("proceed のはず");
-      expect(d.notices[0]).toContain("再読み込み");
+      if (d.kind !== "needsCamera") throw new Error("needsCamera のはず");
+      expect(d.message).toContain("許可");
     });
 
-    it("notRequired は使えるものとして扱う", () => {
-      const d = decideStart(results({ camera: "notRequired" }));
-      if (d.kind !== "proceed") throw new Error("proceed のはず");
-      expect(d.handsAvailable).toBe(true);
+    it("「センサーなしで進む」を選んでもカメラが使えなければ進まない", () => {
+      const d = decideStart(results({ motion: "denied", camera: "denied" }), {
+        allowWithoutMotion: true,
+      });
+      expect(d.kind).toBe("needsCamera");
     });
+
+    it.each<PermissionOutcome>(["denied", "unavailable", "error"])(
+      "requireCamera: false（mock・replay）なら %s でも手を使わずに進む",
+      (camera) => {
+        const d = decideStart(results({ camera }), {
+          allowWithoutMotion: false,
+          requireCamera: false,
+        });
+        expect(d.kind).toBe("proceed");
+        if (d.kind === "proceed") expect(d.handsAvailable).toBe(false);
+      },
+    );
+
+    it.each<PermissionOutcome>(["granted", "notRequired"])(
+      "%s は使えるものとして扱い，requireCamera によらず進む",
+      (camera) => {
+        for (const requireCamera of [true, false]) {
+          const d = decideStart(results({ camera }), { allowWithoutMotion: false, requireCamera });
+          if (d.kind !== "proceed") throw new Error("proceed のはず");
+          expect(d.handsAvailable).toBe(true);
+          expect(d.notices).toEqual([]);
+        }
+      },
+    );
   });
 
   describe("音", () => {
@@ -90,17 +124,29 @@ describe("decideStart", () => {
     );
   });
 
-  it("センサーなしで進む・カメラ拒否・音なしが重なると案内がすべて出る", () => {
+  it("センサーなしで進む・音なしが重なると案内が両方出る", () => {
     const d = decideStart(
-      { motion: "denied", camera: "denied", audio: "error" },
+      { motion: "denied", camera: "granted", audio: "error" },
       { allowWithoutMotion: true },
     );
     if (d.kind !== "proceed") throw new Error("proceed のはず");
-    expect(d.handsAvailable).toBe(false);
-    expect(d.notices.length).toBe(3);
+    expect(d.handsAvailable).toBe(true);
+    expect(d.notices.length).toBe(2);
   });
 
-  it("センサー拒否はカメラ・音の状態より優先して止める", () => {
+  it("requireCamera: false でセンサーなし・カメラなし・音なしが重なっても進む", () => {
+    const d = decideStart(
+      { motion: "denied", camera: "denied", audio: "error" },
+      { allowWithoutMotion: true, requireCamera: false },
+    );
+    if (d.kind !== "proceed") throw new Error("proceed のはず");
+    expect(d.handsAvailable).toBe(false);
+    // センサー・音の案内は出る（カメラの扱いは今までどおり出さなくてよい）
+    expect(d.notices.some((n) => n.includes("センサー"))).toBe(true);
+    expect(d.notices.some((n) => n.includes("消音"))).toBe(true);
+  });
+
+  it("センサー拒否はカメラ・音の状態より優先して止める（needsCamera より needsMotion）", () => {
     expect(decideStart({ motion: "denied", camera: "denied", audio: "denied" }).kind).toBe(
       "needsMotion",
     );

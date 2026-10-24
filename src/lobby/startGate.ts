@@ -1,11 +1,9 @@
 // ロビーの開始ボタンの判定（DOM・three.js に依存しない純粋な関数）．
 // ゴーグルを付ける時間を取るため，ボタンが押されるまでキャリブレーションを始めない．
 // 開始の方法は StartGateConfig.startMode の 1 か所で切り替える
-// - "auto"（今の本番の既定）: ゴーグルを付ける時間として autoStartSeconds たったら自動で始める
-//   （input/ の手がまだ無いための暫定）
-// - "hand"（最終的な本番）: 手で開始ボタンに触れたら始める．自動では始めない
-// 切り替え方: input/ の手（PlayerInput.hands）が揃ったら，DEFAULT_START_GATE_CONFIG.startMode を "hand" にする
-// （手での開始が有効になり，自動開始が止まる）
+// - "hand"（本番の既定．Issue #110）: 手で開始ボタンに触れたら始める．自動では始めない
+//   （カメラが使えない時は開始画面で止めるため，ロビーに来る時は手を認識できる．startPolicy.ts）
+// - "auto"（手が無かった頃の方式．残しておく）: ゴーグルを付ける時間として autoStartSeconds たったら自動で始める
 // - 手（startMode が "hand" の時）: input/ の PlayerInput.hands で，tracked な手の手のひらがボタンの範囲に入った状態が
 //   handHoldSeconds 続いたら開始
 // - 注視（デバッグ用．本実装は input/ の PlayerInput.hands）: 視線がボタンを捉えた状態が
@@ -22,10 +20,7 @@ import { deviceOrientationToQuat, rotateVec } from "./orientation";
 export type StartMode = "auto" | "hand";
 
 export interface StartGateConfig {
-  /**
-   * 開始の方法．input/ の手（PlayerInput.hands）が揃ったら "hand" にする
-   * （手での開始を有効にし，自動開始を止める）
-   */
+  /** 開始の方法（hand = 手で開始ボタンに触れる，auto = 一定時間で自動） */
   readonly startMode: StartMode;
   /** startMode が "auto" の時，ロビーに入ってから自動で始めるまでの秒数（ゴーグルを付ける時間） */
   readonly autoStartSeconds: number;
@@ -42,8 +37,7 @@ export interface StartGateConfig {
 }
 
 export const DEFAULT_START_GATE_CONFIG: StartGateConfig = {
-  // input/ の手が揃ったら "hand" にする（手での開始を有効にし，自動開始を止める）
-  startMode: "auto",
+  startMode: "hand",
   autoStartSeconds: 15,
   buttonOffset: { x: 0, y: 0, z: -0.5 },
   handRadius: 0.12,
