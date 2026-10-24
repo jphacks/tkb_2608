@@ -22,6 +22,14 @@ export const TEST_PARAMS: InputParams = {
   stepGyroRejectDps: 100,
   stepGyroRelaxWalking: 1.5,
   stepGyroWindowMs: 200,
+  // 以下の新しい項目は既定では無効にする（既存のテストの前提を変えない．使うテストで明示して有効にする）
+  stepGyroMeanRejectDps: 0,
+  stepWeakRatio: 1,
+  stepWalkPeakRatio: 0,
+  headRotCompensation: 0,
+  headLeverXM: 0,
+  headLeverYM: 0,
+  headLeverZM: -0.16,
 
   stepMinIntervalMs: 300,
   stepTentativeTimeoutMs: 1000,
@@ -48,6 +56,7 @@ export const TEST_PARAMS: InputParams = {
   postureStepSuppressM: 0.08,
   postureStepSuppressAfterMs: 500,
   standEscapeSteps: 4,
+  postureSlowGyroDps: 0,
 
   sensorTimeoutMs: 300,
   maxSampleGapMs: 200,

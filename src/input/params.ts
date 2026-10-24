@@ -43,6 +43,32 @@ export interface InputParams {
   readonly stepGyroRelaxWalking: number;
   /** 頭の回転を見る山の前の範囲（ms） */
   readonly stepGyroWindowMs: number;
+  /**
+   * 止まっている時に，山に入った時の頭の回転の平均（約 1 秒．deg/s）がこれ以上なら，その山は数えない．0 で無効．
+   * 見回し・頷きを続けている間は，1 回ずつの回転が stepGyroRejectDps より遅くても上下の揺れが出るため
+   */
+  readonly stepGyroMeanRejectDps: number;
+  /**
+   * 止まっている時に，T_high のこの倍を超えた弱い山が，歩くとみなす間隔（stepMinIntervalMs〜stepTentativeTimeoutMs）で
+   * 2 つ続いたら歩き出す（足踏みの始めが弱い人向け）．1 以上・0 以下で無効
+   */
+  readonly stepWeakRatio: number;
+  /** 歩いている間は T_high を直近の歩の山の平均のこの倍まで下げる（T_high の半分が下限）．0 で無効 */
+  readonly stepWalkPeakRatio: number;
+  /**
+   * 頭の回転による加速度（接線・向心）を見積もって，上下の加速度から差し引くか（0: しない，1: する）．
+   * 首を振るだけで出る上下の揺れを減らす（experiment_山﨑/04 ④．body/rotationCompensation.ts）．
+   * 上下の加速度はしゃがみの判定にも使うため，そちらにも効く
+   */
+  readonly headRotCompensation: number;
+  /**
+   * 頭の回転の中心（首）からスマホ（加速度センサー）までの位置（m）．端末の座標（x: 画面の右，y: 画面の上，
+   * z: 画面から手前（目の側））．ゴーグルではスマホは目より前にあるため z は負．
+   * 横向きでは画面の上下が x 軸になるため，上下のずれは横向きの向き（左右どちらが上か）で X の符号が変わる
+   */
+  readonly headLeverXM: number;
+  readonly headLeverYM: number;
+  readonly headLeverZM: number;
 
   // ---- 足踏み: 状態機械と速さ（⑤⑥） ----
   /** 仮に歩く → 歩くとみなす 2 歩目の間隔の下限（ms） */
@@ -99,6 +125,11 @@ export interface InputParams {
   readonly postureStepSuppressAfterMs: number;
   /** 逃げ道（案 A）: しゃがんだまま，立っている時の大きさの足踏みがこの歩数続いたら立ったとみなす．0 で無効 */
   readonly standEscapeSteps: number;
+  /**
+   * ゆっくりした・静止の無いしゃがみ（漏れ付きの長い積分．posture.ts の updateSlowCrouch）を，頭の回転の平均（deg/s）が
+   * これ未満の時だけ使う．0 で無効
+   */
+  readonly postureSlowGyroDps: number;
 
   // ---- フェイルセーフ（experiment_山﨑/09） ----
   /** 最後のサンプルからこの時間（ms）届かなければ walking を false にする */
@@ -117,19 +148,51 @@ export const DEFAULT_INPUT_PARAMS: InputParams = {
   stepBandLowHz: 1.0,
   stepBandHighHz: 3.0,
 
-  // 立ちの T_high は 1.2 だと弱い足踏み（山 1.0〜1.5）を取りこぼし，1.0 だと首振りの誤検出が増えたため 1.1
-  // （logs/input/20261024-143537_o0qich1i・143118_keucfuvm・142810_ag8vpdil を流し直して比べた）
-  stepHighStanding: 1.1,
+  // 立ちの T_high は 1.2 だと弱い足踏み（山 1.0〜1.5）を取りこぼし，1.0 だと首振りの誤検出が増えたため 1.1 とした
+  // （logs/input/20261024-143537_o0qich1i・143118_keucfuvm・142810_ag8vpdil を流し直して比べた）．
+  // その後，見回し・頷きを続けている間の山を stepGyroMeanRejectDps で除くようにしたため 0.9 に下げた．
+  // 正解付きの 20261024-175827_3uehweky・180703_s53t40a2・182402_ygakcbm7 で，足踏みの検出率が 1.1 / 1.0 / 0.9 / 0.8 で
+  // 74・68・51% / 82・75・63% / 89・79・69% / 94・79・71%，静止・見回し・頷きの歩き出しの誤検出は 0.8 だけ 2 回（他は 0）．
+  // 静止時の帯域通過後の値の 99% 点（0.25 m/s^2）の 3 倍以上は保つ
+  stepHighStanding: 0.9,
   stepLowStanding: 0.35,
   stepHighCrouching: 0.7,
   stepLowCrouching: 0.25,
   stepNoiseFactor: 3,
   stepRefractoryMs: 250,
   // 足踏みの山の前の角速度は 50〜92 deg/s，首振りは 110 以上（20261024-143537_o0qich1i．ラベル無しの推測）．
-  // 60 では足踏みを除外しすぎ（143118_keucfuvm），150 × 歩く間 1.5 倍では首振りが通った（143537）ため 110・緩めない
+  // 60 では足踏みを除外しすぎ（143118_keucfuvm），150 × 歩く間 1.5 倍では首振りが通った（143537）ため 110 とし，一度は歩く間も緩めないことにした
   stepGyroRejectDps: 110,
+  // 歩いている間も緩めない（1.0）．1.5 倍（165 deg/s）にすると 20261024-182402_ygakcbm7（足踏みの山の前後で頭が 110〜160 deg/s 回る人）の
+  // 足踏みの検出率が上がる（調整の時点で 69 → 88%）が，首振りの fixture（fixtures/iphone_goggles_head_shake_false_walk）で
+  // 「仮に歩く」から「歩く」まで進むようになった（以前 150 × 1.5 倍でも首振りが通った．experiment_山﨑/04 ④）．
+  // 体験中に勝手に前へ進む方が困るため，2 人目の検出率より首振りで歩かないことを優先した（Issue #48）
   stepGyroRelaxWalking: 1.0,
   stepGyroWindowMs: 200,
+  // 歩き出しの誤検出になった山の前の頭の回転の平均は，多くが 66〜140 deg/s（4 人分の look_around・nod），
+  // ゴーグルを付けた足踏みの 1 歩目の前は 1 秒の平均で 4〜49（同じ 4 人分）．平均の時定数（stepDetector.ts の
+  // GYRO_MEAN_TAU_SEC）0.5 / 1.0 / 1.5 秒 × しきい値 50〜80 を比べ，1.0 秒・70 で，183237_curfcrp9 の頷きの誤検出が消え，
+  // 182402_ygakcbm7 の 1 回目の動き出しも遅れなかった（60 以下で 1717 → 3533 ms に遅れ，80 で 183237 の誤検出が残る．
+  // 境目の余裕は小さい）
+  stepGyroMeanRejectDps: 70,
+  // 弱い山の 2 つ続きで歩き出す．4 人分（175827_3uehweky・182402_ygakcbm7・183237_curfcrp9・183931_t9tonjf6）で
+  // 無効（1）/ 0.65 / 0.62 / 0.6 / 0.55 / 0.5 の時，見回し・頷きの歩き出しの誤検出は計 1 / 1 / 1 / 1 / 4 / 5 回
+  // （1 回は 183931 の見回しで，この変更の前からある），1 回目の足踏みの動き出しの最大は 183931 で 1600 / 550 / 550 / 550 ms，
+  // 182402 で 1717 / 1717 / 882 / 882 ms．0.55 以下で誤検出が増えるため，余裕を取って 0.65（弱い山は 0.59 m/s^2 から．
+  // 静止時の帯域通過後の値の 99% 点 0.25 の 2 倍以上）
+  stepWeakRatio: 0.65,
+  // 4 人分で，無効（0）/ 0.4 / 0.45 / 0.5 / 0.55 / 0.6 / 0.7 の時の足踏みの検出率は
+  // 175827: 90 / 99 / 99 / 99 / 97 / 93 / 90%，182402: 88 / 100 / 96 / 94 / 93 / 92 / 88%，
+  // 183237: 76 / 97 / 97 / 97 / 87 / 87 / 76%，183931: 91 / 95 / 95 / 94 / 93 / 93 / 91%．
+  // 4 人とも 0.4〜0.5 が良く（どの 1 人を抜いて選んでも同じ範囲），数えた歩は目安の歩を 2 歩までしか超えず，
+  // 歩き出しの誤検出・止まるまでの時間は変わらなかったため，範囲の上の端の 0.5（下げすぎない側）
+  stepWalkPeakRatio: 0.5,
+  // 回転の差し引きは既定では使わない（ジャイロでの除外だけの今の判定と，正解付きの記録で比べてから決める）．
+  // 位置は目安: スマホは目より約 8 cm 前，目は首の回転軸より約 8 cm 前（上下のずれは記録で決める）
+  headRotCompensation: 0,
+  headLeverXM: 0,
+  headLeverYM: 0,
+  headLeverZM: -0.16,
 
   stepMinIntervalMs: 300,
   stepTentativeTimeoutMs: 1000,
@@ -148,15 +211,25 @@ export const DEFAULT_INPUT_PARAMS: InputParams = {
   postureCandidateMs: 100,
   postureRestBeforeMs: 150,
   postureMaxIntegrateMs: 1500,
-  zuptAccel: 0.35,
+  // 静止の判定は短い RMS（posture.ts の QUIET_TAU_SEC）で見る．20261024-175827_3uehweky で RMS は静止の 90% 点が 0.34，
+  // 足踏みの中央値が 1.4．0.35 だと，しゃがんだ・立った後の小さな揺れで静止が成り立たず，しゃがむ・立つの検出率が
+  // 0.35 / 0.45 / 0.5 / 0.6 で 90 / 100 / 100 / 100%（静止の後の速度を追う変更の後）だったため，間を取って 0.5
+  zuptAccel: 0.5,
   zuptGyroDps: 25,
   zuptMaxVelocity: 0.25,
   zuptMs: 150,
   crouchDepthM: 0.4,
   postureConfirmRatio: 0.5,
   postureStepSuppressM: 0.08,
-  postureStepSuppressAfterMs: 500,
-  standEscapeSteps: 4,
+  // 帯域通過（1 Hz の高域通過）は大きな動作の後に約 1 周期（1 秒）揺れ残り，しゃがむ・立つの後の揺れを足踏みと数えた
+  // （20261024-175827_3uehweky の squat_stand: 500 ms では歩き出し 3 回．700・800・1000 ms では 0 回）
+  postureStepSuppressAfterMs: 800,
+  // 逃げ道（案 A）は使わない: 20261024-175827_3uehweky のしゃがみ歩きは帯域通過後の山が 5〜9 m/s^2 と，
+  // 立った足踏み（1〜2.4 m/s^2）より大きく，しゃがんだ状態から流すと 2 区間とも数歩で「立った」になった
+  standEscapeSteps: 0,
+  // 準備の間のしゃがみの回転の平均は 11〜25 deg/s，漏れ付きの積分が 0.2 m 下がった時のうち見回し・頷き・記録の後の
+  // 体の動きは 53〜95 deg/s（4 人分）．間を取って 40
+  postureSlowGyroDps: 40,
 
   sensorTimeoutMs: 300,
   maxSampleGapMs: 200,

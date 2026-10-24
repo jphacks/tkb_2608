@@ -21,12 +21,30 @@ function calib(over: Partial<CalibrationProfile>): CalibrationProfile {
 }
 
 describe("DEFAULT_INPUT_PARAMS・INPUT_PARAM_KEYS", () => {
-  it("既定値はすべて有限の正の数（値そのものは調整中のため確かめない）", () => {
+  // 0 で無効にできる項目（ON/OFF・逃げ道の歩数）と，符号つきの位置（m）の項目．Issue #48 で足した仕様
+  const ZERO_ALLOWED = new Set<string>(["standEscapeSteps", "headRotCompensation"]);
+  const SIGNED = new Set<string>(["headLeverXM", "headLeverYM", "headLeverZM"]);
+
+  it("既定値はすべて有限で，0 で無効・符号つきの項目を除いて正の数（値そのものは調整中のため確かめない）", () => {
     for (const key of INPUT_PARAM_KEYS) {
       const v = DEFAULT_INPUT_PARAMS[key];
       expect(Number.isFinite(v), key).toBe(true);
-      expect(v, key).toBeGreaterThan(0);
+      if (SIGNED.has(key)) continue;
+      if (ZERO_ALLOWED.has(key)) expect(v, key).toBeGreaterThanOrEqual(0);
+      else expect(v, key).toBeGreaterThan(0);
     }
+  });
+
+  it("回転の差し引き（headRotCompensation）は 0 か 1", () => {
+    expect([0, 1]).toContain(DEFAULT_INPUT_PARAMS.headRotCompensation);
+  });
+
+  it("新しい項目も URL パラメータ（paramsFromSearch）で負の数・0 を渡せる", () => {
+    expect(paramsFromSearch("?headLeverZM=-0.08&headRotCompensation=1&stepWeakRatio=0")).toEqual({
+      headLeverZM: -0.08,
+      headRotCompensation: 1,
+      stepWeakRatio: 0,
+    });
   });
 
   it("項目名の一覧は InputParams の全項目と一致する", () => {

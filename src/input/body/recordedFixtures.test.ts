@@ -7,8 +7,13 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_INPUT_PARAMS } from "../params";
 import { computeMetrics } from "../replay/metrics";
+import { parseRecording } from "../replay/parseRecording";
 import { checkExpectations, rejudgeJsonl, type WindowExpectation } from "../replay/regression";
+import { replayBody } from "../replay/replayBody";
 import { labelSegments, parseRecordsJsonl } from "../replay/replayLog";
+import { createBodyState, updateBody } from "./bodyTracker";
+// 実機の首振りの記録（下の「実機の首振り」の説明を参照）
+import headShakeFalseWalk from "./fixtures/iphone_goggles_head_shake_false_walk.jsonl?raw";
 // 注意: いまの fixtures/ は合成の波形だけで，実機の記録ではない（実機の記録がまだ無いため．仕組みが動くことを示すサンプル）．
 // 実機で誤判定した場面を足したら，合成のものは残しても消してもよい．
 // 端末: なし（合成）・装着: なし・動作: 静止 3 秒 → 2 Hz の足踏み 5 秒 → 静止 2 秒 → 0.4 m しゃがむ → しゃがんで静止．
@@ -72,4 +77,41 @@ describe("記録の切り出しの回帰テスト（fixtures/）", () => {
       expect(m.walkLatencyOver).toBe(0);
     },
   );
+});
+
+// 実機の記録: iPhone・ゴーグル装着・立ったまま首を振る（110〜235 deg/s が約 14 秒．正解のラベルは無く角速度からの推定）．
+// logs/input/20261024-143537_o0qich1i の 219〜233 秒．2026-10-24 の既定値（stepGyroRejectDps 110・stepHighStanding 1.1）では
+// 仮に歩くが 3 回出た（誤検出）．SPEC_01 の目安は「頭を振っただけで歩行と判定されない（0 回）」だが，
+// Issue #48 の既定値でもまだ 3 回出るため，ここでは現状（増えていないこと）と，仮に歩くから歩くまで進まないことを確かめ，
+// 0 回は todo に残す（stepGyroRelaxWalking を 1.5 にした時に歩くまで進んだため，それが戻らないことを見る）
+
+describe("実機の首振り（iphone_goggles_head_shake_false_walk）", () => {
+  const rec = parseRecording(headShakeFalseWalk);
+  const tl = replayBody(rec.motions, DEFAULT_INPUT_PARAMS);
+
+  it("記録を読める（壊れた行が無い・約 14 秒分）", () => {
+    expect(rec.badLines).toBe(0);
+    expect(rec.motions.length).toBeGreaterThan(800);
+  });
+
+  it("現状の確認: 今の既定値では歩き出し（walking が true になる）が 3 回出る（元のコードの 3 回から増えていない）", () => {
+    expect(tl.walkChanges.filter((c) => c.walking)).toHaveLength(3);
+  });
+
+  it("仮に歩くから歩く（walking）までは進まない", () => {
+    const s = createBodyState(DEFAULT_INPUT_PARAMS, "standing");
+    const modes = new Set<string>();
+    for (const sample of rec.motions) {
+      updateBody(s, sample, DEFAULT_INPUT_PARAMS);
+      modes.add(s.locomotion.mode);
+    }
+    expect(modes.has("tentative")).toBe(true);
+    expect(modes.has("walking")).toBe(false);
+  });
+
+  it("首振りでしゃがむ・立つとは判定しない", () => {
+    expect(tl.postureChanges).toEqual([]);
+  });
+
+  it.todo("SPEC_01 の目安: 首を振るだけでは歩き出さない（0 回）");
 });

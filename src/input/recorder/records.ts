@@ -68,6 +68,25 @@ export interface LabelRecord {
 }
 
 /**
+ * 区間の中の合図（手順記録ページが案内した時刻に書く．例: しゃがむ・立つの 1 回ごとの合図）．
+ * しゃがみ・立ち上がりの遅れと見逃しを 1 回ごとに数えるため（experiment_山﨑/11）
+ */
+export interface CueRecord {
+  readonly type: "cue";
+  /** 実際に案内した時刻 */
+  readonly t: number;
+  /** 予定の時刻（手順の開始時刻 + 合図の相対時刻） */
+  readonly plannedT: number;
+  /** 合図の種類（"crouch"・"stand" 等） */
+  readonly cue: string;
+  /** 区間の中の合図の番号（0 始まり） */
+  readonly index: number;
+  /** 合図を出した区間のラベルと番号 */
+  readonly label: string;
+  readonly segment: number;
+}
+
+/**
  * 見ている人が付ける印（PC の操作盤のページから開発サーバー経由で書き込む．src/input/dev/panel.html）．
  * t は記録している端末の performance.now() の基準に換算した時刻（ms）
  */
@@ -203,6 +222,7 @@ export type InputRecord =
   | OrientationRecord
   | ScreenRecord
   | LabelRecord
+  | CueRecord
   | MarkRecord
   | ClockRecord
   | VisibilityRecord

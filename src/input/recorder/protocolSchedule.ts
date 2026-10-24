@@ -1,7 +1,30 @@
 // 手順記録の手順の定義と，スケジュールの計算・ラベル付け（DOM に依存しない純粋な関数）．
 // 各区間の前に準備の時間を置き，「準備 → 動作 → 準備 → 動作 …」と進める．
 // 時刻はすべて手順の開始（時刻 0）からの相対の ms
-import type { LabelRecord } from "./records";
+import type { CueRecord, LabelRecord } from "./records";
+
+/** 区間の中の合図（例: しゃがむ・立つの 1 回ごと） */
+export interface ProtocolCue {
+  /** 動作の始まりからの時刻（秒）．0 より大きく区間の長さより小さいものだけを使う */
+  readonly atSec: number;
+  /** 記録に残す種類（英小文字．"crouch"・"stand" 等） */
+  readonly cue: string;
+  /** 画面と音声で伝える言葉 */
+  readonly say: string;
+}
+
+/** しゃがむ・立つの合図の 1 回の長さ（秒）．この半分ずつ，しゃがんだまま・立ったまま止まる */
+export const SQUAT_CYCLE_SEC = 4;
+
+/** しゃがむ・立つを count 回，合図で案内する（各回の始まりから 0.5 秒でしゃがむ，その半周期後に立つ） */
+export function squatCues(count: number, cycleSec: number = SQUAT_CYCLE_SEC): ProtocolCue[] {
+  const cues: ProtocolCue[] = [];
+  for (let i = 0; i < count; i++) {
+    cues.push({ atSec: i * cycleSec + 0.5, cue: "crouch", say: "しゃがむ" });
+    cues.push({ atSec: i * cycleSec + 0.5 + cycleSec / 2, cue: "stand", say: "たつ" });
+  }
+  return cues;
+}
 
 /** 手順の 1 種類 */
 export interface ProtocolStep {
@@ -15,6 +38,8 @@ export interface ProtocolStep {
   readonly durationSec: number;
   /** 繰り返す回数（省略時 1）．回ごとに別の区間になり，間に準備の時間が入る．切り捨てて 1 未満・NaN なら手順ごと飛ばす */
   readonly repeat?: number;
+  /** 区間の中の合図（省略時は無し）．回ごとに同じ合図を出す */
+  readonly cues?: readonly ProtocolCue[];
 }
 
 /** 既定の手順（1 人約 4〜5 分．experiment_山﨑/06「実験の手順」） */
@@ -35,11 +60,12 @@ export const DEFAULT_PROTOCOL_STEPS: readonly ProtocolStep[] = [
     repeat: 3,
   },
   {
-    // しゃがむ・立つ × 10 回を 1 つの区間にする（1 回 4 秒の目安）
+    // しゃがむ・立つ × 10 回を 1 つの区間にする（1 回 4 秒）．1 回ごとの遅れと見逃しを数えるため，合図で案内する
     label: "squat_stand",
     title: "しゃがむ・立つ",
-    instruction: "しゃがんで立つ，を 10 回くり返してください",
+    instruction: "合図に合わせて，しゃがむ・立つを 10 回くり返してください",
     durationSec: 40,
+    cues: squatCues(10),
   },
   {
     label: "crouch_walk",
@@ -144,21 +170,42 @@ export function locate(schedule: ProtocolSchedule, elapsedMs: number): ProtocolP
 }
 
 /** スケジュールの節目 */
-export type ProtocolEventKind = "prep" | "start" | "end" | "done";
+export type ProtocolEventKind = "prep" | "start" | "cue" | "end" | "done";
 
 export interface ProtocolEvent {
   readonly atMs: number;
   readonly kind: ProtocolEventKind;
   /** done の時は null */
   readonly segment: ProtocolSegment | null;
+  /** cue の時だけ: 合図と，区間の中の番号（0 始まり） */
+  readonly cue?: ProtocolCue;
+  readonly cueIndex?: number;
 }
 
-/** 節目を時刻の順に並べる．同じ時刻なら「前の区間の end → 次の区間の prep」の順 */
+/** 区間の中で使う合図（区間の中に収まるものを時刻の順に） */
+export function segmentCues(segment: ProtocolSegment): readonly ProtocolCue[] {
+  const durationSec = (segment.endMs - segment.startMs) / 1000;
+  return (segment.step.cues ?? [])
+    .filter((c) => Number.isFinite(c.atSec) && c.atSec > 0 && c.atSec < durationSec)
+    .slice()
+    .sort((a, b) => a.atSec - b.atSec);
+}
+
+/** 節目を時刻の順に並べる．同じ時刻なら「前の区間の end → 次の区間の prep」の順．合図は start と end の間に入る */
 export function scheduleEvents(schedule: ProtocolSchedule): readonly ProtocolEvent[] {
   const events: ProtocolEvent[] = [];
   for (const segment of schedule.segments) {
     events.push({ atMs: segment.prepStartMs, kind: "prep", segment });
     events.push({ atMs: segment.startMs, kind: "start", segment });
+    segmentCues(segment).forEach((cue, cueIndex) => {
+      events.push({
+        atMs: segment.startMs + Math.round(cue.atSec * 1000),
+        kind: "cue",
+        segment,
+        cue,
+        cueIndex,
+      });
+    });
     events.push({ atMs: segment.endMs, kind: "end", segment });
   }
   events.push({ atMs: schedule.totalMs, kind: "done", segment: null });
@@ -198,5 +245,22 @@ export function labelRecordFor(event: ProtocolEvent, t: number, t0: number): Lab
     segment: event.segment.index,
     repeat: event.segment.repeat,
     repeatCount: event.segment.repeatCount,
+  };
+}
+
+/**
+ * 合図の節目から合図のレコードを作る（cue 以外は null）．
+ * t は実際に案内した時刻，t0 は手順の時刻 0（いずれも performance.now() の ms）
+ */
+export function cueRecordFor(event: ProtocolEvent, t: number, t0: number): CueRecord | null {
+  if (event.kind !== "cue" || event.segment === null || event.cue === undefined) return null;
+  return {
+    type: "cue",
+    t,
+    plannedT: t0 + event.atMs,
+    cue: event.cue.cue,
+    index: event.cueIndex ?? 0,
+    label: event.segment.step.label,
+    segment: event.segment.index,
   };
 }

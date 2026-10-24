@@ -1,6 +1,7 @@
 // 体の判定の全体（射影 → 帯域通過 → 山 → 状態機械，しゃがみ）を合成の波形で確かめる．
 // 基準は SPEC_01「判定の安定性」（足踏みは 0.5 秒以内，しゃがみは 1 秒以内）と experiment_山﨑/04・05・09
 import { describe, expect, it } from "vitest";
+import { synthHeadRotation } from "../replay/synthetic";
 import type { MotionSample } from "../sensors/types";
 import { crouchAccel, G, samplesOf, testParams, verticalSample } from "../testFixtures";
 import {
@@ -320,5 +321,278 @@ describe("書き換える版と返す版", () => {
     const snapshot = JSON.stringify(s);
     readBody(s, 100000, P);
     expect(JSON.stringify(s)).toBe(snapshot);
+  });
+});
+
+describe("歩いている間のしきい値（stepWalkPeakRatio）", () => {
+  /** 静止 2 秒 → 強い足踏み（±1.5）3 秒 → 弱い足踏み（±0.8．帯域通過後の山は T_high 1.0 未満）4 秒 */
+  function strongThenWeak(params: ReturnType<typeof testParams>) {
+    const s = createBodyState(params);
+    rest(s, 0, 2000, params);
+    feed(s, samplesOf(2000, 3000, DT, stepping(2, 1.5)), params);
+    let minHigh = Number.POSITIVE_INFINITY;
+    let weakSteps = 0;
+    for (const x of samplesOf(5000, 4000, DT, stepping(2, 0.8))) {
+      updateBody(s, x, params);
+      minHigh = Math.min(minHigh, s.thresholds.high);
+      if (s.lastStepResult === StepResult.Step) weakSteps++;
+    }
+    return { s, minHigh, weakSteps };
+  }
+
+  it("歩いている間は T_high を直近の歩の山の平均 × 倍率まで下げ，弱くなった歩も数え続ける", () => {
+    const r = strongThenWeak(testParams({ stepWalkPeakRatio: 0.5 }));
+    expect(r.minHigh).toBeLessThan(P.stepHighStanding);
+    // 下限は T_high の半分
+    expect(r.minHigh).toBeGreaterThanOrEqual(P.stepHighStanding * 0.5 - 1e-12);
+    expect(r.weakSteps).toBeGreaterThanOrEqual(6);
+    expect(r.s.locomotion.mode).toBe("walking");
+  });
+
+  it("stepWalkPeakRatio=0 なら下げない（弱くなった歩で止まる）", () => {
+    const r = strongThenWeak(testParams({ stepWalkPeakRatio: 0 }));
+    expect(r.minHigh).toBe(P.stepHighStanding);
+    expect(r.weakSteps).toBe(0);
+    expect(r.s.locomotion.mode).toBe("stopped");
+  });
+
+  it("止まっている時は下げない（同じ弱い足踏みだけでは歩き出さない）", () => {
+    const params = testParams({ stepWalkPeakRatio: 0.5 });
+    const s = createBodyState(params);
+    rest(s, 0, 2000, params);
+    s.step.stepPeakMean = 1.2;
+    let minHigh = Number.POSITIVE_INFINITY;
+    const tr = samplesOf(2000, 4000, DT, stepping(2, 0.8)).map((x) => {
+      updateBody(s, x, params);
+      minHigh = Math.min(minHigh, s.thresholds.high);
+      return s.lastStepResult;
+    });
+    expect(minHigh).toBe(P.stepHighStanding);
+    expect(tr.filter((r) => r === StepResult.Step)).toHaveLength(0);
+    expect(s.locomotion.mode).toBe("stopped");
+  });
+
+  it("歩き終えて止まったら元の T_high に戻る", () => {
+    const params = testParams({ stepWalkPeakRatio: 0.5 });
+    const r = strongThenWeak(params);
+    rest(r.s, 9000, 3000, params);
+    expect(r.s.locomotion.mode).toBe("stopped");
+    expect(r.s.thresholds.high).toBe(P.stepHighStanding);
+  });
+});
+
+describe("弱い足踏みの歩き出し（stepWeakRatio）", () => {
+  /** 静止 2 秒 → 弱い足踏み（±WEAK_AMP）2 秒 → 普通の足踏み（±1.5）2 秒．最初の歩を数えた時刻（ms） */
+  const WEAK_AMP = 0.9;
+  function firstStepT(params: ReturnType<typeof testParams>): number {
+    const s = createBodyState(params);
+    rest(s, 0, 2000, params);
+    const tr = feed(
+      s,
+      samplesOf(2000, 4000, DT, (t) => (t < 2 ? stepping(2, WEAK_AMP)(t) : stepping(2, 1.5)(t))),
+      params,
+    );
+    return tr.find((x) => x.step === StepResult.Step)?.t ?? Number.POSITIVE_INFINITY;
+  }
+
+  it("始めの弱い歩が 2 つ続けば，T_high を超える歩を待たずに歩き出す", () => {
+    const withWeak = firstStepT(testParams({ stepWeakRatio: 0.65 }));
+    const without = firstStepT(testParams({ stepWeakRatio: 1 }));
+    expect(withWeak).toBeLessThan(4000);
+    expect(without).toBeGreaterThanOrEqual(4000);
+  });
+});
+
+describe("静止時のノイズの見積もり（足踏みのしきい値）", () => {
+  // 帯域通過後の揺れ（T_high 1.0 未満）が 5 秒続く．頷き等で頭が回っている間はノイズに入れない
+  it.each([
+    [60, false],
+    [0, true],
+  ])("頭の回転 %s deg/s の間に揺れても，ノイズの見積もりが進む: %s", (gyro, grows) => {
+    const params = testParams();
+    const s = createBodyState(params);
+    feed(
+      s,
+      samplesOf(
+        0,
+        5000,
+        DT,
+        (t) => 0.9 * Math.sin(2 * Math.PI * 2 * t),
+        () => gyro,
+      ),
+      params,
+    );
+    expect(s.locomotion.mode).toBe("stopped");
+    if (grows) {
+      expect(s.step.noiseVar).toBeGreaterThan(0);
+      expect(s.thresholds.high).toBeGreaterThan(params.stepHighStanding);
+    } else {
+      expect(s.step.noiseVar).toBe(0);
+      expect(s.thresholds.high).toBe(params.stepHighStanding);
+    }
+  });
+
+  it("頭が回っている時の揺れの後も，足踏みのしきい値が上がらず次の足踏みを数える", () => {
+    const params = testParams();
+    const s = createBodyState(params);
+    feed(
+      s,
+      samplesOf(
+        0,
+        5000,
+        DT,
+        (t) => 0.9 * Math.sin(2 * Math.PI * 2 * t),
+        () => 60,
+      ),
+      params,
+    );
+    rest(s, 5000, 1000, params);
+    const tr = feed(s, samplesOf(6000, 3000, DT, stepping(2, 1.5)), params);
+    expect(tr.filter((x) => x.step === StepResult.Step).length).toBeGreaterThanOrEqual(4);
+  });
+});
+
+describe("ゆっくりしたしゃがみは歩いている間は使わない", () => {
+  it("止まっている時のゆっくりした・静止の無いしゃがみ（0.6 m を 2 秒）は crouching になる", () => {
+    const params = testParams({ postureSlowGyroDps: 40 });
+    const s = createBodyState(params);
+    // 静止の無い動き（候補のしきい値・足踏みのしきい値未満の 5 Hz の揺れ）の後にしゃがむ
+    const tr = feed(
+      s,
+      samplesOf(0, 8000, DT, (t) =>
+        t < 2 ? 0.5 * Math.sin(2 * Math.PI * 5 * t) : crouchAccel(0.6, 2)(t - 2),
+      ),
+      params,
+    );
+    expect(tr.some((x) => x.walking)).toBe(false);
+    expect(s.posture.posture).toBe("crouching");
+    expect(s.posture.lastOutcome).toBe("crouch-slow");
+  });
+
+  it("歩いている間は，長い積分を毎サンプル捨てる（足踏みの揺れで溜まらない）", () => {
+    const params = testParams({ postureSlowGyroDps: 40 });
+    const s = createBodyState(params);
+    rest(s, 0, 1000, params);
+    let maxAbsSlowH = 0;
+    for (const x of samplesOf(1000, 6000, DT, stepping(2, 3))) {
+      updateBody(s, x, params);
+      if (s.locomotion.mode !== "stopped")
+        maxAbsSlowH = Math.max(maxAbsSlowH, Math.abs(s.posture.slowH));
+    }
+    expect(s.locomotion.mode).toBe("walking");
+    // 毎サンプル 0 に戻してから 1 サンプル分だけ積分するため，溜まらない（1 サンプルの分は 1 cm 未満）
+    expect(maxAbsSlowH).toBeLessThan(0.01);
+    expect(s.posture.posture).toBe("standing");
+  });
+});
+
+describe("頭の回転による加速度の差し引き（headRotCompensation）", () => {
+  const LEVER = { x: 0, y: 0.05, z: -0.16 };
+  /** 軸 axis のまわりに ±30 度・1 Hz で頭を振る 6 秒．2 秒以降の上下の加速度・帯域通過後の値の最大 */
+  function shake(axis: "x" | "y" | "z", params: ReturnType<typeof testParams>) {
+    const s = createBodyState(params);
+    let maxAv = 0;
+    let maxBp = 0;
+    let steps = 0;
+    for (const m of synthHeadRotation({
+      startMs: 0,
+      durationMs: 6000,
+      dtMs: DT,
+      axis,
+      amplitudeDeg: 30,
+      freqHz: 1,
+      lever: LEVER,
+    })) {
+      updateBody(s, m, params);
+      if (s.lastStepResult === StepResult.Step) steps++;
+      if (m.t > 2000) {
+        maxAv = Math.max(maxAv, Math.abs(s.av));
+        maxBp = Math.max(maxBp, Math.abs(s.bp));
+      }
+    }
+    return { maxAv, maxBp, steps };
+  }
+  const on = (lever = LEVER) =>
+    testParams({
+      headRotCompensation: 1,
+      headLeverXM: lever.x,
+      headLeverYM: lever.y,
+      headLeverZM: lever.z,
+    });
+  // 回転を除外しないようにして，上下の揺れだけで歩きと数えるかを見る
+  const NO_GYRO_REJECT = { stepGyroRejectDps: 10000 };
+
+  it.each(["x", "y", "z"] as const)(
+    "%s 軸の首振り: ON・正しいてこなら上下の揺れが OFF の 1/10 以下になる",
+    (axis) => {
+      const off = shake(axis, testParams());
+      const comp = shake(axis, on());
+      expect(comp.maxAv).toBeLessThan(off.maxAv / 10);
+      expect(comp.maxBp).toBeLessThan(off.maxBp / 10);
+    },
+  );
+
+  it("頷き（x 軸）: OFF では帯域通過後の揺れが T_high を超えて歩と数え，ON では T_low 未満で数えない", () => {
+    const off = shake("x", testParams(NO_GYRO_REJECT));
+    const comp = shake("x", testParams({ ...on(), ...NO_GYRO_REJECT }));
+    expect(off.maxBp).toBeGreaterThan(P.stepHighStanding);
+    expect(off.steps).toBeGreaterThan(0);
+    expect(comp.maxBp).toBeLessThan(P.stepLowStanding);
+    expect(comp.steps).toBe(0);
+  });
+
+  it("てこの位置が違う（向きが逆）と小さくならない", () => {
+    const off = shake("x", testParams());
+    const wrong = shake("x", on({ x: 0, y: -0.05, z: 0.16 }));
+    expect(wrong.maxAv).toBeGreaterThan(off.maxAv);
+  });
+
+  it("差し引いても体の上下の加速度（足踏み）は残る", () => {
+    const params = on();
+    const s = createBodyState(params);
+    let maxAv = 0;
+    for (const m of synthHeadRotation({
+      startMs: 0,
+      durationMs: 4000,
+      dtMs: DT,
+      axis: "y",
+      amplitudeDeg: 0,
+      freqHz: 1,
+      lever: LEVER,
+      verticalAccel: stepping(2, 1.5),
+    })) {
+      updateBody(s, m, params);
+      if (m.t > 2000) maxAv = Math.max(maxAv, Math.abs(s.av));
+    }
+    expect(maxAv).toBeGreaterThan(1.3);
+    expect(maxAv).toBeLessThan(1.7);
+  });
+
+  it("角速度が無いサンプル（rot: null）でも例外を投げず，差し引かない", () => {
+    const params = on();
+    const s = createBodyState(params);
+    const samples = samplesOf(0, 1000, DT, () => 0).map((x) => ({ ...x, rot: null }));
+    expect(() => feed(s, samples, params)).not.toThrow();
+    expect(s.rotAcc).toEqual({ x: 0, y: 0, z: 0 });
+    expect(s.av).toBeCloseTo(0, 6);
+  });
+
+  it("resetBody で回転の見積もりも捨てる", () => {
+    const params = on();
+    const s = createBodyState(params);
+    for (const m of synthHeadRotation({
+      startMs: 0,
+      durationMs: 500,
+      dtMs: DT,
+      axis: "x",
+      amplitudeDeg: 30,
+      freqHz: 1,
+      lever: LEVER,
+    }))
+      updateBody(s, m, params);
+    expect(s.rotComp.ready).toBe(true);
+    resetBody(s);
+    expect(s.rotComp.ready).toBe(false);
+    expect(s.rotAcc).toEqual({ x: 0, y: 0, z: 0 });
   });
 });

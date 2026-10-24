@@ -41,11 +41,16 @@ function isFiniteVec(v: { x: number; y: number; z: number } | null): v is {
   return v !== null && Number.isFinite(v.x) && Number.isFinite(v.y) && Number.isFinite(v.z);
 }
 
+/**
+ * correction は射影の前に加速度から差し引く値（m/s^2．端末の座標．頭の回転による加速度の見積もり．
+ * rotationCompensation.ts）．null なら差し引かない．重力の向きの見積もりには使わない（低域通過で消えるため）
+ */
 export function updateVertical(
   s: VerticalState,
   sample: MotionSample,
   dtSec: number,
   cutoffHz: number,
+  correction: { readonly x: number; readonly y: number; readonly z: number } | null = null,
 ): number {
   // 非有限の成分がある値は無いものとして扱う（そのサンプルを捨てる．重力の見積もりに混ぜない）
   const accG = isFiniteVec(sample.accG) ? sample.accG : null;
@@ -69,8 +74,10 @@ export function updateVertical(
   const ux = s.gx / g;
   const uy = s.gy / g;
   const uz = s.gz / g;
-  if (acc !== null) return acc.x * ux + acc.y * uy + acc.z * uz;
-  if (accG !== null) return accG.x * ux + accG.y * uy + accG.z * uz - g;
+  const corr = correction !== null && isFiniteVec(correction) ? correction : null;
+  const cu = corr === null ? 0 : corr.x * ux + corr.y * uy + corr.z * uz;
+  if (acc !== null) return acc.x * ux + acc.y * uy + acc.z * uz - cu;
+  if (accG !== null) return accG.x * ux + accG.y * uy + accG.z * uz - g - cu;
   return Number.NaN;
 }
 
