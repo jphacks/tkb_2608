@@ -111,3 +111,23 @@ describe("resolveLaunchMode（教員用のエディタ ?editor）", () => {
     expect(resolveLaunchMode("?app=false&debrief=0&editor")).toBe("editor");
   });
 });
+
+describe("resolveLaunchMode（避難の音の単独起動 ?audio）", () => {
+  it.each(["?audio", "?audio=1", "?audio=true", "?scene=room&audio"])("%s は音の確認", (search) => {
+    expect(resolveLaunchMode(search)).toBe("audio");
+  });
+
+  it.each(["?audio=0", "?audio=false", "?audio=FALSE"])("%s はビューア", (search) => {
+    expect(resolveLaunchMode(search)).toBe("viewer");
+  });
+
+  it("?app・?debrief が ?audio より優先", () => {
+    expect(resolveLaunchMode("?audio&app")).toBe("app");
+    expect(resolveLaunchMode("?audio&debrief")).toBe("debrief");
+  });
+
+  it("?audio が ?editor より優先", () => {
+    expect(resolveLaunchMode("?editor&audio")).toBe("audio");
+    expect(resolveLaunchMode("?audio=0&editor")).toBe("editor");
+  });
+});

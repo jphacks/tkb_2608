@@ -1,14 +1,25 @@
 // エディタの上から見た図を Canvas 2D に描く薄い殻．配置・壁の辺・教室の名前の位置は editorLayout.ts の純粋な関数で求める
 import type { Floor, Room } from "../core/schoolPlan";
+import type { SpreadMap } from "../sim";
 import type { CellXZ } from "../sim/grid";
 import { type DrillMarkers, type GridLayout, roomLabels, wallEdges } from "./editorLayout";
 import { yawToGridDirection } from "./editorState";
 import { CELL_COLORS, EDITOR_COLORS, roomColor } from "./editorStyle";
+import { spreadStateAt } from "./spreadPreview";
 
 /** 開始地点の印（位置と向き）．向きは startYaw（rad．約束は editorState.ts の FACING_YAW） */
 export interface StartMarker {
   readonly cell: CellXZ;
   readonly yaw: number;
+}
+
+/** 延焼のプレビューで重ねる物（どの階の，どの時刻の火・煙か） */
+export interface SpreadOverlay {
+  readonly spread: SpreadMap;
+  /** SchoolPlan.floors の添字 */
+  readonly floorIndex: number;
+  /** 非常ベルからの時刻（s） */
+  readonly atSeconds: number;
 }
 
 /**
@@ -25,6 +36,7 @@ export function drawEditorGrid(
   hover: CellXZ | null,
   markers: DrillMarkers,
   startYaw: number,
+  spreadOverlay: SpreadOverlay | null = null,
 ): void {
   ctx.fillStyle = EDITOR_COLORS.background;
   ctx.fillRect(0, 0, canvasCssWidth, canvasCssHeight);
@@ -44,6 +56,8 @@ export function drawEditorGrid(
       ctx.fillRect(offsetX + x * cellPx, offsetY + z * cellPx, cellPx, cellPx);
     }
   }
+  // 火・煙はマスの塗りの上，壁・印の下に重ねる（どこが通れなくなるかを壁と一緒に見られるように）
+  if (spreadOverlay !== null) drawSpread(ctx, floor, layout, spreadOverlay);
   drawGridLines(ctx, floor, layout, EDITOR_COLORS.grid);
 
   // 3D で薄い壁が立つ辺
@@ -84,6 +98,28 @@ export function drawEditorGrid(
   ctx.strokeStyle = EDITOR_COLORS.voidGrid;
   ctx.lineWidth = 1;
   ctx.strokeRect(offsetX - 0.5, offsetY - 0.5, widthPx + 1, heightPx + 1);
+}
+
+function drawSpread(
+  ctx: CanvasRenderingContext2D,
+  floor: Floor,
+  layout: GridLayout,
+  overlay: SpreadOverlay,
+): void {
+  const { cellPx, offsetX, offsetY } = layout;
+  for (let z = 0; z < floor.depth; z++) {
+    for (let x = 0; x < floor.width; x++) {
+      const state = spreadStateAt(
+        overlay.spread,
+        overlay.floorIndex,
+        z * floor.width + x,
+        overlay.atSeconds,
+      );
+      if (state === null) continue;
+      ctx.fillStyle = state === "fire" ? EDITOR_COLORS.spreadFire : EDITOR_COLORS.spreadSmoke;
+      ctx.fillRect(offsetX + x * cellPx, offsetY + z * cellPx, cellPx, cellPx);
+    }
+  }
 }
 
 function drawGridLines(
