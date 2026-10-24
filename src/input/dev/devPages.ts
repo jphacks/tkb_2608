@@ -10,6 +10,16 @@ export const DEV_PAGES = [
     title: "手順の記録",
     note: "手順を音で案内してラベル付きで記録（約 5 分）",
   },
+  {
+    file: "detect.html",
+    title: "判定の確認",
+    note: "足踏み・しゃがみの途中の値と状態のグラフ・しきい値のスライダー",
+  },
+  {
+    file: "goggles.html",
+    title: "ゴーグルでの確認",
+    note: "左右 2 画面の空間で歩く・しゃがむ・見回す（判定の状態を視界に表示）",
+  },
 ] as const;
 
 export type DevPageFile = (typeof DEV_PAGES)[number]["file"];
