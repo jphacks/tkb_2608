@@ -411,12 +411,17 @@ PLAN_04 の非機能要件「iPhone で 30 fps 以上」を守るため，処理
 
 | 場面 | 開始時の演出 | 求める動作 | 制限時間 |
 | --- | --- | --- | --- |
-| `classroom` | 教室の環境音，導入のナレーション | 10 秒たつ（`elapsed`） | ― |
-| `alarm` | 非常ベル（ループ），出火の出来事（`happening: fire-start`），校内放送（`narration: fire-announcement`，`params` に火元の教室の名前） | 放送が終わる，または 8 秒たつ（`any`） | ― |
-| `evacuate` | 「火と煙を避けて校庭へ」のナレーション | 集合場所に 1 秒いる（`inArea: assembly`） | `timeLimitSeconds` から ② の秒数を引いたもの．時間切れは逃げ遅れ（`next: null`） |
+| `classroom` | 教室の環境音（ループ），導入のナレーション | 10 秒たつ（`elapsed`） | ― |
+| `alarm` | 教室の環境音を止める，非常ベル（ループ），出火の出来事（`happening: fire-start`），校内放送（`narration: fire-announcement`，`params` に火元の教室の名前） | 放送が終わる（signal `narration-ended:fire-announcement`），または 8 秒たつ（`any`） | ― |
+| `evacuate` | 「火と煙を避けて校庭へ」のナレーション | 集合場所に 1 秒いる（`inArea: assembly`） | `timeLimitSeconds` から ② の既定の 8 秒を引いたもの（下限 1 秒）．時間切れは非常ベルを止めて逃げ遅れ（`next: null`） |
 | `ending` | 非常ベルを止めて締めのナレーション | 3 秒たつ | ― |
 
 - 煙の中の姿勢・火に近づいたことは `checks` に書かず，`evaluateDrill()` で求める（時刻で広がる火と煙はエリアにしないため）
+- ③ の制限時間は ② の既定の 8 秒で固定して引く．放送が 8 秒より早く終わると，非常ベルから打ち切りまでが `timeLimitSeconds` より最大 8 秒短くなる（実際にかかった秒数を引く形にはしていない）
+- 逃げ遅れは，`ScenarioResult` では `evacuate` の `outcome: "timedOut"` で表す（`aborted` は `false` のまま）．結果画面は `DrillEvaluation.lateEscape` を見て判断する
+- 校内放送で伝える火元の名前は `fireOriginName(plan)` で引く．火元のマスの教室名（`rooms[roomOf[...]].name`）を，火元が複数なら同じ名前を除いて「と」でつなぐ．教室の火元が無い時はマスの種類から「廊下」「昇降口」「校庭」「校舎の中」とする
+- **仮の形**: `Cue` の `narration` にまだ `params` が無いため（「受け渡すデータ」の**変更**が未実施），今は火元の名前を `fire-start` の `params.roomName` に載せている．core の専用 PR で `params` を足したら，`fire-announcement` の `params` に移す
+- 効果音・ナレーションの ID（`classroom-ambience`・`fire-alarm`・`classroom-intro`・`evacuate-start`・`drill-ending`）は仮．音の素材に合わせて担当C と決め直す（`DRILL_CUE_ID` にまとめてある）
 
 ### 書き方の例（サンプル）(Sample)
 
