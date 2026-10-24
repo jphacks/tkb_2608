@@ -3,7 +3,8 @@
 // 移動・当たり判定は main.ts が PlayerInput を SpaceWalker に渡して行う（このファイルはカメラに触れない）
 
 import type { PlayerInput } from "./core/types";
-import { formatPlayerInput } from "./input/inputParam";
+import { requestHandCameraStream } from "./input/hand/handCameraStream";
+import { formatHands, formatPlayerInput } from "./input/inputParam";
 import type { InputActivation, InputSource } from "./input/inputSource";
 
 /** 近くのドアを開閉するキー（KeyboardEvent.code．mock の W・S・C と重ならないもの） */
@@ -17,10 +18,24 @@ export interface InputPreviewOptions {
 export class InputPreview {
   private readonly hud: HTMLPreElement;
   private activation: InputActivation | null = null;
+  /** device: 手の認識用のカメラ（最初のタップで取る．このビューアが取ったものなので dispose で止める） */
+  private camera: MediaStream | null = null;
+  private cameraRequested = false;
+  private cameraState = "";
   private readonly onClick = () => {
     void this.input.activate().then((a) => {
       this.activation = a;
     });
+    // ?app では lobby/ がカメラを取るが，ビューアでは同じタップで背面カメラを取って手を認識する
+    if (!this.cameraRequested) {
+      this.cameraRequested = true;
+      this.cameraState = "カメラ: 取得中";
+      void requestHandCameraStream().then((stream) => {
+        this.camera = stream;
+        this.cameraState = stream === null ? "カメラ: 使えません（手なし）" : "カメラ: 使用中";
+        this.input.attachCamera(stream);
+      });
+    }
   };
   private readonly onKeyDown = (event: KeyboardEvent) => {
     if (event.code !== DOOR_TOGGLE_KEY || event.repeat) return;
@@ -58,11 +73,13 @@ export class InputPreview {
   show(input: PlayerInput, statusLines: readonly string[]): void {
     const header =
       this.input.kind === "mock"
-        ? "input=mock  W: 歩く  S: ゆっくり  C: しゃがむ  E: ドア  ドラッグ: 向き"
+        ? "input=mock  W: 歩く  S: ゆっくり  C: しゃがむ  E: ドア  ドラッグ: 向き\n           マウス: 右手  右ボタン・F: 握る  ホイール: 手の奥行き"
         : this.activation === null
           ? "input=device  画面をタップしてセンサーを許可"
-          : `input=device  motion ${this.activation.motion} / orientation ${this.activation.orientation}`;
-    const text = [header, formatPlayerInput(input), ...statusLines].join("\n");
+          : `input=device  motion ${this.activation.motion} / orientation ${this.activation.orientation}  ${this.cameraState}`;
+    const text = [header, formatPlayerInput(input), formatHands(input.hands), ...statusLines].join(
+      "\n",
+    );
     if (this.hud.textContent !== text) this.hud.textContent = text;
   }
 
@@ -71,5 +88,7 @@ export class InputPreview {
     window.removeEventListener("keydown", this.onKeyDown);
     this.hud.remove();
     this.input.dispose();
+    for (const track of this.camera?.getTracks() ?? []) track.stop();
+    this.camera = null;
   }
 }

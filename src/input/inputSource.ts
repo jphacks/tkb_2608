@@ -1,9 +1,11 @@
 // 入力の入口（SPEC_01「input/」）．本物のセンサー（device）とキーボード・マウスのモック（mock），
 // 記録の再生（replay．開発時だけ）を同じ形で返す．
 // app/（今は src/main.ts）は read(now) を描画の直前に呼び，PlayerInput を受け取るだけにする．
-// ハンドトラッキングはまだ無いため，hands は常に UNTRACKED_HAND
+// device の手（PlayerInput.hands）は，カメラの映像を渡した時（camera・attachCamera）だけ認識する．無ければ未認識のまま
 import { type CalibrationProfile, IDLE_PLAYER_INPUT, type PlayerInput } from "../core/types";
 import { DeviceTracker } from "./deviceTracker";
+import { HandCamera } from "./hand/handCamera";
+import type { HandParams } from "./hand/handParams";
 import { MockInput } from "./mock/mockInput";
 import {
   DEFAULT_INPUT_PARAMS,
@@ -62,6 +64,13 @@ export interface InputSourceOptions {
   readonly observer?: InputObserver;
   /** replay: 再生する記録 */
   readonly replay?: ReplayOptions;
+  /**
+   * device: 手の認識に使うカメラの映像（?app では lobby/ の開始画面が取った背面カメラを app/ が渡す）．
+   * 作った後に取れた時は attachCamera で渡す
+   */
+  readonly camera?: MediaStream | null;
+  /** device: 手のしきい値の上書き */
+  readonly handParams?: Partial<HandParams> | null;
 }
 
 export interface InputSource {
@@ -75,6 +84,11 @@ export interface InputSource {
   activate(): Promise<InputActivation>;
   /** 今の向きを正面にする */
   recenter(): void;
+  /**
+   * device: 手の認識に使うカメラの映像を渡す（null で認識を止める）．映像そのものは止めない（渡した側のもの）．
+   * mock・replay では何もしない
+   */
+  attachCamera(stream: MediaStream | null): void;
   /** device・replay の判定の中身（dev ページ用）．mock・replay の読み込み前では null */
   readonly tracker: DeviceTracker | null;
   dispose(): void;
@@ -82,6 +96,9 @@ export interface InputSource {
 
 function createDeviceSource(options: InputSourceOptions): InputSource {
   const tracker = new DeviceTracker({ calibration: options.calibration, params: options.params });
+  // 手の認識は体の判定と分け，壊れても歩き・しゃがみに影響させない（experiment_山﨑/09）
+  const hands = new HandCamera({ params: options.handParams });
+  if (options.camera) hands.attach(options.camera);
   const observer = options.observer;
   const stopSensors = startSensors({
     onMotion: (s) => {
@@ -103,7 +120,7 @@ function createDeviceSource(options: InputSourceOptions): InputSource {
   return {
     kind: "device",
     tracker,
-    read: (now) => tracker.read(now),
+    read: (now) => ({ ...tracker.read(now), hands: hands.read(now) }),
     activate: async () => {
       try {
         return await requestSensorPermission();
@@ -112,7 +129,9 @@ function createDeviceSource(options: InputSourceOptions): InputSource {
       }
     },
     recenter: () => tracker.recenter(),
+    attachCamera: (stream) => hands.attach(stream),
     dispose: () => {
+      hands.dispose();
       stopSensors();
       document.removeEventListener("visibilitychange", onVisibility);
     },
@@ -132,6 +151,7 @@ function createMockSource(options: InputSourceOptions): InputSource {
     read: (now) => mock.read(now),
     activate: () => Promise.resolve({ motion: "not-required", orientation: "not-required" }),
     recenter: () => mock.recenter(),
+    attachCamera: () => undefined,
     dispose: () => mock.dispose(),
   };
 }
@@ -159,6 +179,7 @@ function createReplaySourceLazy(options: InputSourceOptions): InputSource {
     read: (now) => inner?.read(now) ?? { ...IDLE_PLAYER_INPUT, time: now },
     activate: () => Promise.resolve({ motion: "not-required", orientation: "not-required" }),
     recenter: () => inner?.recenter(),
+    attachCamera: () => undefined,
     dispose: () => {
       disposed = true;
       inner?.dispose();

@@ -33,6 +33,7 @@ const KNOWN_TYPES = new Set<string>([
   "clock",
   "visibility",
   "protocol",
+  "hand",
 ]);
 
 function isVec3(v: unknown): boolean {

@@ -26,6 +26,11 @@ export const DEV_PAGES = [
     note: "記録を判定し直し，しきい値の前後を図と指標で比べる・params の書き出し・切り出し",
   },
   {
+    file: "hands.html",
+    title: "手の確認",
+    note: "カメラの映像に 21 点・手の形を重ね，認識の頻度・遅れと両手の位置・grip を見る・記録",
+  },
+  {
     file: "panel.html",
     title: "操作盤（PC）",
     note: "キーで誤判定の印を記録に書き込む・スマホの判定の状態を見る",

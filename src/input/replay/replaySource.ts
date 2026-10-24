@@ -100,6 +100,7 @@ export function createReplaySource(options: InputSourceOptions): InputSource {
     read,
     activate: () => Promise.resolve({ motion: "not-required", orientation: "not-required" }),
     recenter: () => tracker.recenter(),
+    attachCamera: () => undefined,
     dispose: () => {
       disposed = true;
       events = [];

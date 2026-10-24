@@ -1,6 +1,7 @@
 // フライトレコーダーの記録の形式と JSONL への整形（DOM に依存しない純粋な関数）．
 // 1 行に 1 レコード．type で種類を区別する（experiment_山﨑/10「記録するもの」）．
 // t はすべて performance.now() の基準（ms）．壁時計への換算は meta の timeOrigin を足す
+import type { HandFrameResult } from "../hand/types";
 import type { MotionSample, OrientationSample, ScreenSample } from "../sensors/types";
 
 /** 記録の形式の版．項目の意味を変えたら上げる */
@@ -170,8 +171,31 @@ export interface ParamsRecord {
   readonly params: Readonly<Record<string, number>>;
 }
 
+/**
+ * 手の認識の 1 回分（hands.html で記録する．experiment_山﨑/10）．t は認識した映像の時刻．
+ * pts は 21 点の (x, y, z) を並べた 63 個の数（画像の上の 0〜1．z は MediaPipe の相対の奥行き）
+ */
+export interface HandRecord {
+  readonly type: "hand";
+  readonly t: number;
+  /** 結果が届いた時刻（ms） */
+  readonly doneAt: number;
+  /** 認識そのものにかかった時間（ms） */
+  readonly inferMs: number;
+  /** 認識した画像の大きさ（px） */
+  readonly width: number;
+  readonly height: number;
+  readonly hands: readonly {
+    /** MediaPipe が付けた左右（自撮りの画像を前提にした値のまま．背面カメラでは逆になる） */
+    readonly label: string;
+    readonly score: number | null;
+    readonly pts: readonly (number | null)[];
+  }[];
+}
+
 export type InputRecord =
   | MetaRecord
+  | HandRecord
   | DetectRecord
   | StateRecord
   | ParamsRecord
@@ -271,6 +295,31 @@ export function detectRecord(d: DetectValues): DetectRecord {
     v: roundTo(d.v, ACC_DIGITS),
     h: roundTo(d.h, ACC_DIGITS),
     step: d.step,
+  };
+}
+
+/** 21 点は 0.0001（320 px の画像で 0.03 px）の桁で残す */
+const LANDMARK_DIGITS = 4;
+
+export function handRecord(r: HandFrameResult): HandRecord {
+  return {
+    type: "hand",
+    t: roundT(r.t),
+    doneAt: roundT(r.doneAt),
+    inferMs: roundTo(r.inferMs, 2) ?? 0,
+    width: r.width,
+    height: r.height,
+    hands: r.hands.map((h) => {
+      const pts: (number | null)[] = [];
+      for (const p of h.landmarks) {
+        pts.push(
+          roundTo(p.x, LANDMARK_DIGITS),
+          roundTo(p.y, LANDMARK_DIGITS),
+          roundTo(p.z, LANDMARK_DIGITS),
+        );
+      }
+      return { label: h.label, score: roundTo(h.score, 3), pts };
+    }),
   };
 }
 

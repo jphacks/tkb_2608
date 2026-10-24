@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import type { HandFrameResult } from "../hand/types";
 import {
   detectRecord,
+  handRecord,
   type InputRecord,
   joinJsonl,
   type MarkRecord,
@@ -184,6 +186,67 @@ describe("detectRecord", () => {
       h: 0,
       step: 0,
     });
+    expect(JSON.parse(toRecordLine(r) ?? "null")).toEqual(r);
+  });
+});
+
+describe("handRecord", () => {
+  function frame(o: Partial<HandFrameResult> = {}): HandFrameResult {
+    const landmarks = Array.from({ length: 21 }, (_, i) => ({
+      x: 0.1 + i * 0.01 + 0.000_012_3,
+      y: 0.5 - i * 0.01,
+      z: -0.012_345_6,
+    }));
+    return {
+      t: 1234.567_89,
+      doneAt: 1260.123_45,
+      inferMs: 18.456,
+      width: 320,
+      height: 240,
+      hands: [{ label: "left", score: 0.987_65, landmarks }],
+      ...o,
+    };
+  }
+
+  it("type は hand，時刻は 0.001 ms・認識の時間は 0.01 ms の桁で残す", () => {
+    const r = handRecord(frame());
+    expect(r).toMatchObject({
+      type: "hand",
+      t: 1234.568,
+      doneAt: 1260.123,
+      inferMs: 18.46,
+      width: 320,
+      height: 240,
+    });
+  });
+
+  it("21 点を (x, y, z) の順に 63 個の数にし，0.0001 の桁で残す", () => {
+    const r = handRecord(frame());
+    expect(r.hands).toHaveLength(1);
+    const h = r.hands[0];
+    expect(h.label).toBe("left");
+    expect(h.score).toBe(0.988);
+    expect(h.pts).toHaveLength(63);
+    expect(h.pts.slice(0, 3)).toEqual([0.1, 0.5, -0.0123]);
+    expect(h.pts.slice(60, 63)).toEqual([0.3, 0.3, -0.0123]);
+  });
+
+  it("手が無ければ hands は空", () => {
+    expect(handRecord(frame({ hands: [] })).hands).toEqual([]);
+  });
+
+  it("有限でない値は null にする（JSON にできる）", () => {
+    const bad = frame();
+    const lm = [...bad.hands[0].landmarks];
+    lm[0] = { x: Number.NaN, y: Number.POSITIVE_INFINITY, z: 0 };
+    const r = handRecord(frame({ hands: [{ label: "right", score: Number.NaN, landmarks: lm }] }));
+    expect(r.hands[0].pts.slice(0, 3)).toEqual([null, null, 0]);
+    expect(r.hands[0].score).toBeNull();
+    expect(JSON.parse(toRecordLine(r) ?? "null")).toEqual(r);
+  });
+
+  it("1 行の JSON にして読み戻せる", () => {
+    const r = handRecord(frame());
     expect(JSON.parse(toRecordLine(r) ?? "null")).toEqual(r);
   });
 });

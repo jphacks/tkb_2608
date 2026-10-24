@@ -47,6 +47,23 @@ describe("parseRecordsJsonl", () => {
     expect(parseRecordsJsonl(toJsonl(records))).toEqual({ records, skipped: 0 });
   });
 
+  it("手の認識の記録（hand）を読む．t が無い hand は飛ばす", () => {
+    const hand = {
+      type: "hand",
+      t: 10,
+      doneAt: 30,
+      inferMs: 15,
+      width: 320,
+      height: 240,
+      hands: [{ label: "left", score: 0.9, pts: Array.from({ length: 63 }, () => 0.5) }],
+    };
+    const noT = { ...hand, t: undefined };
+    const text = `${JSON.stringify(hand)}\n${JSON.stringify(noT)}\n${JSON.stringify(motionRec({ t: 11 }))}`;
+    const parsed = parseRecordsJsonl(text);
+    expect(parsed.skipped).toBe(1);
+    expect(parsed.records).toEqual([hand, motionRec({ t: 11 })]);
+  });
+
   it("空の文字列は空（例外を投げない）", () => {
     expect(parseRecordsJsonl("")).toEqual({ records: [], skipped: 0 });
   });
