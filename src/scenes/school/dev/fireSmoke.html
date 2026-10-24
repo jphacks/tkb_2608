@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>scenes/school 火と煙（dev）</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #101820;
+        color: #ddd;
+        font-family: system-ui, sans-serif;
+      }
+      canvas {
+        display: block;
+        touch-action: none;
+      }
+      #info {
+        position: fixed;
+        top: 8px;
+        left: 8px;
+        padding: 8px 10px;
+        background: rgba(0, 0, 0, 0.6);
+        font-size: 13px;
+        line-height: 1.6;
+        white-space: pre-line;
+        pointer-events: none;
+        font-variant-numeric: tabular-nums;
+      }
+      #panel {
+        position: fixed;
+        left: 8px;
+        right: 8px;
+        bottom: 8px;
+        padding: 8px 10px;
+        background: rgba(0, 0, 0, 0.6);
+        font-size: 13px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 12px;
+        align-items: center;
+      }
+      #time {
+        flex: 1 1 240px;
+      }
+      button,
+      select {
+        font-size: 13px;
+      }
+      a {
+        color: #9cf;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="info"></div>
+    <div id="panel">
+      <button id="play" type="button">再生</button>
+      <label
+        >速さ
+        <select id="speed">
+          <option value="1">1 倍</option>
+          <option value="2">2 倍</option>
+          <option value="5" selected>5 倍</option>
+          <option value="10">10 倍</option>
+        </select>
+      </label>
+      <input id="time" type="range" min="0" max="150" step="0.1" value="0" />
+      <span id="timeLabel"></span>
+      <button id="view" type="button">視点の切り替え（V）</button>
+      <button id="crouch" type="button">しゃがむ（C）</button>
+      <a href="?">デモの校舎</a>
+      <a href="?plan=large">大きなマス目（60 × 34）</a>
+    </div>
+    <script type="module" src="./fireSmokePage.ts"></script>
+  </body>
+</html>
