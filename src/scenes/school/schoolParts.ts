@@ -22,6 +22,7 @@ import {
   type FloorSurfaceUserData,
   floorSurfaceLayout,
   POST_SIZE,
+  type SchoolBlockUserData,
   type SchoolDoorLeafUserData,
   type SchoolDoorUserData,
   type SchoolEdgeUserData,
@@ -624,6 +625,37 @@ export function createSchoolPost(
       context.materials.wall,
       [POST_SIZE, options.height, POST_SIZE],
       [0, options.height / 2, 0],
+      `${id}-body`,
+    ),
+  );
+  return group;
+}
+
+// ---------------------------------------------------------------------------
+// マスをふさぐ直方体
+
+/** マス全体をふさぐ直方体（SchoolPlan の `wall` のマス）．原点は底面の中心，幅がローカル X，奥行きがローカル Z */
+export function createSchoolBlock(
+  context: SchoolPartContext,
+  options: {
+    readonly width: number;
+    readonly depth: number;
+    readonly height: number;
+    readonly id?: string;
+  },
+): THREE.Group {
+  const { width, depth, height } = options;
+  const id = options.id ?? "block";
+  const group = new THREE.Group();
+  group.name = id;
+  const userData: SchoolBlockUserData = { kind: "schoolBlock", id, width, depth, height };
+  group.userData = userData;
+  group.add(
+    createBox(
+      context.unitBox,
+      context.materials.wall,
+      [width, height, depth],
+      [0, height / 2, 0],
       `${id}-body`,
     ),
   );

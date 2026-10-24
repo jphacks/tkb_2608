@@ -9,6 +9,7 @@
 //   -length/2〜length/2，壁の厚みは辺の線を中心に Z の ±WALL_THICKNESS/2．ただし壁の板は両端の
 //   柱の半分（POST_SIZE/2）を除いた範囲に置く．引き戸の扉は +Z の側，出口の外（ポーチ・庇）は -Z の側
 // - 柱: 原点は辺の端点（マス目の格子点）の床の上．POST_SIZE 四方
+// - マスをふさぐ直方体（`wall` のマス）: 原点は底面の中心．幅が X，奥行きが Z
 // 辺が交わる・つながる点で辺を区切り，その点に柱を 1 本置けば，壁どうしに隙間も重なりも出ない
 
 import type { Vec3Tuple } from "../common/furniture";
@@ -448,6 +449,19 @@ export function postObstacle(height: number, id: string): Obstacle {
   return { id, minX: -h, maxX: h, minZ: -h, maxZ: h, minY: 0, maxY: height };
 }
 
+/** マス全体をふさぐ直方体（`wall` のマス）の当たり判定（ローカル座標．原点は直方体の底面の中心） */
+export function blockObstacle(width: number, depth: number, height: number, id: string): Obstacle {
+  return {
+    id,
+    minX: -width / 2,
+    maxX: width / 2,
+    minZ: -depth / 2,
+    maxZ: depth / 2,
+    minY: 0,
+    maxY: height,
+  };
+}
+
 /** 辺に置く物の動かない部分の当たり判定（壁の板・シャッターのガイドレール．id は `${id}-wall-${i}` 等） */
 export function edgeStaticObstacles(layout: EdgeLayout, id: string): Obstacle[] {
   const walls = layout.wallRects.map((rect, i) =>
@@ -651,6 +665,18 @@ export type SchoolEdgeUserData =
   | (EdgeUserDataBase & { readonly edgeKind: "windowWall"; readonly glass: WindowGlass })
   | SchoolDoorUserData
   | FireShutterUserData;
+
+/** マス全体をふさぐ直方体（SchoolPlan の `wall` のマス）の userData */
+export interface SchoolBlockUserData {
+  readonly kind: "schoolBlock";
+  readonly id: string;
+  /** 幅（ローカル X．m） */
+  readonly width: number;
+  /** 奥行き（ローカル Z．m） */
+  readonly depth: number;
+  /** 高さ（m） */
+  readonly height: number;
+}
 
 /** 柱の userData */
 export interface SchoolPostUserData {
