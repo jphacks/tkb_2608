@@ -1,6 +1,9 @@
-# staging への自動デプロイ
+# staging へのデプロイ
 #
 # main への push（PR のマージを含む）で Cloudflare Pages の staging（`staging.<プロジェクト名>.pages.dev`）に配信する．
+# 自動配信はリポジトリの変数 STAGING_AUTO_DEPLOY で切り替える．`false` にすると push では配信せず，手動実行だけで配信する
+# （同時並行で開発していて staging が頻繁に変わり，確かめたい版が置き換わるのを防ぐため．変数が無い・`true` なら自動）．
+# 切り替え: `gh variable set STAGING_AUTO_DEPLOY --body false`（手動）／`--body true`（自動）．手順は docs/02_ENV/ENV_04「デプロイ」．
 # 本番は deploy-prod.yml（v* タグ）でのみ配信する．手順は docs/02_ENV/ENV_04「デプロイ」．
 # 配信し直したい時は Actions の画面の「Run workflow」（または `gh workflow run deploy-staging.yml --ref main`）で手動実行できる．
 #
@@ -47,10 +50,18 @@ jobs:
         id: filter
         env:
           GH_TOKEN: ${{ github.token }}
+          STAGING_AUTO_DEPLOY: ${{ vars.STAGING_AUTO_DEPLOY }}
           BEFORE: ${{ github.event.before }}
           AFTER: ${{ github.sha }}
         run: |
           set -uo pipefail
+
+          # 自動配信を止めている間は，push では配信しない（手動実行だけで配信する）
+          if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$STAGING_AUTO_DEPLOY" = "false" ]; then
+            echo "::notice::自動配信を止めている（リポジトリの変数 STAGING_AUTO_DEPLOY=false）．staging に出すときは Run workflow で手動実行する"
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
           # 手動実行は main からのみ受け付け，変更の判定をせずに配信する
           if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then

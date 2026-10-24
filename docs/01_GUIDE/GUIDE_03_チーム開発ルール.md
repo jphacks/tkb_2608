@@ -97,13 +97,14 @@ Issue を立てる場合の標準フロー（小さい変更や探索的作業�
 
 ### main ブランチの保護 (Branch Protection)
 
-`main` には 3 つの Ruleset を設定し，Claude の誤操作でも人の誤操作でも `main` が壊れないようにする．
+`main` と本番のリリースタグに 4 つの Ruleset を設定し，Claude の誤操作でも人の誤操作でも `main` が壊れないようにする．
 
 | Ruleset | ルール | 例外（bypass） |
 | --- | --- | --- |
 | `main: 履歴の保護` | `main` の削除禁止・force push 禁止 | なし（admin も不可） |
 | `main: PR 必須と共有設定のレビュー` | 直接 push 禁止（PR 必須．必要な Approve 数は 0）・CODEOWNERS 対象（`.claude/`・`CLAUDE.md`・`.github/CODEOWNERS`）を変える PR はコードオーナー 1 名の Approve 必須 | リポジトリ admin のみ，PR のマージ時に限る（直接 push はできない） |
 | `main: CI 必須` | CI（`Lint / typecheck / test / build`）の合格が必須．「マージ前にブランチを最新にする」は付けない（細かくマージするため．代わりに Claude が PR の作成・マージの前に最新の `main` を取り込む．`.claude/rules/pr-workflow.md`） | なし（admin も不可） |
+| `release tags: admin のみ`（タグが対象） | `v*` タグの作成・更新・削除を禁止する．`v*` タグの push で本番に配信されるため，本番のリリースを管理者だけに限る（`/deploy-prod`） | リポジトリ admin のみ |
 
 - 機能 PR は Approve 不要のため，条件付きセルフマージで今までどおり自分でマージできる．
 - マージ方法は merge commit のみ（squash・rebase は無効）．マージ後のブランチは GitHub が自動で削除する．
