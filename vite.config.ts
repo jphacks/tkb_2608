@@ -1,7 +1,7 @@
 import { defineConfig } from "vitest/config";
 import { inputLogPlugin } from "./src/input/dev/inputLogPlugin";
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   // 開発サーバーだけで，担当D のフライトレコーダーの記録を logs/input/ に保存する（本番のビルドには影響しない）
   plugins: [inputLogPlugin()],
   // 本番・staging は Cloudflare Pages のドメイン直下で配信するため，base は既定（"/"）のまま（docs/02_ENV/ENV_01）
@@ -13,8 +13,11 @@ export default defineConfig({
   server: {
     // スマホの実機確認は cloudflared の Quick Tunnel 経由で開く（docs/02_ENV/ENV_02）
     allowedHosts: [".trycloudflare.com"],
+    // 動きの記録用（npm run dev:record）は WebSocket を切り，ファイルの変更で記録中のページが再読み込みされないようにする
+    // （HMR の full-reload は開いている全ページに届くため，別の人が src/ を編集すると protocol.html が最初に戻っていた）
+    ...(mode === "record" ? { ws: false as const } : {}),
   },
   test: {
     include: ["src/**/*.test.ts"],
   },
-});
+}));
