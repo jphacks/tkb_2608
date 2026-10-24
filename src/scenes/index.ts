@@ -1,5 +1,6 @@
-// 空間の一覧．エレベーターは実装したらここに足す
+// 空間の一覧（URL パラメータで選んだ 1 つだけを作る）
 
+import { createElevatorScene } from "./elevator/elevator";
 import { createRoomScene } from "./room/room";
 import type { SpaceId } from "./spaceParam";
 import { createTrainScene } from "./train/train";
@@ -8,6 +9,7 @@ import type { Space, SpaceBuildOptions, SpaceFactory } from "./types";
 const SPACE_FACTORIES: Partial<Record<SpaceId, SpaceFactory>> = {
   room: createRoomScene,
   train: createTrainScene,
+  elevator: createElevatorScene,
 };
 
 /** 実装済みの空間の id */
