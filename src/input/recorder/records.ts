@@ -95,8 +95,61 @@ export interface ProtocolRecord {
   }[];
 }
 
+/**
+ * 判定の途中の値（devicemotion の 1 サンプルごと．experiment_山﨑/10「判定の途中の値」）．
+ * 加速度は m/s^2，gyro は deg/s，h・v は m・m/s．求められない値は null
+ */
+export interface DetectRecord {
+  readonly type: "detect";
+  readonly t: number;
+  /** 上下の加速度（上が正） */
+  readonly av: number | null;
+  /** 帯域通過後の上下の加速度 */
+  readonly bp: number | null;
+  /** 足踏みの実際のしきい値（T_high・T_low） */
+  readonly high: number | null;
+  readonly low: number | null;
+  /** 角速度の大きさ */
+  readonly gyro: number | null;
+  /** 足踏みの状態機械（"stopped"・"tentative"・"walking"）と速さ（m/s） */
+  readonly loco: string;
+  readonly speed: number | null;
+  /** しゃがみの判定の段階（"idle"・"candidate"・"integrating"）と積分中の速度・高さの変化 */
+  readonly phase: string;
+  readonly v: number | null;
+  readonly h: number | null;
+  /** 山の検出の結果（0: なし，1: 歩，2: 頭の回転で除外，3: 不応期，4: 動作の途中で除外） */
+  readonly step: number;
+}
+
+/** 判定の結果の変化（変化した時だけ．experiment_山﨑/10「判定の結果」） */
+export interface StateRecord {
+  readonly type: "state";
+  readonly t: number;
+  /** 何が起きたか（"step"・"step-rejected"・"locomotion"・"posture"・"posture-motion"・"reset" 等） */
+  readonly event: string;
+  readonly posture: string;
+  readonly loco: string;
+  readonly walking: boolean;
+  readonly walkSpeed: number | null;
+  /** 出来事に添える値（歩の山の大きさ・Δh 等） */
+  readonly value?: number | null;
+  /** 出来事に添える説明（除外の理由・姿勢の判定の結果等） */
+  readonly detail?: string;
+}
+
+/** しきい値（開始時と，dev ページで変えた時） */
+export interface ParamsRecord {
+  readonly type: "params";
+  readonly t: number;
+  readonly params: Readonly<Record<string, number>>;
+}
+
 export type InputRecord =
   | MetaRecord
+  | DetectRecord
+  | StateRecord
+  | ParamsRecord
   | MotionRecord
   | OrientationRecord
   | ScreenRecord
@@ -158,6 +211,40 @@ export function orientationRecord(s: OrientationSample): OrientationRecord {
     beta: roundOrNull(s.beta, ANGLE_DIGITS),
     gamma: roundOrNull(s.gamma, ANGLE_DIGITS),
     absolute: s.absolute,
+  };
+}
+
+/** detectRecord に渡す途中の値（数はそのまま渡し，ここで丸める） */
+export interface DetectValues {
+  readonly t: number;
+  readonly av: number;
+  readonly bp: number;
+  readonly high: number;
+  readonly low: number;
+  readonly gyro: number;
+  readonly loco: string;
+  readonly speed: number;
+  readonly phase: string;
+  readonly v: number;
+  readonly h: number;
+  readonly step: number;
+}
+
+export function detectRecord(d: DetectValues): DetectRecord {
+  return {
+    type: "detect",
+    t: roundT(d.t),
+    av: roundTo(d.av, ACC_DIGITS),
+    bp: roundTo(d.bp, ACC_DIGITS),
+    high: roundTo(d.high, ACC_DIGITS),
+    low: roundTo(d.low, ACC_DIGITS),
+    gyro: roundTo(d.gyro, ANGLE_DIGITS),
+    loco: d.loco,
+    speed: roundTo(d.speed, ACC_DIGITS),
+    phase: d.phase,
+    v: roundTo(d.v, ACC_DIGITS),
+    h: roundTo(d.h, ACC_DIGITS),
+    step: d.step,
   };
 }
 

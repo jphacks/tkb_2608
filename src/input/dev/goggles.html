@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <title>input/ ゴーグルでの確認（dev）</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #000;
+        color: #ddd;
+        font-family: system-ui, sans-serif;
+        touch-action: none;
+      }
+      canvas {
+        display: block;
+      }
+      #overlay {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 16px;
+        background: rgba(0, 0, 0, 0.85);
+        text-align: center;
+        padding: 16px;
+      }
+      #overlay[hidden] {
+        display: none;
+      }
+      #start {
+        font-size: 22px;
+        padding: 18px 28px;
+      }
+      .note {
+        font-size: 13px;
+        color: #aaa;
+      }
+      a {
+        color: #9cf;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="overlay">
+      <a href="./?stay">← dev ページの一覧</a>
+      <button id="start" type="button">タップで開始（センサー・音・画面の常時点灯）</button>
+      <label><input id="sound" type="checkbox" checked /> 判定の音（1 歩ごとのビープ・姿勢の切り替え）</label>
+      <p class="note">
+        横向きにしてゴーグルに入れる．開始の後に画面をタップすると正面と位置をリセットする．<br />
+        しきい値は URL パラメータで渡せる（例: ?stepHighStanding=1.5）
+      </p>
+    </div>
+    <script type="module" src="./gogglesPage.ts"></script>
+  </body>
+</html>

@@ -1,7 +1,7 @@
 // エントリポイント．?app を付けると体験の流れ（開始画面 → ロビー → シナリオ．src/app/）を起動する．
 // 付けなければ，URL パラメータ（?scene=room 等）で選んだ空間を一人称で表示する PC 確認用のビューア．
-// ビューアはドラッグで視点を回し，画面のボタンで歩く・しゃがむ・ドアを開閉できる
-// （本物の入力（src/input/）・VR 表示は後の Issue で足す）
+// ビューアはドラッグで視点を回し，画面のボタンで歩く・しゃがむ・ドアを開閉できる（VR 表示は後の Issue で足す）
+// ?input=mock|device を付けると，代わりに担当D の入力で動かす（当たり判定の無い仮の移動．歩行への統合は別 Issue）
 import * as THREE from "three";
 import { startApp } from "./app/app";
 import { resolveLaunchMode } from "./app/launchMode";
@@ -10,9 +10,13 @@ import { DragLook } from "./controls/dragLook";
 import { WalkButtons } from "./controls/walkButtons";
 import { createEventBus } from "./core/event-bus";
 import type { AppEvent } from "./core/events";
+import { parseInputKind } from "./input/inputParam";
+import { createInputSource, type InputKind } from "./input/inputSource";
+import { InputPreview } from "./inputPreview";
 import { AVAILABLE_SPACE_IDS, createSpace, createWalkWorld } from "./scenes";
 import { createDevDoors, findNearbyDevDoor } from "./scenes/devDoors";
 import { resolveSpaceId } from "./scenes/spaceParam";
+import type { Space } from "./scenes/types";
 import { SpaceWalker } from "./scenes/walk/walker";
 
 function startViewer(): void {
@@ -31,9 +35,29 @@ function startViewer(): void {
   scene.background = new THREE.Color(space.background);
   scene.add(space.root);
 
+  const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.05, 50);
+
+  window.addEventListener("resize", () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+
+  // ?input の指定が無ければボタンで歩く（当たり判定あり）
+  const inputKind = parseInputKind(window.location.search);
+  if (inputKind === null) startWalkView(renderer, scene, camera, space);
+  else startInputPreview(renderer, scene, camera, space, inputKind);
+}
+
+// 確認用の仮の入力（ドラッグ・ボタン）を SpaceWalker につなぐ
+function startWalkView(
+  renderer: THREE.WebGLRenderer,
+  scene: THREE.Scene,
+  camera: THREE.PerspectiveCamera,
+  space: Space,
+): void {
   // プレイヤーの体（rig）の子にカメラを置く．位置と体の向きは walker が，頭の向きは入力が決める
   const rig = new THREE.Object3D();
-  const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.05, 50);
   rig.add(camera);
   scene.add(rig);
 
@@ -67,12 +91,6 @@ function startViewer(): void {
     }
   });
 
-  window.addEventListener("resize", () => {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-  });
-
   let lastTime: number | null = null;
   renderer.setAnimationLoop((time) => {
     const dt = lastTime === null ? 0 : (time - lastTime) / 1000;
@@ -98,6 +116,27 @@ function startViewer(): void {
         door ? `door ${door.id} (${door.isOpen() ? "開" : "閉"})` : "近くにドアなし",
       ].join("\n"),
     );
+    renderer.render(scene, camera);
+  });
+}
+
+// 担当D の入力（PlayerInput）でカメラを直接動かす（当たり判定なし）
+function startInputPreview(
+  renderer: THREE.WebGLRenderer,
+  scene: THREE.Scene,
+  camera: THREE.PerspectiveCamera,
+  space: Space,
+  inputKind: InputKind,
+): void {
+  camera.position.copy(space.startPosition);
+  const preview = new InputPreview(
+    createInputSource({ kind: inputKind, calibration: null, target: renderer.domElement }),
+    camera,
+    space.startPosition,
+    space.startYaw,
+  );
+  renderer.setAnimationLoop(() => {
+    preview.update(performance.now());
     renderer.render(scene, camera);
   });
 }

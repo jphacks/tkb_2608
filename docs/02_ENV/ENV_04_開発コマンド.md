@@ -22,6 +22,10 @@
 - `npm run tunnel -- train` のように空間の id（`room`・`train`・`elevator`）を渡すと，QR コードの URL に `?scene=train` が付き，読み取るだけでその空間が開く
 - `npm run tunnel -- /src/input/dev/` のように `/` で始まるパスを渡すと，QR コードの URL にそのパスが付く（使える文字は英数字・`/`・`-`・`_`・`.`）
 - 体験の流れ（開始画面 → ロビー → シナリオ）は URL に `?app` を付けて開く（例: `http://localhost:5173/?app`．スマホでは QR コードの URL の末尾に `?app` を足す）．`?debug`・`?stereo=1` 等は [SPEC_01](../04_SPEC/SPEC_01_画面遷移とモジュール構成.md)「起動の切り替え」を参照
+- `http://localhost:5173/?input=mock` のように `?input=` を付けると，担当D の `src/input/` の入力で視点を動かす（`?scene=` と併用できる．例: `?scene=train&input=mock`）．指定しない時は今までどおりドラッグで視点を回す
+  - `?input=mock`: PC 用．W で歩く（1.0 m/s）・S でゆっくり歩く（0.5 m/s．足踏みには向きが無いため後ろへは進まない）・C でしゃがみの切り替え・ドラッグで頭の向き（A・D は今は使わない）
+  - `?input=device`: スマホの実機用（トンネル経由の HTTPS で開く）．画面をタップしてセンサーを許可すると，頭の向き・足踏み・しゃがみの判定で動く．最初に受け取った向きが正面になる
+  - どちらも画面の左上に `PlayerInput` の中身（`posture`・`walking`・`walkSpeed`・頭のヨー）を出す．移動は当たり判定の無い仮のもの（担当B の Issue #31 で置き換える）
 - `npm run tunnel` は外部からアクセスできる経路を開くため，Claude Code の auto mode では実行が止められる．人間が VS Code のターミナルで実行する
 - URL を知っていれば誰でも開けるため，使い終わったら `Ctrl+C` で止める
 
@@ -34,10 +38,14 @@
 | 入口 | `http://localhost:5173/src/input/dev/` | 各ページへのリンク．前回開いたページがあれば自動でそこへ移る（止める時は `?stay` を付ける） |
 | センサーの確認 | `http://localhost:5173/src/input/dev/sensors.html` | センサーの値・上下の加速度のグラフ・サンプルの周期・記録の状態 |
 | 手順の記録 | `http://localhost:5173/src/input/dev/protocol.html` | 決まった手順を表示と音で案内し，案内した時刻からラベルを付けて記録する（約 5 分） |
+| 判定の確認 | `http://localhost:5173/src/input/dev/detect.html` | 足踏み・しゃがみの判定の途中の値（上下の加速度・帯域通過後・しきい値・`Δh`）と状態のグラフ，`PlayerInput`，出来事の一覧．しきい値をスライダーで変えられる |
+| ゴーグルでの確認 | `http://localhost:5173/src/input/dev/goggles.html` | 左右 2 画面の最小限の空間（床の格子・1 m ごとの柱・正面の目印）で，判定のとおりに歩く・しゃがむ・見回す．判定の状態を視界の下に出し，1 歩ごと・姿勢の切り替えで音を鳴らす（`?sound=0` で消す）．開始の後に画面をタップすると正面と位置をリセットする |
 
 - スマホでは `npm run tunnel -- /src/input/dev/` の QR コードを読み取る．センサーは HTTPS でないと使えないため，スマホでは必ずトンネル経由で開く
 - 一度開けば，PC でコードを保存するとスマホのページも自動で再読み込みされる（Vite の HMR）．センサーの確認ページは，許可済みなら再読み込みの後に自動で記録を再開する（手順の記録ページは音を出すためにタップが要るので，開始ボタンを押し直す）
 - iPhone では最初に開始ボタンをタップした時にセンサーの許可を求められる
+- 判定の確認・ゴーグルでの確認のページは，センサーの値に加えて判定の途中の値（`detect`）・結果の変化（`state`）・しきい値（`params`）も記録する
+- しきい値は URL パラメータでも渡せる（例: `detect.html?stepHighStanding=1.5&headPredictionMs=20`．項目名は `src/input/params.ts` の `InputParams`）．同じ設定を QR コードで他の端末に配れる
 - 記録は 2 秒ごとに開発サーバーへ送られ，`logs/input/<YYYYMMDD-HHMMSS>_<セッション ID>.jsonl` に追記される（`logs/` は Git の管理外．再読み込みのたびに新しいセッション＝新しいファイルになる）．受け取る口は開発サーバーだけにある（`src/input/dev/inputLogPlugin.ts`．`npm run build` の出力には含まれない）
 - 開発サーバーにつながらない間の記録はページのメモリに残り，「記録をダウンロード」で `.jsonl` として保存できる（ページを閉じると消える）
 
