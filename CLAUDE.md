@@ -18,6 +18,7 @@
   - **例外**: 以下（無人運転ループ）はユーザー承認済みの例外として専用ブランチに自律コミットする．いずれも push・PR・マージ・`main` への操作はしない（取り込みは人間が `/commit push` 等で行う）
     - `/auto-refactor`（リファクタ／ドキュメント整理ループ）→ `refactor/` 専用ブランチ
     - `/auto-audit`（バグ／脆弱性の巡回監査ループ）→ `fix/` 専用ブランチ
+  - **例外（本番のリリースタグ）**: `/deploy-prod` は，リポジトリの admin（管理者）が明示的に起動し，最終確認（staging で確認済みか・バージョン・対象コミット）に同意した場合に限り，`main` 上のコミットに annotated タグ `v*` を打って push し，本番への配信を見届ける（`.claude/skills/deploy-prod/`．タグ以外のコミット・push はしない）
   - **例外（`main` へのマージ）**: `/deps-update` は，Dependabot が作成した依存更新 PR に限り，ゲート（メジャー更新でない・競合なし・CI 緑またはローカル検証緑）を満たすものを `gh pr merge` で `main` に取り込む（ユーザーが明示的に起動した時のみ．メジャー更新・CI 赤・PR が付かない alert は報告して人間が判断する）
 - セッション開始時に `[sync-check]` の警告（ローカルが origin と同期していない等）が表示されたら，必ず認識し，作業前にユーザーへ伝えて `git pull` 等の対処を促す
 - **ops-runner によるマージは承認済みの定常操作**: `/commit merge` および `/deps-update` では，ユーザーが明示的に起動したことを受けて，ops-runner サブエージェント（軽量モデル）が手順書に従い `git push` → `gh pr create` → `gh pr merge --merge --delete-branch` で自リポジトリの PR を `main` にマージする．force push・`--admin`・`main` への直接 push は行わない（権限設定は `docs/01_GUIDE/GUIDE_01` の「Claude Code の権限設定」）
@@ -85,6 +86,7 @@
 
 - 環境構築手順（WSL + Docker + Dev Containers）: docs/02_ENV/ENV_02_環境構築手順.md
 - 環境の変更の共有（Rebuild の依頼・`/env-notify`・`/env-check`）: docs/02_ENV/ENV_05_環境の変更の共有.md
+- 本番へのデプロイ記録（`/deploy-prod` が追記）: docs/02_ENV/ENV_06_デプロイ記録.md
 
 <!-- プロジェクト立ち上げ時に追加する -->
 

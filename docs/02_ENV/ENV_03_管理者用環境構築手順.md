@@ -10,6 +10,7 @@
 | GitHub リポジトリの作成（[jphacks/tkb_2608](https://github.com/jphacks/tkb_2608)） | 済み（運営が作成．public・MIT ライセンス） |
 | `main` の保護（Ruleset）・CODEOWNERS | 済み（GUIDE_03） |
 | CI の合格を `main` へのマージの必須条件にする | 済み（2026-10-24．Ruleset `main: CI 必須`．設定内容は `gh api` で確認済み） |
+| 本番のリリース（`v*` タグ）を管理者だけにする | 済み（2026-10-24．Ruleset `release tags: admin のみ`．管理者の明示的な許可を得て Claude が `gh api` で作成し，設定内容を確認済み） |
 | Dependabot alerts / security updates の有効化 | 済み（2026-10-24．`/setup` が `gh api` で有効化・検証） |
 | 依存バージョン更新（`.github/dependabot.yml`） | 済み（npm・devcontainers・github-actions を週 1 回） |
 | Cloudflare Pages の準備（アカウント・プロジェクト・API トークン・Secrets） | 済み（2026-10-24．プロジェクト `tkb2608`・本番ブランチ `main`．staging への配信と iPhone での表示を確認済み．本番へのタグでの配信は未実施） |
@@ -79,6 +80,33 @@ GitHub の Settings → Code security にある **Dependabot alerts**（既知�
 - docs だけの PR・Dependabot の PR も CI の合格が必要になる（CI は 1〜2 分で終わる）
 - CI 自体が壊れた場合: `ci.yml` を直す PR は直した側の `ci.yml` で CI が動くため，その PR は通せる
 - GitHub Actions の障害で CI が動かず，どうしてもマージが必要な場合: admin がこの Ruleset の Enforcement status を一時的に Disabled にし，マージ後すぐ Active に戻す．うっかり使われないよう，例外ではなくこの操作を必要にしている
+
+## 本番のリリースを管理者だけにする (Restrict Release Tags)
+
+`v*` タグを push すると `deploy-prod.yml` が本番に配信する．write 権限のメンバーは誰でもタグを push できるため，タグの Ruleset で **`v*` タグの作成・更新・削除を admin 以外に禁止**する．`/deploy-prod` を使った場合も，手でタグを打った場合も，admin 以外は本番に出せなくなる．GitHub の画面での操作のため，管理者が行う（Claude は行わない）．
+
+1. リポジトリの Settings → Rules → Rulesets → New ruleset → **New tag ruleset** を開く（branch ではなく tag）
+2. Ruleset Name を `release tags: admin のみ`，Enforcement status を **Active** にする
+3. Bypass list で **Add bypass** → **Repository admin** を追加する（bypass の種類は「Always allow」）
+4. Target tags で **Add target** → **Include by pattern** に `v*` を入れる
+5. Rules で **Restrict creations**・**Restrict updates**・**Restrict deletions** にチェックを入れる（他は付けない）
+6. Create で保存する
+7. 確認: `gh api repos/jphacks/tkb_2608/rulesets` に `release tags: admin のみ` があり，対象が `tag`・例外が admin だけであることを確かめる（Claude に頼んでよい．読み取りだけ）
+
+- staging（`/deploy-staging`・手動実行）は制限しない．何度出し直しても困らないため，誰でも出せるままにする
+- 打ち間違えたタグの削除も admin だけになる（`/deploy-prod` の「失敗時の対処」は管理者が行う）
+- 実施記録: 2026-10-24 に，管理者の明示的な許可を得て Claude が次の内容を `gh api -X POST repos/jphacks/tkb_2608/rulesets` で作成した（CLAUDE.md の「Claude が `gh` で行ってよい設定」の例外ではなく，1 回限りの許可による）．作り直す場合は上の手順を画面で行うか，同じ内容で再実行する
+
+  ```json
+  {
+    "name": "release tags: admin のみ",
+    "target": "tag",
+    "enforcement": "active",
+    "bypass_actors": [{ "actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always" }],
+    "conditions": { "ref_name": { "include": ["refs/tags/v*"], "exclude": [] } },
+    "rules": [{ "type": "creation" }, { "type": "update" }, { "type": "deletion" }]
+  }
+  ```
 
 ## Cloudflare Pages の準備 (Cloudflare Pages Setup)
 
