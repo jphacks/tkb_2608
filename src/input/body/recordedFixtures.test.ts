@@ -6,12 +6,12 @@
 // しきい値を変えた時に過去の誤判定が戻らないことを確かめるのが目的のため，ここだけは既定値（DEFAULT_INPUT_PARAMS）で判定する
 import { describe, expect, it } from "vitest";
 import { DEFAULT_INPUT_PARAMS } from "../params";
-import { createBodyState, updateBody } from "./bodyTracker";
 import { computeMetrics } from "../replay/metrics";
 import { parseRecording } from "../replay/parseRecording";
 import { checkExpectations, rejudgeJsonl, type WindowExpectation } from "../replay/regression";
 import { replayBody } from "../replay/replayBody";
 import { labelSegments, parseRecordsJsonl } from "../replay/replayLog";
+import { createBodyState, updateBody } from "./bodyTracker";
 // 実機の首振りの記録（下の「実機の首振り」の説明を参照）
 import headShakeFalseWalk from "./fixtures/iphone_goggles_head_shake_false_walk.jsonl?raw";
 // 注意: いまの fixtures/ は合成の波形だけで，実機の記録ではない（実機の記録がまだ無いため．仕組みが動くことを示すサンプル）．
