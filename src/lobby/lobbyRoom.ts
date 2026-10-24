@@ -1,7 +1,12 @@
-// ロビーの簡単な部屋（訓練施設の体験室のような床・壁・天井・照明と立ち位置の印）と，指示を出す板．
-// 模様はすべて CanvasTexture でコードから描く（外部ファイルを足さない）．影は使わず，ライトは 2 つに抑える
+// ロビーの部屋（学校の防災学習室: フローリングの床・クリーム色の壁と木の腰板・蛍光灯の天井，立ち位置の印と
+// 黒板・消火器・非常口の誘導灯等の置き物（lobbyProps.ts））と，指示を出す板・開始ボタン・見え方の調整の十字・手の印．
+// 模様はすべて CanvasTexture でコードから描く（外部ファイルを足さない）．影は使わず，ライトは 2 つに抑える．
+// 2 画面で描くため，光の計算は MeshStandardMaterial より軽い MeshLambertMaterial にする
 
 import * as THREE from "three";
+import type { Handedness, HandState, Quat } from "../core/types";
+import { drawFittedText } from "./canvasText";
+import { canvasTexture, createLobbyProps, seededRandom } from "./lobbyProps";
 
 /** 目の高さ（m）．rig の位置を目の位置として扱う（scenes/ の startPosition と同じ） */
 export const LOBBY_EYE_HEIGHT = 1.6;
@@ -10,11 +15,13 @@ export const LOBBY_EYE_HEIGHT = 1.6;
 const ROOM_SIZE = 8;
 /** 天井の高さ（m） */
 const ROOM_HEIGHT = 3;
-/** 床のグリッドの 1 マス（m） */
-const FLOOR_TILE = 1;
-/** 壁の腰の高さのライン（m） */
+/** 床のテクスチャ 1 枚の大きさ（m） */
+const FLOOR_TILE = 2;
+/** 床板の幅（m） */
+const FLOOR_BOARD_WIDTH = 0.125;
+/** 腰板の高さ（m） */
 const WAIST_LINE_HEIGHT = 0.9;
-/** 天井の照明パネルの並び（1 枚のテクスチャの繰り返しの長さ，m） */
+/** 天井の照明の並び（1 枚のテクスチャの繰り返しの長さ，m） */
 const CEILING_TILE = 2;
 
 export interface LobbyRoom {
@@ -22,56 +29,57 @@ export interface LobbyRoom {
   dispose(): void;
 }
 
-/** 描いた canvas をテクスチャにする（色の canvas なので sRGB として扱う） */
-function canvasTexture(
-  width: number,
-  height: number,
-  draw: (ctx: CanvasRenderingContext2D) => void,
-): THREE.CanvasTexture {
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext("2d");
-  if (ctx !== null) draw(ctx);
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  return texture;
-}
-
-/** 床: 灰色の床に，1 m ごとの薄いグリッドと 0.5 m ごとのさらに薄い線（立ち位置の距離感をつかむため） */
+/** 床: 木のフローリング（板の色を少しずつ変え，継ぎ目をずらす） */
 function createFloorTexture(): THREE.CanvasTexture {
-  const size = 256;
+  const size = 512;
+  const boards = Math.round(FLOOR_TILE / FLOOR_BOARD_WIDTH);
+  const boardPx = size / boards;
+  const rand = seededRandom(3);
   const texture = canvasTexture(size, size, (ctx) => {
-    ctx.fillStyle = "#4a515c";
-    ctx.fillRect(0, 0, size, size);
-    ctx.fillStyle = "rgba(200, 215, 235, 0.10)";
-    ctx.fillRect(size / 2 - 1, 0, 2, size);
-    ctx.fillRect(0, size / 2 - 1, size, 2);
-    ctx.fillStyle = "rgba(200, 215, 235, 0.32)";
-    ctx.fillRect(0, 0, 3, size);
-    ctx.fillRect(0, 0, size, 3);
+    for (let i = 0; i < boards; i++) {
+      // 1 本の列を 2 枚の板に分け，継ぎ目の位置を列ごとにずらす（端でつながるよう繰り返しの範囲に収める）
+      const seam = Math.floor(rand() * size);
+      for (const [from, to] of [
+        [0, seam],
+        [seam, size],
+      ] as const) {
+        const shade = 0.9 + rand() * 0.18;
+        const r = Math.round(196 * shade);
+        const g = Math.round(150 * shade);
+        const b = Math.round(98 * shade);
+        ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+        ctx.fillRect(i * boardPx, from, boardPx, to - from);
+      }
+      ctx.fillStyle = "rgba(70, 45, 20, 0.45)";
+      ctx.fillRect(i * boardPx, 0, 2, size);
+      ctx.fillRect(i * boardPx, seam, boardPx, 2);
+      // 木目の細い筋
+      ctx.fillStyle = "rgba(120, 80, 40, 0.12)";
+      for (let k = 0; k < 3; k++) {
+        ctx.fillRect(i * boardPx + 4 + rand() * (boardPx - 8), 0, 1, size);
+      }
+    }
   });
   texture.wrapS = THREE.RepeatWrapping;
   texture.wrapT = THREE.RepeatWrapping;
-  // ROOM_SIZE が FLOOR_TILE の偶数倍なので，床の中心（立ち位置）にグリッドの交点が来る
   texture.repeat.set(ROOM_SIZE / FLOOR_TILE, ROOM_SIZE / FLOOR_TILE);
   return texture;
 }
 
-/** 壁: 腰の高さより下は紺の腰壁，境目に明るいライン，上は灰色（上ほど少し明るい）．縦方向だけに模様がある */
+/** 壁: 腰の高さより下は木の腰板，境目に見切りの線，上は明るいクリーム色．縦方向だけに模様がある */
 function createWallTexture(): THREE.CanvasTexture {
   const width = 8;
   const height = 512;
   const toY = (meters: number): number => height * (1 - meters / ROOM_HEIGHT);
   return canvasTexture(width, height, (ctx) => {
     const upper = ctx.createLinearGradient(0, 0, 0, toY(WAIST_LINE_HEIGHT));
-    upper.addColorStop(0, "#c3cad4");
-    upper.addColorStop(1, "#9aa3b0");
+    upper.addColorStop(0, "#f6efdc");
+    upper.addColorStop(1, "#ece2c8");
     ctx.fillStyle = upper;
     ctx.fillRect(0, 0, width, toY(WAIST_LINE_HEIGHT));
-    ctx.fillStyle = "#24334a";
+    ctx.fillStyle = "#b8875a";
     ctx.fillRect(0, toY(WAIST_LINE_HEIGHT), width, height);
-    ctx.fillStyle = "#8fb4dc";
+    ctx.fillStyle = "#7a5230";
     ctx.fillRect(
       0,
       toY(WAIST_LINE_HEIGHT + 0.03),
@@ -79,24 +87,27 @@ function createWallTexture(): THREE.CanvasTexture {
       toY(WAIST_LINE_HEIGHT) - toY(WAIST_LINE_HEIGHT + 0.03),
     );
     // 床との境の幅木
-    ctx.fillStyle = "#1a2433";
+    ctx.fillStyle = "#5a3b22";
     ctx.fillRect(0, toY(0.08), width, height - toY(0.08));
   });
 }
 
-/** 天井: 灰色の天井に，柔らかく光る照明パネル（emissiveMap にも使い，パネルだけが光って見えるようにする） */
+/** 天井: 白い天井板の目地に，細長い蛍光灯（emissiveMap にも使い，蛍光灯だけが光って見えるようにする） */
 function createCeilingTexture(): THREE.CanvasTexture {
   const size = 256;
   const texture = canvasTexture(size, size, (ctx) => {
-    ctx.fillStyle = "#2c323b";
+    ctx.fillStyle = "#8a877e";
     ctx.fillRect(0, 0, size, size);
+    ctx.fillStyle = "rgba(255, 255, 255, 0.06)";
+    ctx.fillRect(0, size / 2 - 1, size, 2);
+    ctx.fillRect(size / 2 - 1, 0, 2, size);
     const glow = ctx.createRadialGradient(size / 2, size / 2, 8, size / 2, size / 2, size * 0.45);
-    glow.addColorStop(0, "rgba(220, 232, 250, 0.35)");
-    glow.addColorStop(1, "rgba(220, 232, 250, 0)");
+    glow.addColorStop(0, "rgba(255, 250, 235, 0.25)");
+    glow.addColorStop(1, "rgba(255, 250, 235, 0)");
     ctx.fillStyle = glow;
     ctx.fillRect(0, 0, size, size);
-    ctx.fillStyle = "#eef4ff";
-    ctx.fillRect(size * 0.3, size * 0.38, size * 0.4, size * 0.24);
+    ctx.fillStyle = "#fffdf4";
+    ctx.fillRect(size * 0.2, size * 0.45, size * 0.6, size * 0.1);
   });
   texture.wrapS = THREE.RepeatWrapping;
   texture.wrapT = THREE.RepeatWrapping;
@@ -113,24 +124,22 @@ export function createLobbyRoom(): LobbyRoom {
   const ceilingTexture = createCeilingTexture();
 
   const floorGeometry = new THREE.PlaneGeometry(ROOM_SIZE, ROOM_SIZE);
-  const floorMaterial = new THREE.MeshStandardMaterial({ map: floorTexture, roughness: 0.85 });
+  const floorMaterial = new THREE.MeshLambertMaterial({ map: floorTexture });
   const floor = new THREE.Mesh(floorGeometry, floorMaterial);
   floor.rotation.x = -Math.PI / 2;
   root.add(floor);
 
   // 内側から見る箱（壁と天井）．BoxGeometry の面の順は +X, -X, +Y（天井）, -Y（床に隠れる）, +Z, -Z
   const wallGeometry = new THREE.BoxGeometry(ROOM_SIZE, ROOM_HEIGHT, ROOM_SIZE);
-  const wallMaterial = new THREE.MeshStandardMaterial({
+  const wallMaterial = new THREE.MeshLambertMaterial({
     map: wallTexture,
-    roughness: 1,
     side: THREE.BackSide,
   });
-  const ceilingMaterial = new THREE.MeshStandardMaterial({
+  const ceilingMaterial = new THREE.MeshLambertMaterial({
     map: ceilingTexture,
     emissive: 0xffffff,
     emissiveMap: ceilingTexture,
-    emissiveIntensity: 0.6,
-    roughness: 1,
+    emissiveIntensity: 0.7,
     side: THREE.BackSide,
   });
   const walls = new THREE.Mesh(wallGeometry, [
@@ -152,9 +161,12 @@ export function createLobbyRoom(): LobbyRoom {
   mark.position.y = 0.005;
   root.add(mark);
 
-  // 柔らかい環境光（上は少し青白く，下は落ち着いた灰）と，天井の照明の代わりの真上からの弱い光
-  root.add(new THREE.HemisphereLight(0xe4ecf8, 0x3a4250, 1.5));
-  const light = new THREE.DirectionalLight(0xf2f6ff, 0.8);
+  const props = createLobbyProps({ size: ROOM_SIZE });
+  root.add(props.root);
+
+  // 柔らかい環境光（上は少し暖かい白，下は床の木の照り返し）と，天井の照明の代わりの真上からの弱い光
+  root.add(new THREE.HemisphereLight(0xfff8ec, 0x6a5a48, 1.5));
+  const light = new THREE.DirectionalLight(0xfff6e8, 0.8);
   light.position.set(0.5, 3, 0.8);
   root.add(light);
 
@@ -164,6 +176,7 @@ export function createLobbyRoom(): LobbyRoom {
       for (const g of [floorGeometry, wallGeometry, markGeometry]) g.dispose();
       for (const m of [floorMaterial, wallMaterial, ceilingMaterial, markMaterial]) m.dispose();
       for (const t of [floorTexture, wallTexture, ceilingTexture]) t.dispose();
+      props.dispose();
     },
   };
 }
@@ -199,21 +212,43 @@ const PANEL_FRAME_OPACITY_MAX = 0.85;
 const CANVAS_WIDTH = 1024;
 const CANVAS_HEIGHT = 512;
 
-/** 文字を幅に合わせて折り返す（日本語のため 1 文字ずつ測る） */
-function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
-  const lines: string[] = [];
-  let line = "";
-  for (const ch of text) {
-    if (ctx.measureText(line + ch).width > maxWidth && line !== "") {
-      lines.push(line);
-      line = ch;
-    } else {
-      line += ch;
-    }
-  }
-  if (line !== "") lines.push(line);
-  return lines;
-}
+/** 板の余白（px） */
+const PANEL_PADDING = 48;
+
+/**
+ * 指示の板の文字の枠（canvas の px）と大きさの範囲（px）．枠に収まるまで文字を小さくし，
+ * 下限でも収まらなければ行を省いて「…」にする（textFit.ts）
+ */
+export const PANEL_TEXT_LAYOUT = {
+  canvasWidth: CANVAS_WIDTH,
+  canvasHeight: CANVAS_HEIGHT,
+  /** 右上の補足（「手順 1 / 4　残り 5 秒」等．1 行，右寄せ） */
+  caption: {
+    box: { x: PANEL_PADDING, y: 28, width: CANVAS_WIDTH - PANEL_PADDING * 2, height: 40 },
+    maxFontPx: 32,
+    minFontPx: 22,
+    maxLines: 1,
+  },
+  /** 見出し（1 行） */
+  title: {
+    box: { x: PANEL_PADDING, y: 84, width: CANVAS_WIDTH - PANEL_PADDING * 2, height: 72 },
+    maxFontPx: 60,
+    minFontPx: 36,
+    maxLines: 1,
+  },
+  /** 本文（改行と幅で折り返す） */
+  body: {
+    box: {
+      x: PANEL_PADDING,
+      y: 184,
+      width: CANVAS_WIDTH - PANEL_PADDING * 2,
+      height: CANVAS_HEIGHT - 184 - 36,
+    },
+    maxFontPx: 40,
+    minFontPx: 26,
+    lineHeight: 1.4,
+  },
+} as const;
 
 /** 目の高さの正面（少し上）に置く指示の板．object を頭のヨー角に合わせて回すと視界の正面に来る */
 export function createLobbyPanel(): LobbyPanel {
@@ -259,22 +294,18 @@ export function createLobbyPanel(): LobbyPanel {
       ctx.fillStyle = "rgba(16, 20, 28, 0.88)";
       ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
-      ctx.fillStyle = "#ffd27a";
-      ctx.font = "32px sans-serif";
-      ctx.textAlign = "right";
-      ctx.fillText(content.caption, CANVAS_WIDTH - 40, 64);
-
-      ctx.textAlign = "left";
-      ctx.fillStyle = "#ffffff";
-      ctx.font = "bold 60px sans-serif";
-      ctx.fillText(content.title, 48, 150);
-
-      ctx.font = "40px sans-serif";
-      ctx.fillStyle = "#e0e4ec";
-      const lines = wrapText(ctx, content.body, CANVAS_WIDTH - 96);
-      lines.slice(0, 5).forEach((text, i) => {
-        ctx.fillText(text, 48, 240 + i * 56);
+      const { caption, title, body } = PANEL_TEXT_LAYOUT;
+      drawFittedText(ctx, content.caption, caption.box, {
+        ...caption,
+        align: "right",
+        color: "#ffd27a",
       });
+      drawFittedText(ctx, content.title, title.box, {
+        ...title,
+        weight: "bold",
+        color: "#ffffff",
+      });
+      drawFittedText(ctx, content.body, body.box, { ...body, color: "#e0e4ec" });
       texture.needsUpdate = true;
     },
     setHighlight(amount) {
@@ -402,6 +433,55 @@ export function createAlignmentMarker(): AlignmentMarker {
     dispose() {
       barGeometry.dispose();
       ringGeometry.dispose();
+      material.dispose();
+    },
+  };
+}
+
+export interface HandMarkers {
+  /** rig に足す（目の位置が原点．手の位置を rig の座標にして置く） */
+  readonly object: THREE.Object3D;
+  /**
+   * 認識している手の位置に印を出す（開始ボタンへ手を合わせやすくするため）．
+   * hands の position は頭の座標系なので，頭の向き head で rig の座標に直す．visible が false なら隠す
+   */
+  update(head: Quat, hands: Readonly<Record<Handedness, HandState>>, visible: boolean): void;
+  dispose(): void;
+}
+
+const HAND_MARKER_RADIUS = 0.022;
+/** 毎フレーム new しないための作業用の値 */
+const handQuat = new THREE.Quaternion();
+
+/** 手のひらの中心に出す小さな球（左右で 1 つずつ．形と見た目は共有する） */
+export function createHandMarkers(): HandMarkers {
+  const group = new THREE.Group();
+  group.name = "lobby-hand-markers";
+  const geometry = new THREE.SphereGeometry(HAND_MARKER_RADIUS, 12, 8);
+  const material = new THREE.MeshBasicMaterial({ color: 0x9cc8ff });
+  const left = new THREE.Mesh(geometry, material);
+  const right = new THREE.Mesh(geometry, material);
+  left.name = "hand-left";
+  right.name = "hand-right";
+  left.visible = false;
+  right.visible = false;
+  group.add(left, right);
+
+  const place = (mesh: THREE.Mesh, hand: HandState, visible: boolean): void => {
+    mesh.visible = visible && hand.tracked;
+    if (!mesh.visible) return;
+    mesh.position.set(hand.position.x, hand.position.y, hand.position.z).applyQuaternion(handQuat);
+  };
+
+  return {
+    object: group,
+    update(head, hands, visible) {
+      handQuat.set(head.x, head.y, head.z, head.w);
+      place(left, hands.left, visible);
+      place(right, hands.right, visible);
+    },
+    dispose() {
+      geometry.dispose();
       material.dispose();
     },
   };
