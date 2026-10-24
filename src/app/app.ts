@@ -1,4 +1,4 @@
-// 体験の流れ（開始画面 → ホーム → ロビー → シナリオ）の組み立てと画面の切り替え（docs/04_SPEC/SPEC_01）．
+// 体験の流れ（開始画面 → ホーム → ロビー → シナリオ → 結果）の組み立てと画面の切り替え（docs/04_SPEC/SPEC_01）．
 // ロジックは書かず，各モジュールをつなぐだけにする
 
 import * as THREE from "three";
@@ -7,6 +7,7 @@ import { createEventBus } from "../core/event-bus";
 import type { AppEvent } from "../core/events";
 import type { Scene, SceneContext, SceneId, Session, Stage } from "../core/scene";
 import type { CalibrationProfile } from "../core/types";
+import { createDebriefScene } from "../debrief/debriefScene";
 import { parseInputKind } from "../input/inputParam";
 import { createInputSource, type InputSource } from "../input/inputSource";
 import { resolveSceneRequest } from "../lobby/homeFlow";
@@ -16,6 +17,7 @@ import { createLobbyScene } from "../lobby/lobbyScene";
 import { createOrientationGuide } from "../lobby/orientationGuide";
 import type { AcquiredDevices } from "../lobby/permissions";
 import { createStartScene } from "../lobby/startScene";
+import { TRAINING_BACKGROUND_CSS, TRAINING_BOX_CSS } from "../lobby/trainingTheme";
 import { createScreenWakeLock } from "../lobby/wakeLock";
 import { loadPlanFromHash } from "../share/planHash";
 import { resolveDebug, resolveStereo } from "./launchMode";
@@ -102,6 +104,10 @@ export function startApp(): void {
       }),
     lobby: () => createLobbyScene({ debug, isPaused: () => orientationGuide.visible }),
     scenario: () => createScenarioPlaceholder(),
+    debrief: () =>
+      createDebriefScene({
+        theme: { backgroundCss: TRAINING_BACKGROUND_CSS, boxCss: TRAINING_BOX_CSS },
+      }),
   };
 
   let current: Scene | null = null;

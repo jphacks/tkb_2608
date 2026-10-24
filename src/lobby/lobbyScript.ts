@@ -51,11 +51,11 @@ export function describeCalibration(
     }
     case "intro": {
       const text = state.reused
-        ? "前回の調整を使います．正面の向きだけ合わせ直します"
+        ? "同じ訓練をもう一度始めます．前回の調整を使い，正面の向きだけ合わせ直します"
         : "これから体の動きの調整をします．指示に合わせて体を動かしてください";
       return {
         key: "intro",
-        title: "体験の準備",
+        title: state.reused ? "同じ訓練をもう一度" : "体験の準備",
         body: text,
         narration: text,
         progressLabel,
@@ -150,7 +150,9 @@ export function describeStartGate(
   autoStartRemaining: number | null,
   gazeEnabled: boolean,
 ): LobbyInstruction {
-  const lead = reused ? "もう一度体験します．" : "";
+  // 「もう一度」は結果画面から同じ訓練を繰り返す時．ゴーグルを外して結果を見た後なので付け直してもらう
+  const lead = reused ? "同じ訓練をもう一度始めます．" : "";
+  const goggles = reused ? "ゴーグルを付け直して" : "ゴーグルを付けて";
   const debug = gazeEnabled
     ? "（デバッグ: ボタンを 3 秒見つめる，または Enter キーでも始まります）"
     : "";
@@ -159,13 +161,15 @@ export function describeStartGate(
     return {
       key: "startGate:auto",
       title: `${seconds} 秒後に始まります`,
-      body: `${lead}ゴーグルを付けて，正面を向いて待ってください${debug}`,
-      narration: `${lead}ゴーグルを付けて待ってください．${seconds}秒後に始まります`,
+      body: `${lead}${goggles}，正面を向いて待ってください${debug}`,
+      narration: `${lead}${goggles}待ってください．${seconds}秒後に始まります`,
       progressLabel: null,
       remainingSeconds: null,
     };
   }
-  const prefix = reused ? lead : "ゴーグルを着けて，正面を向いてください．";
+  const prefix = reused
+    ? `${lead}${goggles}，正面を向いてください．`
+    : "ゴーグルを着けて，正面を向いてください．";
   return {
     key: "startGate:hand",
     title: "準備ができたら開始ボタンへ",
