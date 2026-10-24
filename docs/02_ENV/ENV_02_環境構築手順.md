@@ -152,11 +152,15 @@ bash .devcontainer/check.sh   # 最後に「✓ すべて OK」と出れば成�
 2. 別のターミナルでトンネルを張る．
 
    ```bash
-   cloudflared tunnel --url http://localhost:5173
+   npm run tunnel
    ```
 
-3. 出力に表示される `https://<ランダムな文字列>.trycloudflare.com` をスマホのブラウザで開く（iPhone は Safari，Android は Chrome）
+3. 出力に表示される `https://<ランダムな文字列>.trycloudflare.com` の QR コードをスマホのカメラで読み取り，ブラウザで開く（iPhone は Safari，Android は Chrome）
+
+- `npm run tunnel` は Claude Code の auto mode では実行が止められる（外部から入る経路を開くため）．人間が VS Code のターミナルで実行し，張りっぱなしにする．使い終わったら `Ctrl+C` で止める
 
 - URL はトンネルを張り直すたびに変わる．URL を知っていれば誰でも開けるため，秘密情報を含むページを置かない
 - Vite は既定で知らないホスト名からのアクセスを拒否するため，`vite.config.ts` の `server.allowedHosts` に `.trycloudflare.com` を許可する（アプリの初期化時に設定する）
-- ※ 未検証: Quick Tunnel 経由でのカメラ・センサーの許可，Vite の HMR（WebSocket）の動作．アプリの初期化後に実機で確認して本手順に反映する
+- トンネル経由で開くと `Blocked request. This host (...) is not allowed.` と表示される（HTTP 403）場合は，`npm run dev` を止めて起動し直す．Vite が設定ファイルの変更を検知して自動で再起動すると，`allowedHosts` の設定が反映されないことがある（2026-10-24 に実際に起きた）．トンネルは張ったままでよい
+- 確認済み（2026-10-24．iPhone の Safari・モバイル回線）: トンネル経由でページが開き three.js の描画が動くこと，PC 側でファイルを保存すると iPhone の表示が自動で更新されること（Vite の HMR）
+- ※ 未検証: Quick Tunnel 経由でのカメラ・センサーの許可．最初の実装（ENV_01「最初に検証すること」）で確認して本手順に反映する
