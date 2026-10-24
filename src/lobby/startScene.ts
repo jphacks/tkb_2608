@@ -15,6 +15,10 @@ import { TRAINING_BACKGROUND_CSS, TRAINING_BOX_CSS } from "./trainingTheme";
 export interface StartSceneOptions {
   /** 許可を取り終えた時に，取れた機器を受け取る（app/ が input/・audio/ に渡すため） */
   readonly onDevices?: (devices: AcquiredDevices) => void;
+  /**
+   * 「はじめる」のタップの処理の中で呼ぶ（app/ が画面の消灯を止める処理を頼む．ユーザーの操作の中で頼む必要がある端末のため）
+   */
+  readonly onStartTap?: () => void;
   /** 案内（カメラが使えない等）を見せてから進むまでの秒数 */
   readonly noticeSeconds?: number;
 }
@@ -134,6 +138,7 @@ export function createStartScene(options: StartSceneOptions = {}): Scene {
         status.textContent = "許可を確認しています…";
         // どちらもタップの処理の中で呼び始める（iOS）
         unlockNarration();
+        options.onStartTap?.();
         void requestAllPermissions().then((acquired) => {
           devices = acquired;
           handle(decideStart(acquired.results));
