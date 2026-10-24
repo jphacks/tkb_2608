@@ -1,17 +1,29 @@
-// 環境構築の疎通確認用の最小ページ（three.js で立方体を回す）．機能の実装で置き換える
+// エントリポイント．URL パラメータ（?scene=room 等）で選んだ空間を一人称で表示する．
+// PC での確認用に，ドラッグで視点を回せる（歩行・VR 表示は後の Issue で足す）
 import * as THREE from "three";
+import { DragLook } from "./controls/dragLook";
+import { AVAILABLE_SCENE_IDS, createSceneSpace } from "./scenes";
+import { resolveSceneId } from "./scenes/sceneParam";
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(window.devicePixelRatio);
+// 高解像度の端末で重くなりすぎないよう 2 倍までに抑える
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 
-const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 100);
-camera.position.z = 3;
+const sceneId = resolveSceneId(window.location.search, AVAILABLE_SCENE_IDS);
+const space = createSceneSpace(sceneId, {
+  maxAnisotropy: Math.min(renderer.capabilities.getMaxAnisotropy(), 8),
+});
 
-const cube = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshNormalMaterial());
-scene.add(cube);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(space.background);
+scene.add(space.root);
+
+const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.05, 50);
+camera.position.copy(space.startPosition);
+
+const look = new DragLook(renderer.domElement, { yaw: space.startYaw, pitch: 0 });
 
 window.addEventListener("resize", () => {
   camera.aspect = window.innerWidth / window.innerHeight;
@@ -19,8 +31,7 @@ window.addEventListener("resize", () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-renderer.setAnimationLoop((time) => {
-  cube.rotation.x = time / 2000;
-  cube.rotation.y = time / 1000;
+renderer.setAnimationLoop(() => {
+  look.applyTo(camera);
   renderer.render(scene, camera);
 });
