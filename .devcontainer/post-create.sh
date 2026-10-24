@@ -8,12 +8,12 @@ CLAUDE_BIN_DIR="$HOME/.local/share/claude"
 GH_DIR="$HOME/.config/gh"
 export PATH="$HOME/.local/bin:$PATH"
 
-echo "▶ 1/3: 名前付きボリュームの所有者を修正"
+echo "▶ 1/4: 名前付きボリュームの所有者を修正"
 # 名前付きボリュームは初回マウント時に root 所有で作られるため，remoteUser に直す
 sudo mkdir -p "$CLAUDE_DIR" "$CLAUDE_BIN_DIR" "$GH_DIR"
 sudo chown -R "$(id -u):$(id -g)" "$CLAUDE_DIR" "$HOME/.local" "$HOME/.config"
 
-echo "▶ 2/3: Claude Code のインストール"
+echo "▶ 2/4: Claude Code のインストール"
 # 本体（~/.local/share/claude/versions）はボリュームに残るが，~/.local/bin のリンクは Rebuild で消える．
 # 本体があればダウンロードせず，最新版へのリンクだけ張り直す（自動更新で入った版もここに溜まる）
 latest="$(ls -1 "$CLAUDE_BIN_DIR/versions" 2>/dev/null | sort -V | tail -n 1 || true)"
@@ -29,7 +29,7 @@ fi
 sudo ln -sf "$HOME/.local/bin/claude" /usr/local/bin/claude
 claude --version
 
-echo "▶ 3/3: git と GitHub CLI の連携"
+echo "▶ 3/4: git と GitHub CLI の連携"
 # gh が認証済みなら git の credential helper として gh を使う（push・pull が通る）．
 # `gh auth setup-git` は ~/.gitconfig に書き込むが，VS Code は ~/.gitconfig が既にあるとホストの
 # .gitconfig（user.name / user.email）をコピーしないため，同じ設定を /etc/gitconfig（--system）に書く
@@ -44,6 +44,19 @@ if gh auth status >/dev/null 2>&1; then
 else
   echo "  ✗ gh 未認証です．'gh auth login' を一度実行してから，このスクリプトを再実行してください（以後は Rebuild しても保持されます）"
 fi
+
+echo "▶ 4/4: cloudflared のインストール"
+# スマホの実機確認用に，開発サーバーを HTTPS の一時 URL で公開する（Quick Tunnel．アカウント不要．ENV_02）．
+# ボリュームに置かないため Rebuild のたびに公式リリースの .deb から入れ直す
+if command -v cloudflared >/dev/null 2>&1; then
+  echo "  ✓ インストール済み"
+else
+  deb="$(mktemp --suffix=.deb)"
+  curl -fsSL -o "$deb" "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$(dpkg --print-architecture).deb"
+  sudo dpkg -i "$deb"
+  rm -f "$deb"
+fi
+cloudflared --version
 
 if [ ! -f "$CLAUDE_DIR/.credentials.json" ]; then
   echo "ℹ Claude Code 未ログインです．ターミナルで 'claude' を起動してログインしてください（以後は Rebuild しても保持されます）"

@@ -130,7 +130,8 @@ bash .devcontainer/check.sh   # 最後に「✓ すべて OK」と出れば成�
 | --- | --- |
 | 設定ファイル | `.devcontainer/devcontainer.json`，`.devcontainer/post-create.sh`，`.devcontainer/check.sh`（動作確認） |
 | ベースイメージ | `mcr.microsoft.com/devcontainers/base:ubuntu-24.04`（ユーザー `vscode`，タイムゾーン `Asia/Tokyo`） |
-| 導入ツール | GitHub CLI・Python 3（Dev Container Feature．Python は Claude Code のフック用で，Ubuntu 標準の `python3` のみ），Claude Code（post-create でネイティブインストーラから導入．ボリュームに本体があればダウンロードしない） |
+| 導入ツール | GitHub CLI・Python 3・Node.js 24（Dev Container Feature．Python は Claude Code のフック用で，Ubuntu 標準の `python3` のみ），Claude Code（post-create でネイティブインストーラから導入．ボリュームに本体があればダウンロードしない），cloudflared（post-create で公式リリースの `.deb` から導入．スマホの実機確認用） |
+| ポート転送 | `5173`（Vite の開発サーバー） |
 | VS Code 拡張 | Claude Code（`anthropic.claude-code`） |
 | 永続化 | `~/.claude`（`CLAUDE_CONFIG_DIR`），`~/.config/gh`，`~/.local/share/claude`（Claude Code 本体）を名前付きボリュームに置く |
 
@@ -142,13 +143,20 @@ bash .devcontainer/check.sh   # 最後に「✓ すべて OK」と出れば成�
 - ログイン状態をリセットしたい: コンテナを閉じてから WSL で `docker volume rm tkb2608-claude-config tkb2608-gh-config` を実行し，Rebuild する．
 - Claude Code 本体を入れ直したい: コンテナを閉じてから WSL で `docker volume rm tkb2608-claude-bin` を実行し，Rebuild する．
 
-## 未確定事項 (To Be Decided)
+## スマホの実機で確認する (Testing on a Smartphone)
 
-以下は技術スタックが決まり次第，本手順に追記する．
+カメラ・傾き・加速度センサーは HTTPS でしか使えない．また WSL2 上の Dev Container で動く開発サーバーには，同じ Wi-Fi のスマホから直接つなげない（WSL2 の既定は NAT 構成のため）．
+そこで，cloudflared の **Quick Tunnel**（アカウント不要）で開発サーバーを HTTPS の一時 URL として公開し，スマホからその URL を開く．技術選定の背景は [ENV_01](ENV_01_技術スタック.md)「実機での確認方法」を参照する．
 
-- アプリの構成（フロントエンドのフレームワーク，配信用サーバーの有無と構成）．Node 等の実行環境を Dev Container に追加し，サーバーが必要なら `compose.yaml` を作って `devcontainer.json` から参照する構成に切り替える
-- アプリの起動手順（確定したコマンドは `ENV_04_開発コマンド.md` にまとめる）
-- VR ヘッドセット実機での確認方法．WebXR は HTTPS（または `localhost`）でしか動かないため，以下のいずれかを選ぶ．
-  - USB 接続＋`adb reverse` でヘッドセットから `localhost` としてアクセスする
-  - 開発サーバーを HTTPS 化して LAN 経由でアクセスする（WSL2 の既定は NAT 構成で LAN から届かないため，`.wslconfig` の `networkingMode=mirrored` と Windows ファイアウォールの許可が要る）
-  - トンネルサービスで HTTPS の公開 URL を発行する
+1. 開発サーバーを起動する（コマンドは `ENV_04_開発コマンド.md` を参照する．※ アプリの初期化後に作成する）
+2. 別のターミナルでトンネルを張る．
+
+   ```bash
+   cloudflared tunnel --url http://localhost:5173
+   ```
+
+3. 出力に表示される `https://<ランダムな文字列>.trycloudflare.com` をスマホのブラウザで開く（iPhone は Safari，Android は Chrome）
+
+- URL はトンネルを張り直すたびに変わる．URL を知っていれば誰でも開けるため，秘密情報を含むページを置かない
+- Vite は既定で知らないホスト名からのアクセスを拒否するため，`vite.config.ts` の `server.allowedHosts` に `.trycloudflare.com` を許可する（アプリの初期化時に設定する）
+- ※ 未検証: Quick Tunnel 経由でのカメラ・センサーの許可，Vite の HMR（WebSocket）の動作．アプリの初期化後に実機で確認して本手順に反映する
