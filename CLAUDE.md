@@ -84,6 +84,7 @@
 ### 02_ENV（環境）
 
 - 環境構築手順（WSL + Docker + Dev Containers）: docs/02_ENV/ENV_02_環境構築手順.md
+- 環境の変更の共有（Rebuild の依頼・`/env-notify`・`/env-check`）: docs/02_ENV/ENV_05_環境の変更の共有.md
 
 <!-- プロジェクト立ち上げ時に追加する -->
 
