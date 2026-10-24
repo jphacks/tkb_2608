@@ -1,5 +1,6 @@
 // エントリポイント．?app を付けると体験の流れ（開始画面 → ロビー → シナリオ → 結果．src/app/）を起動する．
 // 開発サーバーでは ?debrief で結果画面だけを，デモの校舎と手で作った記録で表示する（?debrief=late・?debrief=nosmoke で記録を変える）．
+// 開発サーバーでは ?audio で避難の音（src/audio/）だけを鳴らして確かめる．
 // ?editor で教員用のエディタ（src/editor/．Canvas 2D の上から見た図）を起動する．
 // 付けなければ，URL パラメータ（?scene=room 等）で選んだ空間を一人称で表示する PC 確認用のビューア．
 // ビューアはドラッグで視点を回し，画面のボタンで歩く・しゃがむ・ドアを開閉できる（VR 表示は後の Issue で足す）
@@ -213,6 +214,9 @@ if (launchMode === "app") {
 } else if (launchMode === "debrief" && import.meta.env.DEV) {
   // 結果画面の dev 用の単独起動．本番のビルドには含めない（import.meta.env.DEV が false の分岐ごと消える）
   void import("./app/debriefPreview").then((m) => m.startDebriefPreview());
+} else if (launchMode === "audio" && import.meta.env.DEV) {
+  // 避難の音の dev 用の単独起動．本番のビルドには含めない
+  void import("./app/audioPreview").then((m) => m.startAudioPreview());
 } else if (launchMode === "editor") {
   // 教員用のエディタ（three.js の描画は立ち上げない）
   startEditor();

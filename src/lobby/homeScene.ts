@@ -6,7 +6,11 @@
 
 import type { Scene, SceneContext } from "../core/scene";
 import { createHomeMemory, type HomeMemory, shouldConfirmStart } from "./homeSettings";
-import { createHomeSettingsPanel, HOME_SETTINGS_STYLE } from "./homeSettingsPanel";
+import {
+  createHomeSettingsPanel,
+  HOME_SETTINGS_STYLE,
+  type VolumeCheckAlarm,
+} from "./homeSettingsPanel";
 import { TRAINING_BACKGROUND_CSS, TRAINING_BOX_CSS } from "./trainingTheme";
 import type { ScreenWakeLock } from "./wakeLock";
 
@@ -28,6 +32,8 @@ export interface HomeSceneOptions {
   readonly memory?: HomeMemory;
   /** 設定の音量で効果音の例を鳴らす AudioContext（開始画面で再開済みのもの．無ければ null） */
   readonly audioContext?: () => AudioContext | null;
+  /** 設定の音量の確認で鳴らす非常ベル（app/ が audio/ の非常ベルを渡す．無ければ警報の例を鳴らす） */
+  readonly volumeCheckAlarm?: VolumeCheckAlarm | null;
   /** 画面の消灯を止める処理．「スタート」「設定」のタップの中で request を呼ぶ */
   readonly wakeLock?: ScreenWakeLock | null;
 }
@@ -133,6 +139,7 @@ export function createHomeScene(options: HomeSceneOptions = {}): Scene {
       confirm.hidden = true;
       const settings = createHomeSettingsPanel({
         audioContext: options.audioContext ?? (() => null),
+        alarm: options.volumeCheckAlarm ?? null,
         wakeLock: options.wakeLock ?? null,
         onBack: () => showView("main"),
       });
