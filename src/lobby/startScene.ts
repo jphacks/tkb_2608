@@ -1,5 +1,6 @@
-// 開始画面（start，HTML）．安全確認・横向き・ゴーグル装着の案内を出し，
-// ボタン 1 回でセンサー・カメラ・音の許可をまとめて取ってロビーへ進む
+// 開始画面（許可の画面，start，HTML）．安全確認の案内を出し，
+// ボタン 1 回でセンサー・カメラ・音の許可をまとめて取ってホームへ進む．
+// 起動直後の 1 回だけ出す（ゴーグル装着の案内はホームで出す．Issue #40）
 
 import type { Scene, SceneContext } from "../core/scene";
 import { unlockNarration } from "./narrator";
@@ -9,6 +10,7 @@ import {
   requestMotionPermission,
 } from "./permissions";
 import { decideStart, type StartDecision } from "./startPolicy";
+import { TRAINING_BACKGROUND_CSS, TRAINING_BOX_CSS } from "./trainingTheme";
 
 export interface StartSceneOptions {
   /** 許可を取り終えた時に，取れた機器を受け取る（app/ が input/・audio/ に渡すため） */
@@ -21,10 +23,11 @@ const STYLE = `
 .lobby-start {
   position: absolute; inset: 0; overflow-y: auto; pointer-events: auto;
   display: flex; align-items: center; justify-content: center;
-  background: #10141c; color: #f2f4f8;
+  ${TRAINING_BACKGROUND_CSS}
+  color: #f2f4f8;
   font-family: system-ui, -apple-system, "Hiragino Sans", sans-serif;
 }
-.lobby-start__box { max-width: 640px; padding: 24px; line-height: 1.6; }
+.lobby-start__box { max-width: 640px; margin: 16px; padding: 24px 28px; line-height: 1.6; ${TRAINING_BOX_CSS} }
 .lobby-start h1 { font-size: 1.5rem; margin: 0 0 12px; }
 .lobby-start ul { padding-left: 1.2em; margin: 0 0 16px; }
 .lobby-start button {
@@ -59,8 +62,6 @@ export function createStartScene(options: StartSceneOptions = {}): Scene {
           <h1>防災体験VR</h1>
           <ul>
             <li>周りに 1〜2 m の広さがあり，ぶつかる物が無いことを確かめてください</li>
-            <li>スマホを横向きにして，ゴーグルに入れてください</li>
-            <li>「はじめる」を押してから，ゴーグルを着けてください．このあとは画面に触らずに進みます</li>
             <li>センサー・カメラ・音の許可を求められたら「許可」を選んでください</li>
           </ul>
           <div class="lobby-start__actions">
@@ -81,13 +82,13 @@ export function createStartScene(options: StartSceneOptions = {}): Scene {
         if (!active) return;
         actions.replaceChildren();
         if (decision.notices.length === 0) {
-          ctx.goTo("lobby");
+          ctx.goTo("home");
           return;
         }
-        status.textContent = `${decision.notices.join("\n")}\n\nまもなく始まります`;
+        status.textContent = `${decision.notices.join("\n")}\n\nまもなく次へ進みます`;
         timer = window.setTimeout(() => {
           timer = null;
-          if (active) ctx.goTo("lobby");
+          if (active) ctx.goTo("home");
         }, noticeSeconds * 1000);
       };
 

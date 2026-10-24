@@ -1,36 +1,146 @@
-// ロビーの簡単な部屋（床・壁・照明・立ち位置の印）と，指示を出す板
+// ロビーの簡単な部屋（訓練施設の体験室のような床・壁・天井・照明と立ち位置の印）と，指示を出す板．
+// 模様はすべて CanvasTexture でコードから描く（外部ファイルを足さない）．影は使わず，ライトは 2 つに抑える
 
 import * as THREE from "three";
 
 /** 目の高さ（m）．rig の位置を目の位置として扱う（scenes/ の startPosition と同じ） */
 export const LOBBY_EYE_HEIGHT = 1.6;
 
+/** 部屋の幅と奥行き（m） */
 const ROOM_SIZE = 8;
+/** 天井の高さ（m） */
 const ROOM_HEIGHT = 3;
+/** 床のグリッドの 1 マス（m） */
+const FLOOR_TILE = 1;
+/** 壁の腰の高さのライン（m） */
+const WAIST_LINE_HEIGHT = 0.9;
+/** 天井の照明パネルの並び（1 枚のテクスチャの繰り返しの長さ，m） */
+const CEILING_TILE = 2;
 
 export interface LobbyRoom {
   readonly root: THREE.Group;
   dispose(): void;
 }
 
+/** 描いた canvas をテクスチャにする（色の canvas なので sRGB として扱う） */
+function canvasTexture(
+  width: number,
+  height: number,
+  draw: (ctx: CanvasRenderingContext2D) => void,
+): THREE.CanvasTexture {
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (ctx !== null) draw(ctx);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+/** 床: 灰色の床に，1 m ごとの薄いグリッドと 0.5 m ごとのさらに薄い線（立ち位置の距離感をつかむため） */
+function createFloorTexture(): THREE.CanvasTexture {
+  const size = 256;
+  const texture = canvasTexture(size, size, (ctx) => {
+    ctx.fillStyle = "#4a515c";
+    ctx.fillRect(0, 0, size, size);
+    ctx.fillStyle = "rgba(200, 215, 235, 0.10)";
+    ctx.fillRect(size / 2 - 1, 0, 2, size);
+    ctx.fillRect(0, size / 2 - 1, size, 2);
+    ctx.fillStyle = "rgba(200, 215, 235, 0.32)";
+    ctx.fillRect(0, 0, 3, size);
+    ctx.fillRect(0, 0, size, 3);
+  });
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  // ROOM_SIZE が FLOOR_TILE の偶数倍なので，床の中心（立ち位置）にグリッドの交点が来る
+  texture.repeat.set(ROOM_SIZE / FLOOR_TILE, ROOM_SIZE / FLOOR_TILE);
+  return texture;
+}
+
+/** 壁: 腰の高さより下は紺の腰壁，境目に明るいライン，上は灰色（上ほど少し明るい）．縦方向だけに模様がある */
+function createWallTexture(): THREE.CanvasTexture {
+  const width = 8;
+  const height = 512;
+  const toY = (meters: number): number => height * (1 - meters / ROOM_HEIGHT);
+  return canvasTexture(width, height, (ctx) => {
+    const upper = ctx.createLinearGradient(0, 0, 0, toY(WAIST_LINE_HEIGHT));
+    upper.addColorStop(0, "#c3cad4");
+    upper.addColorStop(1, "#9aa3b0");
+    ctx.fillStyle = upper;
+    ctx.fillRect(0, 0, width, toY(WAIST_LINE_HEIGHT));
+    ctx.fillStyle = "#24334a";
+    ctx.fillRect(0, toY(WAIST_LINE_HEIGHT), width, height);
+    ctx.fillStyle = "#8fb4dc";
+    ctx.fillRect(
+      0,
+      toY(WAIST_LINE_HEIGHT + 0.03),
+      width,
+      toY(WAIST_LINE_HEIGHT) - toY(WAIST_LINE_HEIGHT + 0.03),
+    );
+    // 床との境の幅木
+    ctx.fillStyle = "#1a2433";
+    ctx.fillRect(0, toY(0.08), width, height - toY(0.08));
+  });
+}
+
+/** 天井: 灰色の天井に，柔らかく光る照明パネル（emissiveMap にも使い，パネルだけが光って見えるようにする） */
+function createCeilingTexture(): THREE.CanvasTexture {
+  const size = 256;
+  const texture = canvasTexture(size, size, (ctx) => {
+    ctx.fillStyle = "#2c323b";
+    ctx.fillRect(0, 0, size, size);
+    const glow = ctx.createRadialGradient(size / 2, size / 2, 8, size / 2, size / 2, size * 0.45);
+    glow.addColorStop(0, "rgba(220, 232, 250, 0.35)");
+    glow.addColorStop(1, "rgba(220, 232, 250, 0)");
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, size, size);
+    ctx.fillStyle = "#eef4ff";
+    ctx.fillRect(size * 0.3, size * 0.38, size * 0.4, size * 0.24);
+  });
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(ROOM_SIZE / CEILING_TILE, ROOM_SIZE / CEILING_TILE);
+  return texture;
+}
+
 export function createLobbyRoom(): LobbyRoom {
   const root = new THREE.Group();
   root.name = "lobby-room";
 
+  const floorTexture = createFloorTexture();
+  const wallTexture = createWallTexture();
+  const ceilingTexture = createCeilingTexture();
+
   const floorGeometry = new THREE.PlaneGeometry(ROOM_SIZE, ROOM_SIZE);
-  const floorMaterial = new THREE.MeshStandardMaterial({ color: 0x8a7a66, roughness: 0.9 });
+  const floorMaterial = new THREE.MeshStandardMaterial({ map: floorTexture, roughness: 0.85 });
   const floor = new THREE.Mesh(floorGeometry, floorMaterial);
   floor.rotation.x = -Math.PI / 2;
   root.add(floor);
 
-  // 内側から見る箱（壁と天井）
+  // 内側から見る箱（壁と天井）．BoxGeometry の面の順は +X, -X, +Y（天井）, -Y（床に隠れる）, +Z, -Z
   const wallGeometry = new THREE.BoxGeometry(ROOM_SIZE, ROOM_HEIGHT, ROOM_SIZE);
   const wallMaterial = new THREE.MeshStandardMaterial({
-    color: 0xe8e4dc,
+    map: wallTexture,
     roughness: 1,
     side: THREE.BackSide,
   });
-  const walls = new THREE.Mesh(wallGeometry, wallMaterial);
+  const ceilingMaterial = new THREE.MeshStandardMaterial({
+    map: ceilingTexture,
+    emissive: 0xffffff,
+    emissiveMap: ceilingTexture,
+    emissiveIntensity: 0.6,
+    roughness: 1,
+    side: THREE.BackSide,
+  });
+  const walls = new THREE.Mesh(wallGeometry, [
+    wallMaterial,
+    wallMaterial,
+    ceilingMaterial,
+    wallMaterial,
+    wallMaterial,
+    wallMaterial,
+  ]);
   walls.position.y = ROOM_HEIGHT / 2 + 0.001;
   root.add(walls);
 
@@ -42,16 +152,18 @@ export function createLobbyRoom(): LobbyRoom {
   mark.position.y = 0.005;
   root.add(mark);
 
-  root.add(new THREE.HemisphereLight(0xffffff, 0x665544, 1.6));
-  const light = new THREE.DirectionalLight(0xffffff, 1.2);
-  light.position.set(2, 3, 1);
+  // 柔らかい環境光（上は少し青白く，下は落ち着いた灰）と，天井の照明の代わりの真上からの弱い光
+  root.add(new THREE.HemisphereLight(0xe4ecf8, 0x3a4250, 1.5));
+  const light = new THREE.DirectionalLight(0xf2f6ff, 0.8);
+  light.position.set(0.5, 3, 0.8);
   root.add(light);
 
   return {
     root,
     dispose() {
       for (const g of [floorGeometry, wallGeometry, markGeometry]) g.dispose();
-      for (const m of [floorMaterial, wallMaterial, markMaterial]) m.dispose();
+      for (const m of [floorMaterial, wallMaterial, ceilingMaterial, markMaterial]) m.dispose();
+      for (const t of [floorTexture, wallTexture, ceilingTexture]) t.dispose();
     },
   };
 }
@@ -67,6 +179,8 @@ export interface LobbyPanel {
   readonly object: THREE.Object3D;
   /** 内容が変わった時だけ描き直す */
   show(content: PanelContent): void;
+  /** 枠の明るさ（0〜1）．板を正面に捉えている時に明るくする（描き直さず不透明度だけを変える） */
+  setHighlight(amount: number): void;
   dispose(): void;
 }
 
@@ -75,6 +189,13 @@ const PANEL_HEIGHT = 0.8;
 const PANEL_DISTANCE = 2;
 /** 板の中心の目の高さからの高さ（m）．目の高さの正面に置く開始ボタンと重ならないよう少し上げる */
 const PANEL_RAISE = 0.5;
+/** 板の中心の，pivot（目の位置．頭のヨー角に追従する）から見た位置（m）．注視の判定に使う */
+export const LOBBY_PANEL_CENTER = { x: 0, y: PANEL_RAISE, z: -PANEL_DISTANCE } as const;
+/** 枠の太さ（m） */
+const PANEL_FRAME = 0.025;
+/** 枠の不透明度（暗い時・明るい時） */
+const PANEL_FRAME_OPACITY_MIN = 0.18;
+const PANEL_FRAME_OPACITY_MAX = 0.85;
 const CANVAS_WIDTH = 1024;
 const CANVAS_HEIGHT = 512;
 
@@ -107,10 +228,24 @@ export function createLobbyPanel(): LobbyPanel {
   const mesh = new THREE.Mesh(geometry, material);
   mesh.position.set(0, PANEL_RAISE, -PANEL_DISTANCE);
 
+  // 枠は板の後ろに少し大きい板を置いて作る（板の背景が半透明なので，明るくすると板の全体もほのかに明るくなる）
+  const frameGeometry = new THREE.PlaneGeometry(
+    PANEL_WIDTH + PANEL_FRAME * 2,
+    PANEL_HEIGHT + PANEL_FRAME * 2,
+  );
+  const frameMaterial = new THREE.MeshBasicMaterial({
+    color: 0x9cc8ff,
+    transparent: true,
+    opacity: PANEL_FRAME_OPACITY_MIN,
+    depthWrite: false,
+  });
+  const frame = new THREE.Mesh(frameGeometry, frameMaterial);
+  frame.position.set(0, PANEL_RAISE, -PANEL_DISTANCE - 0.005);
+
   const pivot = new THREE.Group();
   pivot.name = "lobby-panel";
   pivot.position.y = LOBBY_EYE_HEIGHT;
-  pivot.add(mesh);
+  pivot.add(frame, mesh);
 
   let last = "";
 
@@ -142,10 +277,17 @@ export function createLobbyPanel(): LobbyPanel {
       });
       texture.needsUpdate = true;
     },
+    setHighlight(amount) {
+      const t = Math.min(1, Math.max(0, Number.isFinite(amount) ? amount : 0));
+      frameMaterial.opacity =
+        PANEL_FRAME_OPACITY_MIN + (PANEL_FRAME_OPACITY_MAX - PANEL_FRAME_OPACITY_MIN) * t;
+    },
     dispose() {
       geometry.dispose();
       material.dispose();
       texture.dispose();
+      frameGeometry.dispose();
+      frameMaterial.dispose();
     },
   };
 }

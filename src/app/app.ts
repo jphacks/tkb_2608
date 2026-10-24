@@ -1,4 +1,4 @@
-// 体験の流れ（開始画面 → ロビー → シナリオ）の組み立てと画面の切り替え（docs/04_SPEC/SPEC_01）．
+// 体験の流れ（開始画面 → ホーム → ロビー → シナリオ）の組み立てと画面の切り替え（docs/04_SPEC/SPEC_01）．
 // ロジックは書かず，各モジュールをつなぐだけにする
 
 import * as THREE from "three";
@@ -8,7 +8,12 @@ import { createEventBus } from "../core/event-bus";
 import type { AppEvent } from "../core/events";
 import type { Scene, SceneContext, SceneId, Session, Stage } from "../core/scene";
 import { IDLE_PLAYER_INPUT, type PlayerInput } from "../core/types";
+import { createHeadOrientationFeed } from "../lobby/headOrientationFeed";
+import { resolveHeadPose } from "../lobby/headPose";
+import { resolveSceneRequest } from "../lobby/homeFlow";
+import { createHomeScene } from "../lobby/homeScene";
 import { createLobbyScene } from "../lobby/lobbyScene";
+import { createOrientationGuide } from "../lobby/orientationGuide";
 import type { AcquiredDevices } from "../lobby/permissions";
 import { createStartScene } from "../lobby/startScene";
 import { resolveDebug, resolveStereo } from "./launchMode";
@@ -37,6 +42,9 @@ export function startApp(): void {
   overlay.style.cssText = "position:fixed;inset:0;pointer-events:none;z-index:1;";
   document.body.appendChild(overlay);
 
+  // 縦向きの案内は画面の切り替えと関係なく，?app の全画面で出す
+  const orientationGuide = createOrientationGuide();
+
   const world = new THREE.Scene();
   world.background = new THREE.Color(0x10141c);
   // rig の位置を目の位置とし，カメラ（頭）はその原点に置く
@@ -57,7 +65,8 @@ export function startApp(): void {
           devices.current = acquired;
         },
       }),
-    lobby: () => createLobbyScene({ debug }),
+    home: () => createHomeScene(),
+    lobby: () => createLobbyScene({ debug, isPaused: () => orientationGuide.visible }),
     scenario: () => createScenarioPlaceholder(),
   };
 
@@ -70,7 +79,8 @@ export function startApp(): void {
     stage,
     session,
     goTo(next) {
-      pending = next;
+      // 許可の画面は起動直後の 1 回だけ（許可・カメラ・AudioContext は取り直さない）
+      pending = resolveSceneRequest(next, devices.current !== null);
     },
   };
 
@@ -94,18 +104,23 @@ export function startApp(): void {
     }
   };
 
-  // 頭の向きは input/ ができるまで，PC 確認用のドラッグで代用する
+  // 頭の向きは仮実装（input/ の PlayerInput.head ができたら置き換える）．
+  // 端末の向き（deviceorientation）が届けばそれを使い，届かない PC 等ではドラッグで代用する．
+  // 入力源の選択と正面リセット（yawOffset の差し引き）は lobby/headPose.ts の純粋な関数で決める
+  const headFeed = createHeadOrientationFeed();
   const look = new DragLook(renderer.domElement, { yaw: 0, pitch: 0 });
   const euler = new THREE.Euler(0, 0, 0, "YXZ");
   const headQuat = new THREE.Quaternion();
   const readInput = (time: number): PlayerInput => {
     euler.set(look.angles.pitch, look.angles.yaw, 0, "YXZ");
     headQuat.setFromEuler(euler);
-    return {
-      ...IDLE_PLAYER_INPUT,
-      time,
-      head: { x: headQuat.x, y: headQuat.y, z: headQuat.z, w: headQuat.w },
-    };
+    const head = resolveHeadPose({
+      latest: headFeed.latest,
+      drag: { x: headQuat.x, y: headQuat.y, z: headQuat.z, w: headQuat.w },
+      scene: current?.id ?? null,
+      calibration: session.calibration,
+    });
+    return { ...IDLE_PLAYER_INPUT, time, head };
   };
 
   const resize = (): void => {

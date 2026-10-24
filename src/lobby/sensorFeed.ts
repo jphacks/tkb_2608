@@ -12,7 +12,8 @@ export interface SensorFeed {
 /** 1 フレームの間にたまる上限（タブが裏に回った時等にたまり続けないため） */
 const MAX_BUFFERED = 600;
 
-function screenAngle(): number {
+/** 画面の回転角（度）．screen.orientation が無い古い iOS は window.orientation を使う */
+export function screenAngle(): number {
   const angle = window.screen?.orientation?.angle;
   if (typeof angle === "number") return angle;
   const legacy = (window as unknown as { orientation?: number }).orientation;
