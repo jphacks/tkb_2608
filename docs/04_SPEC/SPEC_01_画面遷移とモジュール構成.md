@@ -181,7 +181,8 @@ src/
 
 | 型 | 定義の場所 | 作る側 → 使う側 | 内容 |
 | --- | --- | --- | --- |
-| `SchoolPlan` | `core/schoolPlan.ts`（**新規**） | editor/ → share/ → app/ → scenes/・sim/・scenario/・debrief/ | 校舎のマス目と訓練条件（SPEC_02） |
+| `SchoolPlan` | `core/schoolPlan.ts` | editor/ → share/ → app/ → scenes/・sim/・scenario/・debrief/ | 校舎のマス目と訓練条件（SPEC_02） |
+| `PlanLoadError` | `core/schoolPlan.ts` | share/ → app/ → lobby/ | 校舎データを読み込めなかった理由．`kind`（`corrupted`・`unsupportedVersion`・`invalidPlan`）と画面に出す `reason` |
 | `SpreadMap` | `sim/spread.ts`（**新規**） | sim/ → editor/・scenes/・debrief/ | 各マスに火・煙が着く時刻（秒．非常ベルが 0．着かなければ `Infinity`）．`fireAt(cell)`・`smokeAt(cell)` で引く |
 | `DrillTrack` | `core/drill.ts`（**新規**） | app/ → sim/ | 0.2 秒ごとの記録（非常ベルからの秒数・階・ワールド座標の X と Z・姿勢） |
 | `DrillEvaluation` | `core/drill.ts`（**新規**） | sim/ → debrief/ | 評価（外れた区間・火に近づいた点・煙の中でしゃがんでいた割合・避難時間・逃げ遅れか） |
@@ -190,7 +191,7 @@ src/
 | `CalibrationProfile` | `core/types.ts` | lobby/ → input/ | 正面のヨー角と，足踏み・しゃがみの判定のしきい値．項目の見直しは後述「キャリブレーションとの分担」 |
 | `Scene` | `core/scene.ts` | 各担当 → app/ | 画面の共通インターフェース（`enter`・`update`・`exit`） |
 | `SceneContext` | `core/scene.ts` | app/ → 各 Scene | イベントバス，描画先（`Stage`），画面をまたぐデータ（`Session`），画面の切り替え（`goTo`） |
-| `Session` | `core/scene.ts` | 各担当 | `plan`（app/ が URL から読んで書く．**新規**），`calibration`（lobby/ が書く），`result`（app/ が書く），`drill`（app/ が `DrillTrack` と `DrillEvaluation` を書く．**新規**），`recording`（recording/ が書く） |
+| `Session` | `core/scene.ts` | 各担当 | `plan`（app/ が URL から読んで書く．読み込む前と読み込めなかった時は `null`），`planLoadError`（app/ が書き，開始画面（lobby/）が読んで案内を出す．`decodePlan` の失敗の `kind` と `reason`（`PlanLoadError`．SPEC_02「URL と QR への埋め込み」）．読み込めた時と URL に無い時は `null`），`calibration`（lobby/ が書く），`result`（app/ が書く），`drill`（app/ が `DrillTrack` と `DrillEvaluation` を書く．**新規**），`recording`（recording/ が書く） |
 | `ScenarioWorld` | `core/scene.ts` | scenes/ → app/ | 校舎の今の状態．`WorldObservation` に，今いるエリアの ID に加えてプレイヤーの位置（階・X・Z）を足す（**変更**） |
 | `GameEvent` | `core/events.ts` | scenes/・audio/ → scenario/ | 部屋で起きた出来事．`objectTouched`（手で触れた）・`areaEntered`／`areaExited`・`signal`（その他の出来事．名前で区別） |
 | `AppEvent` | `core/events.ts` | 全員 | イベントバスに流すもの．`GameEvent` に加え，`cue`・`stepEntered`・`scenarioFinished` |
