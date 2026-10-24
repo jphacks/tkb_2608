@@ -105,6 +105,20 @@ export interface SchoolPlanLayout {
 }
 
 // ---------------------------------------------------------------------------
+// 向き
+
+/**
+ * SchoolPlan の向き（rad．0 で -Z（エディタの上）を向き，右回り（エディタの画面で時計回り）に増える．
+ * SPEC_02「座標」）を，3D の空間の向き（rad．0 で -Z を向き，正で左へ回る．Space.startYaw と同じ）に変える．
+ * 向きを変える所はすべてこの関数を通す（約束の食い違いを 1 か所に閉じ込めるため）．
+ * -0 は 0 にそろえる（比べやすくし，表示で "-0" が出ないようにするため）．NaN はそのまま返す
+ */
+export function planYawToSpaceYaw(planYaw: number): number {
+  const yaw = -planYaw;
+  return yaw === 0 ? 0 : yaw;
+}
+
+// ---------------------------------------------------------------------------
 // マスをまとめた矩形
 
 /**
@@ -474,8 +488,7 @@ export function schoolPlanLayout(plan: SchoolPlan, floorIndex = 0): SchoolPlanLa
     start: {
       x: (start.x + 0.5) * cellSize,
       z: (start.z + 0.5) * cellSize,
-      // SchoolPlan の startYaw は右回りに増え，Space.startYaw は左回りに増える
-      yaw: 0 - plan.drill.startYaw,
+      yaw: planYawToSpaceYaw(plan.drill.startYaw),
     },
   };
 }

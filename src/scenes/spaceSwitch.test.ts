@@ -124,3 +124,22 @@ describe("空間の切り替え（?scene=）", () => {
     }
   });
 });
+
+describe("Space.fog・Space.update", () => {
+  it.each(["room", "train", "elevator", "school-parts"] as const)(
+    "%s はフォグも毎フレームの更新も持たない",
+    (id) => {
+      const s = createSpace(id, { maxAnisotropy: 1 });
+      expect(s.fog).toBeUndefined();
+      expect(s.update).toBeUndefined();
+      s.dispose();
+    },
+  );
+
+  it("school はフォグと毎フレームの更新を持つ", () => {
+    const s = createSpace("school", { maxAnisotropy: 1 });
+    expect(s.fog).toBeDefined();
+    expect(typeof s.update).toBe("function");
+    s.dispose();
+  });
+});

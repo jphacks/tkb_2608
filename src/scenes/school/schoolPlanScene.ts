@@ -1,11 +1,15 @@
 // SchoolPlan の 1 フロアから組み立てた校舎の空間（?scene=school）．並べ方は schoolPlanLayout.ts の純粋な関数で求め，
-// ここでは校舎のパーツ（schoolParts.ts）を置くだけ．動かない Mesh は最後にマテリアルごとに結合する
+// ここでは校舎のパーツ（schoolParts.ts）を置くだけ．動かない Mesh は最後にマテリアルごとに結合する．
+// 学習モードの床の矢印（routeArrows.ts）と火と煙（fireSmoke.ts）も足し，火と煙は毎フレームの update で時刻に合わせる
 
 import * as THREE from "three";
 import type { SchoolPlan } from "../../core/schoolPlan";
 import { DEMO_SCHOOL } from "../../share/samples/demoSchool";
+import { computeSpread } from "../../sim/spread";
 import { createBox, disposeObjectTree } from "../common/meshHelpers";
 import type { Space, SpaceBuildOptions } from "../types";
+import { createFireSmoke, type FireSmoke } from "./fireSmoke";
+import { createRouteArrows, type RouteArrows } from "./routeArrows";
 import {
   edgePlacementBetween,
   type PartPlacement,
@@ -48,6 +52,11 @@ export interface SchoolSpace extends Space {
   readonly plan: SchoolPlan;
   readonly layout: SchoolPlanLayout;
   readonly parts: SchoolPlanParts;
+  /** 床の正解経路の矢印（root の子．テストモードでは null） */
+  readonly routeArrows: RouteArrows | null;
+  /** 火と煙（root の子．fog は fireSmoke.fog と同じもの） */
+  readonly fireSmoke: FireSmoke;
+  readonly fog: THREE.FogExp2;
 }
 
 /** Space が SchoolPlan から組み立てた校舎の空間か */
@@ -228,6 +237,12 @@ export function createSchoolScene(
 
   const mergeStats = mergeStaticMeshes(partsGroup, isDynamicSchoolObject);
 
+  // 矢印と火と煙は parts の外（root の直下）に置き，結合の対象にしない（それぞれ自分で解放するため）
+  const routeArrows = createRouteArrows(plan);
+  if (routeArrows) root.add(routeArrows.object);
+  const fireSmoke = createFireSmoke(plan, computeSpread(plan));
+  root.add(fireSmoke.object);
+
   return {
     id: "school",
     root,
@@ -237,7 +252,21 @@ export function createSchoolScene(
     plan,
     layout,
     parts: { parts: partsGroup, shutters, byId, mergeStats },
+    routeArrows,
+    fireSmoke,
+    fog: fireSmoke.fog,
+    update: (frame) => {
+      fireSmoke.update(frame.seconds, frame.eye);
+    },
     dispose: () => {
+      // 矢印と火と煙は自分の dispose で解放する（火と煙の uniforms のテクスチャは disposeObjectTree では見つからないため）．
+      // 二重に解放しないよう root から外してから残りをまとめて解放する
+      if (routeArrows) {
+        root.remove(routeArrows.object);
+        routeArrows.dispose();
+      }
+      root.remove(fireSmoke.object);
+      fireSmoke.dispose();
       disposeObjectTree(root);
       disposeSchoolPartContext(context);
     },

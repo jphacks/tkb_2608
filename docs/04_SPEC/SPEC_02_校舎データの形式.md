@@ -20,6 +20,7 @@
 | マスの大きさ | `cellSize`（m）．既定は 1 m（廊下 2〜3 マス，教室 8×8 マス程度） |
 | 3D への対応 | マス `(x, z)` の中心はワールド座標の `((x + 0.5) * cellSize, (z + 0.5) * cellSize)`．three.js の X・Z をそのまま使う |
 | 階の高さ | `level` 階の床は `y = (level - 1) * 3.5`（m）．天井の高さは 3 m |
+| 向き | `SchoolPlan` の向き（`drill.startYaw`）は rad で，0 が -Z（エディタの上）向き，**右回り**（エディタの画面で時計回り）に増える．3D の空間の向き（`Space.startYaw`）は 0 が -Z 向きで**正で左へ回る**ため，符号が逆になる．3D へ渡す時は必ず `planYawToSpaceYaw()`（`src/scenes/school/schoolPlanLayout.ts`．`-planYaw`，-0 は 0 にそろえる）を通し，符号の反転を直接書かない |
 | 配列の並び | マスの配列は行ごと（添字は `z * width + x`） |
 
 ## 型 (Types)

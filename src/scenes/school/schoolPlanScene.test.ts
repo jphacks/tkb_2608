@@ -2,12 +2,17 @@
 // 基準は Issue #92 の完了条件（デモの校舎の 1 フロアが組み上がる・壁・wall のマス・閉じたシャッターを通り抜けずに歩ける）．
 // canvas は何もしない物に差し替える
 
-import type * as THREE from "three";
+import * as THREE from "three";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import type { SchoolPlan } from "../../core/schoolPlan";
 import { DEMO_SCHOOL } from "../../share/samples/demoSchool";
+import { computeSpread } from "../../sim/spread";
 import { createSpace, createWalkWorld } from "../index";
 import { circleOverlapsRect, DEFAULT_BODY, moveWithCollision, onFloor } from "../walk/collision";
 import { activeObstacles, type WalkWorld } from "../walk/locomotion";
+import { FIRE_SMOKE_NAME, SMOKE_MESH_NAME } from "./fireSmoke";
+import { eyeSmokeDensity, smokeFogDensity } from "./fireSmokeLayout";
+import { ROUTE_ARROWS_NAME } from "./routeArrows";
 import type {
   FireShutterUserData,
   SchoolBlockUserData,
@@ -253,5 +258,149 @@ describe("校舎の空間の歩行", () => {
     const { w } = setup();
     const end = walk(w, center(5, 12), { x: 5.5, z: 15 });
     expect(end.z).toBeLessThanOrEqual(13);
+  });
+});
+
+/** デモの校舎の訓練条件だけを上書きした校舎 */
+function demoWith(drill: Partial<SchoolPlan["drill"]>): SchoolPlan {
+  return { ...DEMO_SCHOOL, drill: { ...DEMO_SCHOOL.drill, ...drill } };
+}
+
+function buildPlan(plan: SchoolPlan): SchoolSpace {
+  space = createSchoolScene({ maxAnisotropy: 1 }, plan);
+  return space;
+}
+
+/** 理科室の火元 (16, 2) の隣のマスの目の位置（十分後に煙が濃い）．立った目 1.6 m・しゃがんだ目 0.9 m */
+const smokyStandingEye = { x: 15.5, y: 1.6, z: 2.5 };
+const smokyCrouchingEye = { x: 15.5, y: 0.9, z: 2.5 };
+
+describe("createSchoolScene（床の矢印と火と煙）", () => {
+  it("学習モードでは床の矢印（route-arrows）と火と煙（fire-smoke）が root の直下にある", () => {
+    const s = build();
+    expect(DEMO_SCHOOL.drill.mode).toBe("learn");
+    expect(s.routeArrows).not.toBeNull();
+    expect(s.routeArrows?.object.name).toBe(ROUTE_ARROWS_NAME);
+    expect(s.routeArrows?.object.parent).toBe(s.root);
+    expect(s.routeArrows?.placements.length).toBeGreaterThan(0);
+    expect(s.fireSmoke.object.name).toBe(FIRE_SMOKE_NAME);
+    expect(s.fireSmoke.object.parent).toBe(s.root);
+  });
+
+  it("矢印と火と煙は結合の対象（parts）の外にある", () => {
+    const s = build();
+    let insideParts = false;
+    s.parts.parts.traverse((o) => {
+      if (o === s.routeArrows?.object || o === s.fireSmoke.object) insideParts = true;
+      if (o.name.startsWith(ROUTE_ARROWS_NAME) || o.name.startsWith(FIRE_SMOKE_NAME)) {
+        insideParts = true;
+      }
+    });
+    expect(insideParts).toBe(false);
+  });
+
+  it("テストモードでは routeArrows が null で，root の中に矢印が無い（火と煙はある）", () => {
+    const s = buildPlan(demoWith({ mode: "test" }));
+    expect(s.routeArrows).toBeNull();
+    expect(s.root.getObjectByName(ROUTE_ARROWS_NAME)).toBeUndefined();
+    expect(s.root.getObjectByName(`${ROUTE_ARROWS_NAME}-mesh`)).toBeUndefined();
+    expect(s.fireSmoke.object.parent).toBe(s.root);
+  });
+
+  it("fog は FogExp2 で，fireSmoke.fog と同じもの", () => {
+    const s = build();
+    expect(s.fog).toBeInstanceOf(THREE.FogExp2);
+    expect(s.fog).toBe(s.fireSmoke.fog);
+  });
+
+  it("update を持ち，渡した時刻が fireSmoke の様子に入る", () => {
+    const s = build();
+    expect(typeof s.update).toBe("function");
+    s.update?.({ seconds: 42, eye: null });
+    expect(s.fireSmoke.stats.seconds).toBe(42);
+    s.update?.({ seconds: 90, eye: smokyStandingEye });
+    expect(s.fireSmoke.stats.seconds).toBe(90);
+  });
+
+  it("煙の中で立つとフォグが濃く，しゃがむと薄くなる（F4．しゃがむと晴れる）", () => {
+    const s = build();
+    const spread = computeSpread(DEMO_SCHOOL);
+    s.update?.({ seconds: 1000, eye: smokyStandingEye });
+    const standing = s.fog.density;
+    expect(standing).toBeGreaterThan(0);
+    expect(standing).toBeCloseTo(
+      smokeFogDensity(eyeSmokeDensity(DEMO_SCHOOL, spread, 1000, smokyStandingEye)),
+      12,
+    );
+    s.update?.({ seconds: 1000, eye: smokyCrouchingEye });
+    expect(s.fog.density).toBeLessThan(standing);
+    expect(s.fog.density).toBeCloseTo(
+      smokeFogDensity(eyeSmokeDensity(DEMO_SCHOOL, spread, 1000, smokyCrouchingEye)),
+      12,
+    );
+    expect(s.fireSmoke.stats.fogDensity).toBe(s.fog.density);
+  });
+
+  it("非常ベルの時点（0 秒）は煙が届いておらずフォグは 0．時間がたつと濃くなる", () => {
+    const s = build();
+    s.update?.({ seconds: 0, eye: smokyStandingEye });
+    expect(s.fog.density).toBe(0);
+    s.update?.({ seconds: 1000, eye: smokyStandingEye });
+    expect(s.fog.density).toBeGreaterThan(0);
+  });
+
+  it("目の位置が null の時はフォグを 0 にする", () => {
+    const s = build();
+    s.update?.({ seconds: 1000, eye: smokyStandingEye });
+    expect(s.fog.density).toBeGreaterThan(0);
+    s.update?.({ seconds: 1000, eye: null });
+    expect(s.fog.density).toBe(0);
+  });
+
+  it("THREE.Vector3 を目の位置としてそのまま渡せる", () => {
+    const s = build();
+    const eye = new THREE.Vector3(smokyStandingEye.x, smokyStandingEye.y, smokyStandingEye.z);
+    s.update?.({ seconds: 1000, eye });
+    expect(s.fog.density).toBeGreaterThan(0);
+  });
+
+  it("テストモードでも update で火と煙が進む", () => {
+    const s = buildPlan(demoWith({ mode: "test" }));
+    s.update?.({ seconds: 1000, eye: smokyStandingEye });
+    expect(s.fireSmoke.stats.seconds).toBe(1000);
+    expect(s.fog.density).toBeGreaterThan(0);
+  });
+
+  it("dispose で例外を出さず，矢印と火と煙を root から外して解放する（煙の DataTexture も）", () => {
+    const s = build();
+    const disposed: string[] = [];
+    const arrowMesh = s.routeArrows?.object.getObjectByName(`${ROUTE_ARROWS_NAME}-mesh`);
+    if (!(arrowMesh instanceof THREE.Mesh)) throw new Error("矢印の Mesh が無い");
+    arrowMesh.geometry.addEventListener("dispose", () => disposed.push("arrow:geometry"));
+    const smoke = s.fireSmoke.object.getObjectByName(SMOKE_MESH_NAME);
+    if (!(smoke instanceof THREE.Mesh) || !(smoke.material instanceof THREE.ShaderMaterial)) {
+      throw new Error("煙の層の Mesh が無い");
+    }
+    const tex = smoke.material.uniforms.uCells.value;
+    if (!(tex instanceof THREE.DataTexture)) throw new Error("uCells が DataTexture でない");
+    tex.addEventListener("dispose", () => disposed.push("smoke:texture"));
+    smoke.geometry.addEventListener("dispose", () => disposed.push("smoke:geometry"));
+    const routeObject = s.routeArrows?.object;
+    const fireObject = s.fireSmoke.object;
+
+    expect(() => s.dispose()).not.toThrow();
+    space = undefined;
+
+    expect(disposed).toEqual(
+      expect.arrayContaining(["arrow:geometry", "smoke:texture", "smoke:geometry"]),
+    );
+    expect(routeObject?.parent).toBeNull();
+    expect(fireObject.parent).toBeNull();
+  });
+
+  it("テストモード（矢印なし）でも dispose で例外を出さない", () => {
+    const s = buildPlan(demoWith({ mode: "test" }));
+    expect(() => s.dispose()).not.toThrow();
+    space = undefined;
   });
 });

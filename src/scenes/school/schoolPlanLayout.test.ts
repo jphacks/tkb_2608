@@ -12,6 +12,7 @@ import { DOOR, EXIT, minEdgeLength } from "./schoolLayout";
 import {
   type CellRect,
   cellRects,
+  planYawToSpaceYaw,
   SCHOOL_CEILING_HEIGHT,
   type SchoolPlanLayout,
   schoolPlanLayout,
@@ -373,5 +374,86 @@ describe("schoolPlanLayout（マス目の組み合わせ）", () => {
   it("階が無ければ RangeError", () => {
     expect(() => schoolPlanLayout(DEMO_SCHOOL, 1)).toThrow(RangeError);
     expect(() => schoolPlanLayout(DEMO_SCHOOL, -1)).toThrow(RangeError);
+  });
+});
+
+/** 3D の空間の向き（0 で -Z，正で左へ回る．three.js の rotation.y と同じ）の前方ベクトル（XZ） */
+function spaceForward(yaw: number): { x: number; z: number } {
+  return { x: -Math.sin(yaw), z: -Math.cos(yaw) };
+}
+
+/** SchoolPlan の向き（0 で -Z（エディタの上），右回り（エディタの画面で時計回り）に増える）の前方ベクトル（XZ） */
+function planForward(planYaw: number): { x: number; z: number } {
+  return { x: Math.sin(planYaw), z: -Math.cos(planYaw) };
+}
+
+describe("planYawToSpaceYaw", () => {
+  it("0（-Z 向き）は +0 のまま（-0 にしない）", () => {
+    expect(Object.is(planYawToSpaceYaw(0), 0)).toBe(true);
+    expect(Object.is(planYawToSpaceYaw(-0), 0)).toBe(true);
+  });
+
+  it.each([
+    ["右（+X）向き", Math.PI / 2, -Math.PI / 2],
+    ["左（-X）向き", -Math.PI / 2, Math.PI / 2],
+    ["後ろ（+Z）向き", Math.PI, -Math.PI],
+    ["1 周を超える値", 3 * Math.PI, -3 * Math.PI],
+  ])("%s: 右回りの %f は左回りの %f", (_, planYaw, expected) => {
+    expect(planYawToSpaceYaw(planYaw)).toBeCloseTo(expected, 12);
+  });
+
+  it.each([
+    ["上（-Z）", 0, { x: 0, z: -1 }],
+    ["右（+X）", Math.PI / 2, { x: 1, z: 0 }],
+    ["下（+Z）", Math.PI, { x: 0, z: 1 }],
+    ["左（-X）", -Math.PI / 2, { x: -1, z: 0 }],
+    ["右上（+X・-Z）", Math.PI / 4, { x: Math.SQRT1_2, z: -Math.SQRT1_2 }],
+  ])("変えた向きの 3D の前方は SchoolPlan で向いている方向（%s）と同じ", (_, planYaw, dir) => {
+    const forward = spaceForward(planYawToSpaceYaw(planYaw));
+    expect(forward.x).toBeCloseTo(dir.x, 12);
+    expect(forward.z).toBeCloseTo(dir.z, 12);
+    const expected = planForward(planYaw);
+    expect(forward.x).toBeCloseTo(expected.x, 12);
+    expect(forward.z).toBeCloseTo(expected.z, 12);
+  });
+
+  it("NaN はそのまま NaN を返す", () => {
+    expect(planYawToSpaceYaw(Number.NaN)).toBeNaN();
+  });
+
+  it("±Infinity は符号を反転する", () => {
+    expect(planYawToSpaceYaw(Number.POSITIVE_INFINITY)).toBe(Number.NEGATIVE_INFINITY);
+    expect(planYawToSpaceYaw(Number.NEGATIVE_INFINITY)).toBe(Number.POSITIVE_INFINITY);
+  });
+
+  it("2 回通すと元の向きに戻る（逆変換も同じ関数）", () => {
+    for (const yaw of [0, 0.3, -1.2, Math.PI / 2, Math.PI, -Math.PI, 5]) {
+      expect(planYawToSpaceYaw(planYawToSpaceYaw(yaw))).toBe(yaw);
+    }
+  });
+});
+
+describe("schoolPlanLayout（開始の向き）", () => {
+  it.each([
+    ["上（-Z）", 0, { x: 0, z: -1 }],
+    ["右（+X）", Math.PI / 2, { x: 1, z: 0 }],
+    ["下（+Z）", Math.PI, { x: 0, z: 1 }],
+    ["左（-X）", -Math.PI / 2, { x: -1, z: 0 }],
+  ])("startYaw が %s 向きなら，3D の開始の向きの前方もその方向", (_, startYaw, dir) => {
+    const { yaw } = schoolPlanLayout(planFromRows(["0"], { startYaw })).start;
+    expect(yaw).toBe(planYawToSpaceYaw(startYaw));
+    const forward = spaceForward(yaw);
+    expect(forward.x).toBeCloseTo(dir.x, 12);
+    expect(forward.z).toBeCloseTo(dir.z, 12);
+  });
+
+  it("startYaw = π/2（右＝+X 向き）なら 3D では -π/2", () => {
+    const { yaw } = schoolPlanLayout(planFromRows(["0"], { startYaw: Math.PI / 2 })).start;
+    expect(yaw).toBeCloseTo(-Math.PI / 2, 12);
+  });
+
+  it("startYaw = 0 なら 3D の向きは +0（-0 にならない）", () => {
+    const { yaw } = schoolPlanLayout(planFromRows(["0"], { startYaw: 0 })).start;
+    expect(Object.is(yaw, 0)).toBe(true);
   });
 });
