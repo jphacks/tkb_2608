@@ -1,19 +1,21 @@
-// 空間の一覧．電車・エレベーターは実装したらここに足す
+// 空間の一覧．エレベーターは実装したらここに足す
 
 import { createRoomScene } from "./room/room";
-import type { SceneId } from "./sceneParam";
-import type { SceneBuildOptions, SceneFactory, SceneSpace } from "./types";
+import type { SpaceId } from "./spaceParam";
+import { createTrainScene } from "./train/train";
+import type { Space, SpaceBuildOptions, SpaceFactory } from "./types";
 
-const SCENE_FACTORIES: Partial<Record<SceneId, SceneFactory>> = {
+const SPACE_FACTORIES: Partial<Record<SpaceId, SpaceFactory>> = {
   room: createRoomScene,
+  train: createTrainScene,
 };
 
 /** 実装済みの空間の id */
-export const AVAILABLE_SCENE_IDS = Object.keys(SCENE_FACTORIES) as SceneId[];
+export const AVAILABLE_SPACE_IDS = Object.keys(SPACE_FACTORIES) as SpaceId[];
 
-/** 空間を作る．未実装の id なら例外にする（呼ぶ前に resolveSceneId で絞る） */
-export function createSceneSpace(id: SceneId, options: SceneBuildOptions): SceneSpace {
-  const factory = SCENE_FACTORIES[id];
+/** 空間を作る．未実装の id なら例外にする（呼ぶ前に resolveSpaceId で絞る） */
+export function createSpace(id: SpaceId, options: SpaceBuildOptions): Space {
+  const factory = SPACE_FACTORIES[id];
   if (!factory) throw new Error(`未実装の空間です: ${id}`);
   return factory(options);
 }

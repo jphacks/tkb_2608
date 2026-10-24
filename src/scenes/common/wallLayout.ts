@@ -43,6 +43,45 @@ export function splitWallAroundOpening(
   return rects.filter((r) => r.u1 - r.u0 > 0 && r.v1 - r.v0 > 0);
 }
 
+/**
+ * 複数の開口部（窓・ドア）を空けて壁を矩形に分割する．開口部どうしは u の範囲が重ならない前提．
+ * 開口部の間と両端は全高，各開口部の上下は開口部の幅だけの矩形になる（u の小さい順）．
+ * 幅や高さが 0 の矩形は含めない
+ */
+export function splitWallAroundOpenings(
+  length: number,
+  height: number,
+  openings: readonly WallRect[],
+): WallRect[] {
+  const sorted = [...openings].sort((a, b) => a.u0 - b.u0);
+  const rects: WallRect[] = [];
+  let cursor = 0;
+  for (const o of sorted) {
+    rects.push({ u0: cursor, u1: o.u0, v0: 0, v1: height });
+    rects.push({ u0: o.u0, u1: o.u1, v0: 0, v1: o.v0 });
+    rects.push({ u0: o.u0, u1: o.u1, v0: o.v1, v1: height });
+    cursor = o.u1;
+  }
+  rects.push({ u0: cursor, u1: length, v0: 0, v1: height });
+  return rects.filter((r) => r.u1 - r.u0 > 0 && r.v1 - r.v0 > 0);
+}
+
+/** ワールド座標の点 (x, z) を壁に沿う位置 u に変換する（壁の線上にない点は線へ射影した位置） */
+export function wallUAt(wall: WallDef, x: number, z: number): number {
+  return (x - wall.origin[0]) * wall.dir[0] + (z - wall.origin[2]) * wall.dir[2];
+}
+
+/** ワールド座標の中心 (x, z) と幅から，壁上の u の範囲を求める */
+export function wallSpanAt(
+  wall: WallDef,
+  x: number,
+  z: number,
+  width: number,
+): { u0: number; u1: number } {
+  const center = wallUAt(wall, x, z);
+  return { u0: center - width / 2, u1: center + width / 2 };
+}
+
 /** 壁上の点 (u, v) を，法線方向に offset だけ内側へずらしたワールド座標に変換する */
 export function wallPointToWorld(wall: WallDef, u: number, v: number, offset = 0): Vec3Tuple {
   return [

@@ -3,7 +3,8 @@
 import * as THREE from "three";
 import { mulberry32, randomInt, randomRange } from "./random";
 
-function createCanvas(
+/** 指定の大きさの canvas と 2D コンテキストを作る */
+export function createCanvas(
   width: number,
   height: number,
 ): [HTMLCanvasElement, CanvasRenderingContext2D] {
@@ -16,7 +17,10 @@ function createCanvas(
 }
 
 /** 繰り返し貼る前提の設定（RepeatWrapping・異方性フィルタ・sRGB）でテクスチャにする */
-function toRepeatTexture(canvas: HTMLCanvasElement, maxAnisotropy: number): THREE.CanvasTexture {
+export function toRepeatTexture(
+  canvas: HTMLCanvasElement,
+  maxAnisotropy: number,
+): THREE.CanvasTexture {
   const texture = new THREE.CanvasTexture(canvas);
   texture.wrapS = THREE.RepeatWrapping;
   texture.wrapT = THREE.RepeatWrapping;
@@ -26,7 +30,7 @@ function toRepeatTexture(canvas: HTMLCanvasElement, maxAnisotropy: number): THRE
 }
 
 /** 細かいまだら模様を描く．端をまたぐ点は反対側にも描いて継ぎ目を消す */
-function drawMottle(
+export function drawMottle(
   ctx: CanvasRenderingContext2D,
   rand: () => number,
   size: number,
