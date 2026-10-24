@@ -8,8 +8,8 @@
 
 | パス | 内容 |
 | --- | --- |
-| `src/main.ts` | URL パラメータで空間を選び，開始位置から一人称で描画する．確認用の仮の入力（ドラッグで視点・画面のボタンで歩く／しゃがむ／ドア）を `SpaceWalker` につなぎ，エリアの出入りをイベントバスに流す（`app/` ができるまでの暫定）．`?input=mock\|device` を付けた時だけ，代わりに `src/inputPreview.ts` で担当D の入力を使う |
-| `src/inputPreview.ts` | `?input=` を付けた時の入力の確認用のつなぎ．`createInputSource()`（`src/input/inputSource.ts`）の `PlayerInput` でカメラを回し（空間の `startYaw` × 頭の向き），`walkSpeed` で頭のヨーの向きへ進み，`posture` で目の高さを 0.7 m 下げる．画面の左上に `PlayerInput` の中身を出す．当たり判定の無い仮の移動で，担当D の入力を `SpaceWalker` につないだら置き換える |
+| `src/main.ts` | URL パラメータで空間を選び，開始位置から一人称で描画する．確認用の仮の入力（ドラッグで視点・画面のボタンで歩く／しゃがむ／ドア）を `SpaceWalker` につなぎ，エリアの出入りをイベントバスに流す（`app/` ができるまでの暫定）．`?input=mock\|device` を付けた時は，ボタン・ドラッグの代わりに担当D の入力（`createInputSource()` の `PlayerInput`）を同じ `SpaceWalker` に渡す（どちらも当たり判定あり．rig・walker・確認用のドアの組み立ては `setupWalk()` で共通） |
+| `src/inputPreview.ts` | `?input=` を付けた時の入力の確認用の殻．`InputSource`（`src/input/inputSource.ts`）から `PlayerInput` を読み（`read()`），画面の左上に `PlayerInput` の中身と歩行の状態（位置・目の高さ・エリア・直前の出入り・近くのドア）を出す（`show()`）．`device` ではタップでセンサーの許可を取り，E キーで近くのドアを開閉する（確認用）．カメラ・移動には触れない |
 | `src/scenes/types.ts` | 空間の共通インターフェース（`Space`・`SpaceFactory`・`SpaceBuildOptions`） |
 | `src/scenes/index.ts` | 実装済みの空間の一覧（`SPACE_FACTORIES`・`AVAILABLE_SPACE_IDS`）と `createSpace()` |
 | `src/scenes/spaceParam.ts` | `?scene=` の解釈（`SpaceId`・`parseSpaceId()`・`resolveSpaceId()`） |
@@ -44,7 +44,9 @@
 ## 入力の切り替え (Input Selection)
 
 - `?input=mock` は PC のキーボードとマウス（W: 歩く・S: ゆっくり歩く・C: しゃがみの切り替え・ドラッグ: 頭の向き），`?input=device` はスマホのセンサー（画面のタップで許可）で動かす．使い方は [ENV_04](../02_ENV/ENV_04_開発コマンド.md)「開発」
-- 指定なし・不正な値は，ドラッグで視点・画面のボタンで歩く確認用の仮の入力で `SpaceWalker` を動かす（`parseInputKind()` が `null` を返す）．担当D の入力（`?input=`）はまだ `SpaceWalker` につないでおらず，当たり判定は効かない
+- 指定なし・不正な値は，ドラッグで視点・画面のボタンで歩く確認用の仮の入力で `SpaceWalker` を動かす（`parseInputKind()` が `null` を返す）
+- `?input=` を付けた時も同じ `SpaceWalker` に `PlayerInput` を渡すため，壁・家具・閉じたドアに当たって止まり，しゃがむと机の下に入れる．画面のボタンとドラッグの視点操作（`DragLook`）は出さない（`mock` のドラッグは `src/input/` のモックが受ける）．確認用のドアの開閉は E キー（PC のみ．スマホでは開閉できない）
+- 頭の向き（`PlayerInput.head`）は正面リセット済み（`device` は最初に受け取った向き，`mock` はドラッグの開始の向きが正面）のため，体の向きから見た値として扱う．rig の向きを空間の `startYaw` にし，その子のカメラに `head` をそのまま入れる．`SpaceWalker` は `startYaw` ＋ 頭のヨーの向きへ進むので，空間の開始の向きを向いて始まり，頭を向けた方向へ歩く（ボタン歩行の `DragLook` と同じ扱い）
 - `src/main.ts` は `src/input/` のうち `inputParam.ts`（`?input=` の解釈）と `inputSource.ts`（入力の入口）だけを import する．フライトレコーダーと dev ページ（`src/input/recorder/`・`src/input/dev/`）は本番のビルドに入れない
 
 ## 空間を追加する手順 (Adding a Space)
