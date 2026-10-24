@@ -16,7 +16,7 @@
 
 | コマンド | 内容 |
 | --- | --- |
-| `npm run dev` | Vite の開発サーバーを起動する（`http://localhost:5173/`．PC のブラウザで開く） |
+| `npm run dev` | Vite の開発サーバーを起動する（`http://localhost:5173/`．PC のブラウザで開く）．コンテナの中では `127.0.0.1:5173` で待ち受ける（`vite.config.ts` の `server.host`）．起動の表示が `Local: http://127.0.0.1:5173/` でない古い手元で，ブラウザが読み込み中のまま開かない時は `npm run dev -- --host 127.0.0.1` で起動する |
 | `npm run dev:record` | 動きの記録用の開発サーバー（`vite --mode record`）．WebSocket を切るため，`src/` を編集しても開いているページが再読み込みされない（自動更新も効かない）．`npm run dev` と同じポート 5173 を使うので，`npm run dev` を止めてから起動する（手順は [TEST_01](../06_TEST/TEST_01_動きの記録の取り方.md)） |
 | `npm run tunnel` | 開発サーバーを cloudflared の Quick Tunnel で HTTPS の一時 URL として公開し，URL を QR コードでも表示する（スマホの実機確認用．実体は `scripts/tunnel.mjs`．`npm run dev` と別のターミナルで実行し，張りっぱなしにする．手順は [ENV_02](ENV_02_環境構築手順.md)「スマホの実機で確認する」） |
 
