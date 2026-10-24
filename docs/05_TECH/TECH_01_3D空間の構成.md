@@ -1,7 +1,7 @@
 # 3D 空間の構成 (Scene Structure)
 
 体験の舞台となる 3D 空間（部屋・電車・エレベーター）のコードの構成と，空間を追加する手順をまとめる．
-部屋（リビング）・電車（通勤電車の車内）・エレベーター（乗用エレベーターのかご内）の 3 つを実装済み（Issue #22）．校舎は，パーツ（教室・廊下・壁・ドア・出口・防火シャッター）と，それを並べて見る確認用の空間 `school-parts` まで実装済み（Issue #73）．マス目データ（`SchoolPlan`）からの組み立ては後の Issue で作る．
+部屋（リビング）・電車（通勤電車の車内）・エレベーター（乗用エレベーターのかご内）の 3 つを実装済み（Issue #22）．校舎は，パーツ（教室・廊下・壁・ドア・出口・防火シャッター）と，それを並べて見る確認用の空間 `school-parts` まで実装済み（Issue #73）．マス目データ（`SchoolPlan`）の 1 フロアから組み立てた校舎 `school` も歩ける（Issue #92）．
 画面の種類（`src/core/scene.ts` の `SceneId`: start / lobby / scenario / debrief）と区別するため，空間の型・関数は「Space」の名前で呼ぶ．
 
 ## ファイル構成 (Files)
@@ -17,7 +17,7 @@
 | `src/scenes/room/` | 部屋（リビング・シナリオ H1）．`roomLayout.ts` に寸法・配置・エリアと userData の型（three 非依存），`room.ts` に組み立て（部屋の殻・窓ガラス・ドア・廊下），`roomFurniture.ts` に家具の Group（テーブルの脚・コンロのつまみと火・ブレーカーのスイッチを含む），`roomMaterials.ts` に見た目 |
 | `src/scenes/train/` | 電車（通勤電車 1 両のうちドア 2 か所分）．`trainLayout.ts` に寸法・配置と userData の型（three 非依存），`train.ts` に組み立て，`trainFixtures.ts` に座席・手すり・つり革・ドア等の Group，`trainMaterials.ts`・`trainTextures.ts` に見た目 |
 | `src/scenes/elevator/` | エレベーター（かご内と扉の外の乗り場）．`elevatorLayout.ts` に寸法・配置と userData の型（three 非依存），`elevator.ts` に組み立て，`elevatorFixtures.ts` に操作盤・ボタン・手すり・扉・階の表示・照明の Group，`elevatorMaterials.ts`・`elevatorTextures.ts` に見た目 |
-| `src/scenes/school/` | 校舎のパーツと確認用の空間（`?scene=school-parts`）．`routeArrowsLayout.ts`・`routeArrows.ts` に床の正解経路の矢印，`dev/` に確認用のページ．`schoolLayout.ts` に床の面・辺の物・柱の寸法と当たり判定の範囲，`classroomLayout.ts` に教室の中身の並び，`schoolPartsPreviewLayout.ts` に確認用の空間に並べる一覧（いずれも three 非依存），`schoolParts.ts`・`classroom.ts` に組み立て，`schoolMerge.ts` に動かない Mesh の結合，`schoolPartsCollision.ts` に当たり判定の取り出し，`schoolMaterials.ts`・`schoolTextures.ts` に見た目．詳細は「校舎のパーツの構成」 |
+| `src/scenes/school/` | 校舎のパーツと確認用の空間（`?scene=school-parts`）．`routeArrowsLayout.ts`・`routeArrows.ts` に床の正解経路の矢印，`fireSmokeLayout.ts`・`fireSmoke.ts` に火と煙，`dev/` に確認用のページ．`schoolLayout.ts` に床の面・辺の物・柱の寸法と当たり判定の範囲，`classroomLayout.ts` に教室の中身の並び，`schoolPartsPreviewLayout.ts` に確認用の空間に並べる一覧（いずれも three 非依存），`schoolParts.ts`・`classroom.ts` に組み立て，`schoolMerge.ts` に動かない Mesh の結合，`schoolPartsCollision.ts` に当たり判定の取り出し，`schoolMaterials.ts`・`schoolTextures.ts` に見た目．`schoolPlanLayout.ts`（three 非依存）・`schoolPlanScene.ts`・`schoolPlanWalk.ts` に `SchoolPlan` からの組み立て（`?scene=school`）．詳細は「校舎のパーツの構成」「SchoolPlan からの組み立て」 |
 | `src/scenes/walk/` | 歩行と当たり判定（three 非依存の純粋関数）．`collision.ts` に当たり判定，`areas.ts` にエリアの判定，`obstacles.ts`・`furnitureObstacles.ts` に障害物の生成，`locomotion.ts` に 1 フレーム分の移動（`stepWalk`），`walker.ts` に `ScenarioWorld` の実装（`SpaceWalker`） |
 | `src/scenes/<id>/<id>Walk.ts` | 各空間の `WalkWorld`（床の範囲・障害物・ドア・エリア・座席）．`createWalkWorld(space)`（`index.ts`）で作る |
 | `src/scenes/devDoors.ts` | 確認用: 近くのドアを開閉する（本物のドア開閉が入るまでのデバッグ用） |
@@ -29,7 +29,7 @@
 
 | プロパティ | 内容 |
 | --- | --- |
-| `id` | `"room"` / `"train"` / `"elevator"` / `"school-parts"` |
+| `id` | `"room"` / `"train"` / `"elevator"` / `"school-parts"` / `"school"` |
 | `root` | 空間全体の `Group`（照明を含む） |
 | `startPosition` | 開始時の目の位置（ワールド座標，m） |
 | `startYaw` | 開始時の向き（rad．0 で -Z を向き，正で左へ回る） |
@@ -174,7 +174,7 @@
 
 ## 校舎のパーツの構成 (School Parts)
 
-校舎は「床の面」「辺に置く物」「柱」の 3 種のパーツを並べて作る（Issue #73）．どのパーツも大きさ（面は幅と奥行き，辺の物は辺の長さ，どちらも天井の高さ）を引数で受け取り，定数に直接依存しない．マス目データから並べる処理は後の Issue で作るため，今は確認用の空間 `?scene=school-parts` でだけ使う．
+校舎は「床の面」「辺に置く物」「柱」の 3 種のパーツを並べて作る（Issue #73）．どのパーツも大きさ（面は幅と奥行き，辺の物は辺の長さ，どちらも天井の高さ）を引数で受け取り，定数に直接依存しない．確認用の空間 `?scene=school-parts` と，マス目データから並べる `?scene=school`（「SchoolPlan からの組み立て」）で使う．
 
 ### 大きさの約束 (Dimensions)
 
@@ -209,6 +209,7 @@
 | 出口 | 同上 | `schoolEdge`（`edgeKind: "exit"`） | 開け放しの開口部（2.4 × 2.2 m）・外のポーチ・庇・誘導灯 |
 | 防火シャッター | 同上 | `schoolEdge`（`edgeKind: "fireShutter"`） | 天井の収納箱・幕・ガイドレール・くぐり戸．`closed`．開閉は `setFireShutterClosed()` |
 | 柱 | `createSchoolPost()` | `schoolPost` | 壁の交わる点に置く角柱 |
+| マスをふさぐ直方体 | `createSchoolBlock()` | `schoolBlock` | `SchoolPlan` の `wall` のマス（柱・厚い壁）．原点は底面の中心．全体が通れない |
 
 - 外側だけの教室（`shell`）の廊下側は，すりガラスの窓と開かないドア（`locked: true`）にする．開かないドアは当たり判定でも通れない
 - 机の並びは，幅から列数，奥行きから行数を自動で決める．机と椅子は材質ごとに `InstancedMesh` 1 つにまとめる
@@ -265,6 +266,47 @@ if (arrows) root.add(arrows.object);
 | 隣り合わないマス・別の階への飛び | そこで区切り，区切った部分ごとに描く（区切りの直前のマスは入ってきた向き，直後のマスは `straight`） |
 | 前後どちらにも続くマスが無いマス（1 マスだけの経路等） | 向きが決まらないので描かない |
 
+### 火と煙 (Fire & Smoke)
+
+`SpreadMap`（`sim/spread.ts` の `computeSpread(plan)`）と今の時刻から，火と煙を描く（F4．Issue #96）．校舎の組み立てとは別の部品にしてあり，校舎の `root` に足して毎フレーム時刻と目の位置を渡すだけで使える．
+
+```ts
+const fireSmoke = createFireSmoke(plan, computeSpread(plan));
+root.add(fireSmoke.object);
+scene.fog = fireSmoke.fog; // 空間全体に効くフォグは呼び出し側が付け，画面を切り替える時に外す
+// 毎フレーム．時刻は非常ベルからの秒数，目はワールド座標（camera の位置等．null ならフォグは 0）
+fireSmoke.update(secondsSinceAlarm, eyePosition);
+// 校舎を解放する時に fireSmoke.dispose()
+```
+
+- 濃さの計算は `fireSmokeLayout.ts`（three 非依存）．描画は `fireSmoke.ts` のシェーダーで，描くのは照り返し・煙の層・炎の粒の 3 つ（描画 3 回．マスの数によらない）．光源は使わない
+- マスごとの濃さ（R: 煙，G: 炎，B: 床の照り返し）を 1 マス 1 テクセルの `DataTexture` 1 枚に書き，シェーダーでなめらかに補間して読む（マスの境目を出さない）．全部の階を縦に積み，各階の周りに 0 の縁を 1 テクセル付ける．中身が変わった時だけ GPU へ送る
+- 火: 火が着く時刻ちょうどから燃える．強さは 0.35 で始まり 4 秒で 1 になる．600 個の粒（`FIRE_PARTICLES`）を燃えているマスの中のばらばらの位置（中心から 1.25 マスの範囲）から立ち上らせ，白黄の芯 → 橙 → 暗い赤 → 黒い煙へ変えて天井へ昇らせる．1 マスあたり 20 粒まで．粒の動きは時刻からシェーダーで計算し，CPU は生まれ直した粒の位置だけを書く．燃えているマスと周り 1 マスの床をうっすら赤橙に照らす
+- 煙: 着いた時刻ちょうどは 0 で，20 秒かけて濃くなる．天井に近いほど濃く，濃くなるほど下の端が天井（3 m）から 1.2 m まで下りる（立った目 1.6 m としゃがんだ目 0.9 m の間）．校舎全体を覆う 4 枚の水平な層（`SMOKE_LAYER_COUNT`．高さは 2.90・2.38・1.87・1.35 m に固定）に，流れるノイズでむらを付けて描く．壁・何もないマス・屋外の上には出さない
+- しゃがむと視界が晴れる: 目の位置の煙の濃さ（`eyeSmokeDensity`．周りの 4 マスの中心の濃さを距離で重み付けし，目の高さでの濃さにする）から，フォグの濃さを `0.8 × 目の位置の煙`（1/m）にする．最も濃い煙では，立つと約 3.5 m 先，しゃがむと約 18 m 先まで見える
+- 時刻が `NaN`・無限，着く時刻が `Infinity`・`NaN` の時は，火も煙も無いものとして扱う
+- 色・濃さ・粒の量は仮の値．見た目は `SMOKE_SHADE`・`FIRE_PARTICLE_LOOK`，粒の量は `FIRE_PARTICLES`，フォグは `SMOKE_FOG` で調整する．iPhone で重い時は，煙の層の数・ノイズの段の数・粒の数を下げる
+- 赤い表示（煙の中で立っている・火に近づいた時の画面の縁）と，燃えているマスの当たり判定はここでは扱わない
+
+## SchoolPlan からの組み立て (School From Plan)
+
+`?scene=school` で，`SchoolPlan`（今はデモの校舎 `src/share/samples/demoSchool.ts`）の 1 つ目の階を組み立てて表示する（Issue #92）．並べ方は `schoolPlanLayout()`（three 非依存）が求め，`createSchoolScene()` はパーツを置くだけにする．座標は [SPEC_02](../04_SPEC/SPEC_02_校舎データの形式.md)「座標」のとおり，マス `(x, z)` が X は `x * cellSize`〜`(x + 1) * cellSize`，Z は `z * cellSize`〜`(z + 1) * cellSize` を占める．天井の高さは 3 m．
+
+| 並べる物 | 決め方 |
+| --- | --- |
+| 床の面（天井・照明を含む） | 教室（教室ごと）・廊下・開口部（ドア・出口・シャッターのマス）のマスを，重ならない矩形にまとめて 1 枚ずつ置く（`cellRects()`）．開口部は廊下の見た目．屋外には天井を張らない |
+| 壁 | マスの境目の辺ごとに `src/sim/walls.ts` の `wallBetween()` で有無を決め（同じ規則を scenes に書かない），格子線の上でつながる辺を 1 枚にまとめる．両側が教室・廊下・屋外のどれか（教室どうしを除く）なら窓付きの壁，それ以外は無地の壁 |
+| 柱 | 壁の端・角・T 字・十字と，壁の見た目が変わる点（格子点）に 1 本ずつ置く．壁がまっすぐ通り抜けるだけの点には置かない |
+| マスをふさぐ直方体 | `wall` のマスを矩形にまとめ，天井の高さの直方体にする |
+| 垂れ壁 | 壁の列に空いたドア・出口のマスの開口部の上に，ドアは 2.0 m（`DOOR.height`），出口は 2.2 m（`EXIT.height`）から天井まで置く．当たり判定は無い（立った頭より高い） |
+| 防火シャッター | 並んだ `shutter` のマスの中心線に沿って 1 枚置き，両端に柱を置く（左右に並ぶものは X に沿う．上下に並ぶもの・1 つだけのものは通り抜ける向きに直交）．非常ベルの時点で閉じている扱いのため，既定で閉じて作る．長さが下限（1.28 m）に足りない時は無地の壁にする |
+| 地面 | マス目の外へ 30 m 広げた土の面（見た目だけ） |
+
+- 開始位置は訓練の開始地点（`drill.start`）のマスの中心，向きは `drill.startYaw` の符号を反転した値（`SchoolPlan` は右回り，`Space` は左回りに増えるため）
+- 歩ける床の範囲は，屋内の床の面と屋外のマスの矩形だけ（`void`・`wall` のマスとマス目の外へは出られない）．壁・柱・直方体・閉じたシャッターは通れない
+- ドアのマスは開口部として作る（引き戸の扉は置かない．SPEC_02 のとおり開け閉めはしない）．辺に置く物のドア・出口のパーツ（`createSchoolEdge` の `door`・`exit`）は下限の長さ（2.32 m・2.72 m）が 1 m のマスに入らないため使っていない
+- 教室の中身（机・黒板）は置いていない．エリアのイベント・火と煙・床の経路・複数フロアは後の Issue で扱う
+
 ## 歩行と当たり判定 (Walking & Collision)
 
 `SpaceWalker`（`src/scenes/walk/walker.ts`）が `ScenarioWorld` を実装する．毎フレーム `update(frame)` で `FrameInfo.input`（`PlayerInput`）からプレイヤーを動かし，`applyTo(rig)` でカメラの親（rig）の位置・目の高さ・体の向きを合わせる．頭の向きは rig の子のカメラに入れる（Issue #31）．
@@ -298,6 +340,7 @@ if (arrows) root.add(arrows.object);
 | 電車 | 各ドアの前（`door-left-1-front`・`emergency-door-front` 等）・`platform`（ホーム）・`emergency-door-gangway`・`gangway-door-rear-gangway`（貫通扉の向こうの通路） |
 | エレベーター | `cabin`・`door-front`・`hall`（乗り場） |
 | 校舎のパーツ | 床の面の id（教室・廊下）・`<出口の id>-outside`（出口の外のポーチ） |
+| SchoolPlan の校舎 | 床の面の id（`room-<教室の添字>-floor-<n>`・`corridor-floor-<n>`・`opening-floor-<n>`）．仮の id で，`areaEntered`・`areaExited` の扱いは後の Issue で決める |
 
 - 電車・エレベーターのエリアの id は Issue #31 で仮に決めたもの．シナリオ定義を書くときに合わせる
 - エレベーターの `locked` は見ていない（扉が閉じているかどうかだけで通れるかを決める）

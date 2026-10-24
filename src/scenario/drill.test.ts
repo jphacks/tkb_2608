@@ -239,26 +239,26 @@ describe("buildDrillScenario", () => {
       );
     });
 
-    // 仮の形（ユーザー承認済み）: 本来は SPEC_01 のとおり fire-announcement の narration の params に
-    // 火元の名前を載せるが，core の Cue の narration にまだ params が無いため fire-start の params に載せている
-    it("② 非常ベル: 【仮の形】fire-start の params.roomName に火元の名前（デモは理科室）が入る", () => {
+    it("② 非常ベル: fire-announcement の narration の params.roomName に火元の名前（デモは理科室）が入る", () => {
       const def = buildDrillScenario(DEMO_SCHOOL);
-      const fireStart = stepOf(def, "alarm").onEnter?.find(
-        (c) => c.type === "happening" && c.id === "fire-start",
+      const announcement = stepOf(def, "alarm").onEnter?.find(
+        (c) => c.type === "narration" && c.id === "fire-announcement",
       );
-      expect(fireStart).toEqual({
-        type: "happening",
-        id: "fire-start",
+      expect(announcement).toEqual({
+        type: "narration",
+        id: "fire-announcement",
         params: { roomName: "理科室" },
       });
     });
 
-    it("② 非常ベル: 【仮の形】fire-start の roomName は fireOriginName と同じ", () => {
+    it("② 非常ベル: fire-announcement の roomName は fireOriginName と同じ", () => {
       const p = smallPlan([at(4, 0), at(0, 0)]);
-      const fireStart = stepOf(buildDrillScenario(p), "alarm").onEnter?.find(
-        (c) => c.type === "happening",
+      const announcement = stepOf(buildDrillScenario(p), "alarm").onEnter?.find(
+        (c) => c.type === "narration" && c.id === "fire-announcement",
       );
-      expect(fireStart?.type === "happening" && fireStart.params?.roomName).toBe(fireOriginName(p));
+      expect(announcement?.type === "narration" && announcement.params?.roomName).toBe(
+        fireOriginName(p),
+      );
     });
 
     it("③ 避難: 「火と煙を避けて校庭へ」のナレーション", () => {

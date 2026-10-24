@@ -93,9 +93,13 @@ export function buildDrillScenario(plan: SchoolPlan): ScenarioDefinition {
           // ベルが鳴ったら授業の音は止める
           { type: "sound", id: DRILL_CUE_ID.classroomAmbience, action: "stop" },
           { type: "sound", id: DRILL_CUE_ID.fireAlarm, action: "play", loop: true },
-          // 火元の名前は narration に params が足されるまで出火の出来事に載せる（core の専用 PR 待ち）
-          { type: "happening", id: DRILL_CUE_ID.fireStart, params: { roomName: fireRoomName } },
-          { type: "narration", id: DRILL_CUE_ID.fireAnnouncement },
+          { type: "happening", id: DRILL_CUE_ID.fireStart },
+          // 校内放送の文面に火元の名前を差し込む（audio/ が params.roomName を読む）
+          {
+            type: "narration",
+            id: DRILL_CUE_ID.fireAnnouncement,
+            params: { roomName: fireRoomName },
+          },
         ],
         goal: {
           type: "any",

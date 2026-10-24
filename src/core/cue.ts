@@ -5,8 +5,11 @@
 export type CueParams = Readonly<Record<string, string | number | boolean>>;
 
 export type Cue =
-  /** ナレーションを再生する（ID は音声ファイルと字幕の対応表のキー） */
-  | { readonly type: "narration"; readonly id: string }
+  /**
+   * ナレーションを再生する（ID は音声ファイルと字幕の対応表のキー）．
+   * params は文面に差し込む値（校内放送の火元の教室名 roomName 等）
+   */
+  | { readonly type: "narration"; readonly id: string; readonly params?: CueParams }
   /** 効果音・環境音を鳴らす．anchorId を指定すると 3D 空間のその物の位置から鳴らす（立体音響） */
   | {
       readonly type: "sound";

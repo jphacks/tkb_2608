@@ -82,3 +82,32 @@ describe("resolveDebug", () => {
     expect(resolveDebug("?debug=false")).toBe(false);
   });
 });
+
+describe("resolveLaunchMode（教員用のエディタ ?editor）", () => {
+  it.each(["?editor", "?editor=1", "?editor=true", "?scene=room&editor", "?input=mock&editor"])(
+    "%s はエディタ",
+    (search) => {
+      expect(resolveLaunchMode(search)).toBe("editor");
+    },
+  );
+
+  it.each(["?editor=0", "?editor=false", "?editor=FALSE"])("%s はビューア", (search) => {
+    expect(resolveLaunchMode(search)).toBe("viewer");
+  });
+
+  it("?app が ?editor より優先", () => {
+    expect(resolveLaunchMode("?app&editor")).toBe("app");
+    expect(resolveLaunchMode("?editor&app=1")).toBe("app");
+  });
+
+  it("?debrief が ?editor より優先", () => {
+    expect(resolveLaunchMode("?debrief&editor")).toBe("debrief");
+    expect(resolveLaunchMode("?editor&debrief=late")).toBe("debrief");
+  });
+
+  it("?app=0・?debrief=0 なら ?editor が効く", () => {
+    expect(resolveLaunchMode("?app=0&editor")).toBe("editor");
+    expect(resolveLaunchMode("?debrief=0&editor")).toBe("editor");
+    expect(resolveLaunchMode("?app=false&debrief=0&editor")).toBe("editor");
+  });
+});

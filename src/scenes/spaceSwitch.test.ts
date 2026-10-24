@@ -1,4 +1,4 @@
-// 空間の切り替え（?scene=）．room・train・elevator・school-parts の 4 空間を選べ，未知の値・指定なしは room にフォールバックする．
+// 空間の切り替え（?scene=）．room・train・elevator・school-parts・school の 5 空間を選べ，未知の値・指定なしは room にフォールバックする．
 // 各空間は canvas でテクスチャを描くため，document を何もしない canvas に差し替えて組み立てだけを確かめる
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -6,6 +6,7 @@ import { createElevatorScene } from "./elevator/elevator";
 import { AVAILABLE_SPACE_IDS, createSpace } from "./index";
 import { createRoomScene } from "./room/room";
 import { createSchoolPartsScene } from "./school/schoolPartsPreview";
+import { createSchoolScene } from "./school/schoolPlanScene";
 import { resolveSpaceId } from "./spaceParam";
 import { createTrainScene } from "./train/train";
 
@@ -25,6 +26,10 @@ vi.mock("./elevator/elevator", async (importOriginal) => {
 vi.mock("./school/schoolPartsPreview", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./school/schoolPartsPreview")>();
   return { ...actual, createSchoolPartsScene: vi.fn(actual.createSchoolPartsScene) };
+});
+vi.mock("./school/schoolPlanScene", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./school/schoolPlanScene")>();
+  return { ...actual, createSchoolScene: vi.fn(actual.createSchoolScene) };
 });
 
 /** 何もしない 2D コンテキスト（メソッドは空の関数，グラデーション等は空のオブジェクト） */
@@ -59,11 +64,18 @@ afterEach(() => {
   vi.mocked(createTrainScene).mockClear();
   vi.mocked(createElevatorScene).mockClear();
   vi.mocked(createSchoolPartsScene).mockClear();
+  vi.mocked(createSchoolScene).mockClear();
 });
 
 describe("空間の切り替え（?scene=）", () => {
-  it("room・train・elevator・school-parts が実装済み", () => {
-    expect([...AVAILABLE_SPACE_IDS].sort()).toEqual(["elevator", "room", "school-parts", "train"]);
+  it("room・train・elevator・school-parts・school が実装済み", () => {
+    expect([...AVAILABLE_SPACE_IDS].sort()).toEqual([
+      "elevator",
+      "room",
+      "school",
+      "school-parts",
+      "train",
+    ]);
   });
 
   it.each([
@@ -72,6 +84,8 @@ describe("空間の切り替え（?scene=）", () => {
     ["?scene=elevator", "elevator"],
     ["?scene=ELEVATOR", "elevator"],
     ["?scene=school-parts", "school-parts"],
+    ["?scene=school", "school"],
+    ["?scene=SCHOOL", "school"],
   ])("%s は %s", (search, expected) => {
     expect(resolveSpaceId(search, AVAILABLE_SPACE_IDS)).toBe(expected);
   });
@@ -83,7 +97,7 @@ describe("空間の切り替え（?scene=）", () => {
     },
   );
 
-  it.each(["room", "train", "elevator", "school-parts"] as const)(
+  it.each(["room", "train", "elevator", "school-parts", "school"] as const)(
     "createSpace(%j) で作れる",
     (id) => {
       const space = createSpace(id, { maxAnisotropy: 1 });
@@ -99,8 +113,9 @@ describe("空間の切り替え（?scene=）", () => {
       train: vi.mocked(createTrainScene),
       elevator: vi.mocked(createElevatorScene),
       "school-parts": vi.mocked(createSchoolPartsScene),
+      school: vi.mocked(createSchoolScene),
     };
-    for (const id of ["elevator", "train", "room", "school-parts"] as const) {
+    for (const id of ["elevator", "train", "room", "school-parts", "school"] as const) {
       for (const f of Object.values(factories)) f.mockClear();
       createSpace(id, { maxAnisotropy: 1 }).dispose();
       for (const [key, f] of Object.entries(factories)) {

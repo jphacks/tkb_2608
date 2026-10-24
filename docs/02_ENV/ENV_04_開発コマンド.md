@@ -20,10 +20,11 @@
 | `npm run dev:record` | 動きの記録用の開発サーバー（`vite --mode record`）．WebSocket を切るため，`src/` を編集しても開いているページが再読み込みされない（自動更新も効かない）．`npm run dev` と同じポート 5173 を使うので，`npm run dev` を止めてから起動する（手順は [TEST_01](../06_TEST/TEST_01_動きの記録の取り方.md)） |
 | `npm run tunnel` | 開発サーバーを cloudflared の Quick Tunnel で HTTPS の一時 URL として公開し，URL を QR コードでも表示する（スマホの実機確認用．実体は `scripts/tunnel.mjs`．`npm run dev` と別のターミナルで実行し，張りっぱなしにする．手順は [ENV_02](ENV_02_環境構築手順.md)「スマホの実機で確認する」） |
 
-- `npm run tunnel -- train` のように空間の id（`room`・`train`・`elevator`・`school-parts`）を渡すと，QR コードの URL に `?scene=train` が付き，読み取るだけでその空間が開く
+- `npm run tunnel -- train` のように空間の id（`room`・`train`・`elevator`・`school-parts`・`school`）を渡すと，QR コードの URL に `?scene=train` が付き，読み取るだけでその空間が開く
 - `npm run tunnel -- /src/input/dev/` のように `/` で始まるパスを渡すと，QR コードの URL にそのパスが付く（使える文字は英数字・`/`・`-`・`_`・`.`）
 - 体験の流れ（開始画面 → ホーム → ロビー → シナリオ）は URL に `?app` を付けて開く（例: `http://localhost:5173/?app`．スマホでは QR コードの URL の末尾に `?app` を足す）．`?debug`・`?stereo=1` 等は [SPEC_01](../04_SPEC/SPEC_01_画面遷移とモジュール構成.md)「起動の切り替え」を参照
   - 結果画面だけを確かめる時は `http://localhost:5173/?debrief`（`?debrief=late` で逃げ遅れ，`?debrief=nosmoke` で煙の中にいなかった場合）．デモの校舎と手で作った記録で表示する（開発サーバーでだけ使える）
+- 教員用のエディタは `http://localhost:5173/?editor` で開く（PC のブラウザ．本番でも使う）．デモの校舎を開いた状態で始まり，左の道具箱でパーツや教室を選んでクリック・ドラッグで塗る．元に戻す・やり直すは Ctrl+Z／Ctrl+Shift+Z・Ctrl+Y でもできる．保存はまだ無いので，再読み込みすると編集は消える
   - `?app` だけなら入力はスマホのセンサー（`device`）で，頭の向き・足踏み・しゃがみが流れに届く．PC では `?app&input=mock` で開き，下記の `?input=mock` と同じキー・ドラッグで操作する（PC で `?app` だけだと視点は動かない）
 - `http://localhost:5173/?input=mock` のように `?input=` を付けると，担当D の `src/input/` の入力で歩く（当たり判定あり．`?scene=` と併用できる．例: `?scene=train&input=mock`）．指定しない時は今までどおりドラッグで視点を回し，画面のボタンで歩く
   - `?input=mock`: PC 用．W で歩く（1.0 m/s）・S でゆっくり歩く（0.5 m/s．足踏みには向きが無いため後ろへは進まない）・C でしゃがみの切り替え・E で近くのドアの開閉・ドラッグで頭の向き（A・D は今は使わない）．手は右手だけで，マウスの位置が右手の位置（画面のマウスの下・目の前 0.45 m の所）・右ボタンか F キーを押している間は握る（`grip: 1`）・ホイールで手の奥行き（0.2〜0.8 m）．マウスが画面の外に出ると手は未認識になる
@@ -66,6 +67,7 @@
 | ページ | URL（`npm run dev` の後） | 内容 |
 | --- | --- | --- |
 | 床の正解経路の矢印 | `http://localhost:5173/src/scenes/school/dev/routeArrows.html` | デモの校舎のマス目を種類ごとの色の板で並べ，その上に正解経路の矢印を出す（開始地点は黄色の輪，集合場所は白い輪）．左上に矢印の数と種類ごとの内訳．ドラッグで回す・ホイールで寄る・右ドラッグで動かす．`?mode=test` で矢印を作らない（テストモード），`?route=broken` で異常を混ぜた経路 |
+| 火と煙 | `http://localhost:5173/src/scenes/school/dev/fireSmoke.html` | デモの校舎を簡易な床・柱・天井で並べ，`computeSpread()` の結果で火と煙を描く．下のパネルで時刻を動かす（Space で再生・一時停止，速さ 1・2・5・10 倍，スライダー）．一人称（WASD で歩く・ドラッグで向き・C でしゃがむ）と見下ろす視点（V で切り替え，`?view=top`）．左上に fps・更新の時間（ms）・燃えているマスと煙のあるマスの数・目の位置の煙とフォグの濃さ．`?plan=large` で 2,040 マスの校舎（重い時の確認）．デモの校舎ではシャッターより西に煙が来ないので，しゃがむと晴れることは廊下を東へ歩いて確かめる |
 
 ### 正解付きの記録の集計 (Replay & Evaluate)
 
