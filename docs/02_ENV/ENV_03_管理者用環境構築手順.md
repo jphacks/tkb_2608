@@ -9,7 +9,7 @@
 | --- | --- |
 | GitHub リポジトリの作成（[jphacks/tkb_2608](https://github.com/jphacks/tkb_2608)） | 済み（運営が作成．public・MIT ライセンス） |
 | `main` の保護（Ruleset）・CODEOWNERS | 済み（GUIDE_03） |
-| CI の合格を `main` へのマージの必須条件にする | 未実施（下記「CI の合格を必須にする」） |
+| CI の合格を `main` へのマージの必須条件にする | 済み（2026-10-24．Ruleset `main: CI 必須`．設定内容は `gh api` で確認済み） |
 | Dependabot alerts / security updates の有効化 | 済み（2026-10-24．`/setup` が `gh api` で有効化・検証） |
 | 依存バージョン更新（`.github/dependabot.yml`） | 済み（npm・devcontainers・github-actions を週 1 回） |
 | Cloudflare Pages の準備（アカウント・プロジェクト・API トークン・Secrets） | 未実施（下記「Cloudflare Pages の準備」） |
