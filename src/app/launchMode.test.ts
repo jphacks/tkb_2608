@@ -20,6 +20,29 @@ describe("resolveLaunchMode", () => {
   });
 });
 
+describe("resolveLaunchMode（結果画面の単独起動 ?debrief）", () => {
+  it.each(["?debrief", "?debrief=1", "?debrief=late", "?debrief=nosmoke", "?scene=room&debrief"])(
+    "%s は結果画面",
+    (search) => {
+      expect(resolveLaunchMode(search)).toBe("debrief");
+    },
+  );
+
+  it.each(["?debrief=0", "?debrief=false", "?debrief=FALSE"])("%s はビューア", (search) => {
+    expect(resolveLaunchMode(search)).toBe("viewer");
+  });
+
+  it("?app と ?debrief の両方があれば ?app が優先", () => {
+    expect(resolveLaunchMode("?app&debrief")).toBe("app");
+    expect(resolveLaunchMode("?debrief=late&app=1")).toBe("app");
+  });
+
+  it("?app=0 なら ?debrief が効く", () => {
+    expect(resolveLaunchMode("?app=0&debrief")).toBe("debrief");
+    expect(resolveLaunchMode("?app=0&debrief=0")).toBe("viewer");
+  });
+});
+
 describe("resolveStereo", () => {
   it("指定が無ければ coarse pointer（スマホ）の端末だけ 2 画面", () => {
     expect(resolveStereo("", true)).toBe(true);

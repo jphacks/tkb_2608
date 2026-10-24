@@ -1,4 +1,5 @@
-// エントリポイント．?app を付けると体験の流れ（開始画面 → ロビー → シナリオ．src/app/）を起動する．
+// エントリポイント．?app を付けると体験の流れ（開始画面 → ロビー → シナリオ → 結果．src/app/）を起動する．
+// 開発サーバーでは ?debrief で結果画面だけを，デモの校舎と手で作った記録で表示する（?debrief=late・?debrief=nosmoke で記録を変える）．
 // 付けなければ，URL パラメータ（?scene=room 等）で選んだ空間を一人称で表示する PC 確認用のビューア．
 // ビューアはドラッグで視点を回し，画面のボタンで歩く・しゃがむ・ドアを開閉できる（VR 表示は後の Issue で足す）
 // ?input=mock|device を付けると，ボタン・ドラッグの代わりに担当D の入力（足踏み・しゃがみ・頭の向き）で歩く
@@ -183,8 +184,12 @@ function startInputWalk(
   });
 }
 
-if (resolveLaunchMode(window.location.search) === "app") {
+const launchMode = resolveLaunchMode(window.location.search);
+if (launchMode === "app") {
   startApp();
+} else if (launchMode === "debrief" && import.meta.env.DEV) {
+  // 結果画面の dev 用の単独起動．本番のビルドには含めない（import.meta.env.DEV が false の分岐ごと消える）
+  void import("./app/debriefPreview").then((m) => m.startDebriefPreview());
 } else {
   startViewer();
 }
