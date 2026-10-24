@@ -1,12 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
   buildSchedule,
+  cueRecordFor,
   DEFAULT_PREP_SEC,
   DEFAULT_PROTOCOL_STEPS,
   labelRecordFor,
   locate,
+  type ProtocolCue,
   type ProtocolStep,
+  SQUAT_CYCLE_SEC,
   scheduleEvents,
+  segmentCues,
+  squatCues,
   takeDueEvents,
 } from "./protocolSchedule";
 
@@ -247,5 +252,150 @@ describe("labelRecordFor", () => {
   it("start と end はどの区間でもちょうど 1 つずつラベルになる", () => {
     const labels = events.map((e) => labelRecordFor(e, 0, 0)).filter((r) => r !== null);
     expect(labels).toHaveLength(sch.segments.length * 2);
+  });
+});
+
+function cue(atSec: number, name = "crouch"): ProtocolCue {
+  return { atSec, cue: name, say: name };
+}
+
+describe("squatCues", () => {
+  it("1 回ごとに「しゃがむ」（回の始まりから 0.5 秒）と「立つ」（その半周期後）を出す", () => {
+    expect(squatCues(2)).toEqual([
+      { atSec: 0.5, cue: "crouch", say: "しゃがむ" },
+      { atSec: 2.5, cue: "stand", say: "たつ" },
+      { atSec: 4.5, cue: "crouch", say: "しゃがむ" },
+      { atSec: 6.5, cue: "stand", say: "たつ" },
+    ]);
+  });
+
+  it("周期を変えられる（既定は SQUAT_CYCLE_SEC = 4 秒）", () => {
+    expect(SQUAT_CYCLE_SEC).toBe(4);
+    expect(squatCues(1, 6).map((c) => c.atSec)).toEqual([0.5, 3.5]);
+  });
+
+  it.each([0, -1, Number.NaN])("回数 %s なら空", (n) => {
+    expect(squatCues(n)).toEqual([]);
+  });
+
+  it("既定の手順の「しゃがむ・立つ」は 10 回分（20 個）の合図が 40 秒の区間に収まる", () => {
+    const seg = buildSchedule(DEFAULT_PROTOCOL_STEPS).segments.find(
+      (x) => x.step.label === "squat_stand",
+    );
+    expect(seg).toBeDefined();
+    if (seg === undefined) return;
+    const cues = segmentCues(seg);
+    expect(cues).toHaveLength(20);
+    expect(cues.filter((c) => c.cue === "crouch")).toHaveLength(10);
+    expect(cues.filter((c) => c.cue === "stand")).toHaveLength(10);
+  });
+
+  it("既定の手順で合図があるのは「しゃがむ・立つ」だけ", () => {
+    for (const seg of buildSchedule(DEFAULT_PROTOCOL_STEPS).segments) {
+      expect(segmentCues(seg).length > 0, seg.step.label).toBe(seg.step.label === "squat_stand");
+    }
+  });
+});
+
+describe("segmentCues", () => {
+  function segWith(cues: readonly ProtocolCue[], durationSec = 10) {
+    return buildSchedule([{ ...step("a", durationSec), cues }], 0).segments[0];
+  }
+
+  it("区間の中（0 より大きく長さより小さい）の合図だけを，時刻の順に返す", () => {
+    const seg = segWith([cue(5), cue(0), cue(10), cue(-1), cue(2), cue(Number.NaN), cue(9.99)]);
+    expect(segmentCues(seg).map((c) => c.atSec)).toEqual([2, 5, 9.99]);
+  });
+
+  it("合図の無い手順は空", () => {
+    expect(segmentCues(buildSchedule([step("a", 10)]).segments[0])).toEqual([]);
+  });
+
+  it("元の定義の並びを書き換えない", () => {
+    const cues = [cue(5), cue(2)];
+    segmentCues(segWith(cues));
+    expect(cues.map((c) => c.atSec)).toEqual([5, 2]);
+  });
+});
+
+describe("scheduleEvents（合図）", () => {
+  const schedule = buildSchedule(
+    [{ ...step("squat", 10, 2), cues: [cue(4, "stand"), cue(1), cue(12)] }, step("b", 5)],
+    2,
+  );
+  const events = scheduleEvents(schedule);
+
+  it("合図は回ごとに start と end の間に，時刻の順で入る（区間外の合図は捨てる）", () => {
+    expect(events.map((e) => `${e.kind}@${e.atMs}`)).toEqual([
+      "prep@0",
+      "start@2000",
+      "cue@3000",
+      "cue@6000",
+      "end@12000",
+      "prep@12000",
+      "start@14000",
+      "cue@15000",
+      "cue@18000",
+      "end@24000",
+      "prep@24000",
+      "start@26000",
+      "end@31000",
+      "done@31000",
+    ]);
+  });
+
+  it("合図の節目には合図と区間の中の番号が付く", () => {
+    const cues = events.filter((e) => e.kind === "cue");
+    expect(cues.map((e) => [e.cue?.cue, e.cueIndex, e.segment?.repeat])).toEqual([
+      ["crouch", 0, 1],
+      ["stand", 1, 1],
+      ["crouch", 0, 2],
+      ["stand", 1, 2],
+    ]);
+  });
+
+  it("合図の時刻はミリ秒に丸める", () => {
+    const ev = scheduleEvents(buildSchedule([{ ...step("a", 10), cues: [cue(1.2345)] }], 0));
+    expect(ev.find((e) => e.kind === "cue")?.atMs).toBe(1235);
+  });
+
+  it("時刻は昇順のまま", () => {
+    const at = events.map((e) => e.atMs);
+    expect(at).toEqual([...at].sort((a, b) => a - b));
+  });
+
+  it("合図の節目はラベルにならない（labelRecordFor は null）", () => {
+    for (const e of events.filter((x) => x.kind === "cue"))
+      expect(labelRecordFor(e, 0, 0)).toBeNull();
+  });
+});
+
+describe("cueRecordFor", () => {
+  const schedule = buildSchedule(
+    [step("a", 5), { ...step("squat", 10), cues: [cue(1), cue(3, "stand")] }],
+    2,
+  );
+  const events = scheduleEvents(schedule);
+
+  it("合図の節目を合図のレコードにする（plannedT は t0 + 相対時刻，区間のラベルと番号）", () => {
+    const e = events.filter((x) => x.kind === "cue")[1];
+    expect(cueRecordFor(e, 12345.6, 10000)).toEqual({
+      type: "cue",
+      t: 12345.6,
+      plannedT: 10000 + 7000 + 2000 + 3000,
+      cue: "stand",
+      index: 1,
+      label: "squat",
+      segment: 1,
+    });
+  });
+
+  it("合図以外（prep・start・end・done）は null", () => {
+    for (const e of events.filter((x) => x.kind !== "cue"))
+      expect(cueRecordFor(e, 0, 0)).toBeNull();
+  });
+
+  it("合図の数だけレコードになる", () => {
+    expect(events.map((e) => cueRecordFor(e, 0, 0)).filter((r) => r !== null)).toHaveLength(2);
   });
 });

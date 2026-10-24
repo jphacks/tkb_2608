@@ -16,6 +16,11 @@ const PARAMS: StepDetectorParams = {
   stepGyroRejectDps: 100,
   stepGyroRelaxWalking: 1.5,
   stepGyroWindowMs: 200,
+  // 頭の回転の平均による除外・弱い山の 2 つ続きは既定では無効にする（使うテストで有効にする）
+  stepGyroMeanRejectDps: 0,
+  stepWeakRatio: 1,
+  stepMinIntervalMs: 300,
+  stepTentativeTimeoutMs: 1000,
 };
 
 type Point = [t: number, bp: number, gyro?: number];
@@ -281,5 +286,166 @@ describe("resetStepDetector", () => {
     expect(s.noiseVar).toBe(0.1);
     // 不応期もリセットされる
     expect(results(run(s, peakAt(1100)))).toEqual([StepResult.Step]);
+  });
+});
+
+describe("弱い山の 2 つ続きで歩き出す（stepWeakRatio）", () => {
+  const WEAK: StepDetectorParams = { ...PARAMS, stepWeakRatio: 0.65 };
+
+  it("T_high × stepWeakRatio を超えた弱い山が歩く間隔（500 ms）で 2 つ続いたら，2 つ目を 1 歩とする", () => {
+    const s = createStepDetectorState();
+    const r = run(s, [...peakAt(1000, 0.8), ...peakAt(1500, 0.8)], { params: WEAK });
+    expect(results(r)).toEqual([StepResult.Step]);
+    expect(s.stepCount).toBe(1);
+    expect(s.lastStepT).toBe(1500);
+    expect(s.rejectedCount).toBe(0);
+  });
+
+  it("弱い山が 1 つだけでは何も返さない（歩も数えなかった山も増えない）", () => {
+    const s = createStepDetectorState();
+    expect(results(run(s, peakAt(1000, 0.8), { params: WEAK }))).toEqual([]);
+    expect(s.stepCount).toBe(0);
+    expect(s.rejectedCount).toBe(0);
+  });
+
+  it.each([
+    [200, "stepMinIntervalMs 未満"],
+    [1100, "stepTentativeTimeoutMs 超"],
+  ])("間隔が %s ms（%s）の弱い山は歩き出さない", (gap) => {
+    const s = createStepDetectorState();
+    expect(
+      results(run(s, [...peakAt(1000, 0.8), ...peakAt(1000 + gap, 0.8)], { params: WEAK })),
+    ).toEqual([]);
+    expect(s.stepCount).toBe(0);
+  });
+
+  it.each([300, 1000])("間隔の境目（%s ms ちょうど）は歩き出す", (gap) => {
+    const s = createStepDetectorState();
+    expect(
+      results(run(s, [...peakAt(1000, 0.8), ...peakAt(1000 + gap, 0.8)], { params: WEAK })),
+    ).toEqual([StepResult.Step]);
+  });
+
+  it("間隔の合わない弱い山の後でも，次の弱い山と間隔が合えば歩き出す（直前の弱い山と比べる）", () => {
+    const s = createStepDetectorState();
+    const r = run(s, [...peakAt(1000, 0.8), ...peakAt(2500, 0.8), ...peakAt(3000, 0.8)], {
+      params: WEAK,
+    });
+    expect(results(r)).toEqual([StepResult.Step]);
+    expect(s.lastStepT).toBe(3000);
+  });
+
+  it("T_high × stepWeakRatio 以下の山は弱い山にもならない", () => {
+    const s = createStepDetectorState();
+    expect(results(run(s, [...peakAt(1000, 0.6), ...peakAt(1500, 0.6)], { params: WEAK }))).toEqual(
+      [],
+    );
+  });
+
+  it("relaxed（仮に歩く・歩く）の時は弱い山を見ない", () => {
+    const s = createStepDetectorState();
+    expect(
+      results(
+        run(s, [...peakAt(1000, 0.8), ...peakAt(1500, 0.8)], { params: WEAK, relaxed: true }),
+      ),
+    ).toEqual([]);
+  });
+
+  it.each([1, 0, -0.5, 1.5])("stepWeakRatio=%s（1 以上・0 以下）なら無効", (ratio) => {
+    const s = createStepDetectorState();
+    expect(
+      results(
+        run(s, [...peakAt(1000, 0.8), ...peakAt(1500, 0.8)], {
+          params: { ...PARAMS, stepWeakRatio: ratio },
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  it("弱い山でも頭の回転が速ければ数えない", () => {
+    const s = createStepDetectorState();
+    const r = run(s, [...peakAt(1000, 0.8, () => 150), ...peakAt(1500, 0.8, () => 150)], {
+      params: WEAK,
+    });
+    expect(results(r)).toEqual([StepResult.RejectedGyro, StepResult.RejectedGyro]);
+    expect(s.stepCount).toBe(0);
+  });
+});
+
+describe("頭の回転の平均による除外（stepGyroMeanRejectDps）", () => {
+  const MEAN: StepDetectorParams = { ...PARAMS, stepGyroMeanRejectDps: 70 };
+  /** 0〜2000 ms の間，一定の角速度 gyro（除外のしきい値 100 未満）を流し，2000 ms に山 */
+  function turningThenPeak(gyro: number): Point[] {
+    const pts: Point[] = [];
+    for (let t = 0; t < 1900; t += 16) pts.push([t, 0, gyro]);
+    return [...pts, ...peakAt(2000, 2, () => gyro)];
+  }
+
+  it("止まっている時に，山の前の回転の平均が stepGyroMeanRejectDps 以上なら数えない", () => {
+    const s = createStepDetectorState();
+    expect(results(run(s, turningThenPeak(80), { params: MEAN }))).toEqual([
+      StepResult.RejectedGyro,
+    ]);
+    expect(s.stepCount).toBe(0);
+  });
+
+  it("回転の平均が stepGyroMeanRejectDps 未満なら数える", () => {
+    const s = createStepDetectorState();
+    expect(results(run(s, turningThenPeak(50), { params: MEAN }))).toEqual([StepResult.Step]);
+  });
+
+  it("relaxed（仮に歩く・歩く）の時は回転の平均では除外しない", () => {
+    const s = createStepDetectorState();
+    expect(results(run(s, turningThenPeak(80), { params: MEAN, relaxed: true }))).toEqual([
+      StepResult.Step,
+    ]);
+  });
+
+  it("stepGyroMeanRejectDps=0 なら無効", () => {
+    const s = createStepDetectorState();
+    expect(results(run(s, turningThenPeak(80)))).toEqual([StepResult.Step]);
+  });
+
+  it("平均は約 1 秒でならす（回転が止まって 3 秒たてば数える）", () => {
+    const s = createStepDetectorState();
+    const pts: Point[] = [];
+    for (let t = 0; t < 2000; t += 16) pts.push([t, 0, 90]);
+    for (let t = 2000; t < 4900; t += 16) pts.push([t, 0, 0]);
+    expect(results(run(s, [...pts, ...peakAt(5000)], { params: MEAN }))).toEqual([StepResult.Step]);
+  });
+
+  it("角速度が NaN のサンプルは平均に入れない（平均で除外しない）", () => {
+    const s = createStepDetectorState();
+    const pts: Point[] = [];
+    for (let t = 0; t < 1900; t += 16) pts.push([t, 0, Number.NaN]);
+    const r = run(s, [...pts, ...peakAt(2000, 2, () => Number.NaN)], { params: MEAN });
+    expect(results(r)).toEqual([StepResult.Step]);
+  });
+});
+
+describe("数えた歩の山の平均（stepPeakMean）", () => {
+  it("止まっている時の歩（歩き出し）はその山の大きさから始める", () => {
+    const s = createStepDetectorState();
+    s.stepPeakMean = 5;
+    run(s, peakAt(1000, 2));
+    expect(s.stepPeakMean).toBe(2);
+  });
+
+  it("relaxed の時は指数移動平均（係数 0.3）で進める", () => {
+    const s = createStepDetectorState();
+    run(s, peakAt(1000, 2));
+    run(s, peakAt(1500, 3), { relaxed: true });
+    expect(s.stepPeakMean).toBeCloseTo(2 + (3 - 2) * 0.3, 12);
+  });
+
+  it("数えなかった山では変わらない", () => {
+    const s = createStepDetectorState();
+    run(s, peakAt(1000, 2));
+    run(
+      s,
+      peakAt(1500, 4, () => 300),
+      { relaxed: true },
+    );
+    expect(s.stepPeakMean).toBe(2);
   });
 });
