@@ -7,8 +7,8 @@ import type { AppEvent } from "./events";
 import type { ScenarioResult } from "./result";
 import type { CalibrationProfile, PlayerInput } from "./types";
 
-/** 画面の種類．流れは start → lobby → scenario → debrief（docs/04_SPEC/SPEC_01） */
-export type SceneId = "start" | "lobby" | "scenario" | "debrief";
+/** 画面の種類．流れは start → home → lobby → scenario → debrief（docs/04_SPEC/SPEC_01） */
+export type SceneId = "start" | "home" | "lobby" | "scenario" | "debrief";
 
 /** 描画先．app/ が用意し，各シーンはここに物を足す */
 export interface Stage {
