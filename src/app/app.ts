@@ -17,6 +17,7 @@ import { createOrientationGuide } from "../lobby/orientationGuide";
 import type { AcquiredDevices } from "../lobby/permissions";
 import { createStartScene } from "../lobby/startScene";
 import { createScreenWakeLock } from "../lobby/wakeLock";
+import { loadPlanFromHash } from "../share/planHash";
 import { resolveDebug, resolveStereo } from "./launchMode";
 import { createScenarioPlaceholder } from "./placeholderScenes";
 import { yawOnly } from "./yawOnlyCalibration";
@@ -103,8 +104,23 @@ export function startApp(): void {
   };
 
   let current: Scene | null = null;
-  let pending: SceneId | null = "start";
+  // 最初の画面（開始画面）へは，URL の校舎データ（#p=）を読み終えてから進む（開始画面が planLoadError を読むため）
+  let pending: SceneId | null = null;
   let switching = false;
+
+  // 読み込み中も描画のループは回す（空の 3D 空間の背景が出て，画面は真っ白で止まらない）．
+  // 想定外の例外で読めなくても開始画面へは進む（plan・planLoadError は null のまま）
+  loadPlanFromHash(window.location.hash)
+    .then((loaded) => {
+      session.plan = loaded.plan;
+      session.planLoadError = loaded.planLoadError;
+    })
+    .catch((error: unknown) => {
+      console.error("校舎データの読み込みに失敗しました", error);
+    })
+    .finally(() => {
+      pending = "start";
+    });
 
   const ctx: SceneContext = {
     bus: createEventBus<AppEvent>(),
