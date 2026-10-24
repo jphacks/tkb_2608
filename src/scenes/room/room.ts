@@ -7,10 +7,9 @@ import {
   type WallDef,
   type WallRect,
   wallPointToWorld,
-  wallRectCenter,
-  wallRectUv,
 } from "../common/wallLayout";
-import type { SceneBuildOptions, SceneSpace } from "../types";
+import { createWallPiece, wallBox } from "../common/wallMeshes";
+import type { Space, SpaceBuildOptions } from "../types";
 import { createRoomFurniture } from "./roomFurniture";
 import {
   BASEBOARD,
@@ -43,41 +42,6 @@ export interface DoorUserData {
   readonly openInwardSign: 1 | -1;
 }
 
-/**
- * 壁上の位置で直方体を置く．size は（壁に沿う向き，高さ，壁の法線方向）の大きさ，
- * offset は壁面から内側への距離（中心まで）
- */
-function wallBox(
-  unitBox: THREE.BufferGeometry,
-  material: THREE.Material,
-  wall: WallDef,
-  u: number,
-  v: number,
-  offset: number,
-  size: readonly [number, number, number],
-  name = "",
-): THREE.Mesh {
-  const mesh = createBox(unitBox, material, size, wallPointToWorld(wall, u, v, offset), name);
-  mesh.rotation.y = wall.rotationY;
-  return mesh;
-}
-
-/** 壁の 1 片（内側を向いた片面の板）．UV は壁上の位置から求め，分割しても模様がつながる */
-function createWallPiece(wall: WallDef, rect: WallRect, material: THREE.Material): THREE.Mesh {
-  const geometry = new THREE.PlaneGeometry(rect.u1 - rect.u0, rect.v1 - rect.v0);
-  const uv = wallRectUv(rect, TILE_SIZE.wall);
-  const attr = geometry.getAttribute("uv");
-  for (let i = 0; i < attr.count; i++) {
-    attr.setXY(i, uv.u0 + attr.getX(i) * (uv.u1 - uv.u0), uv.v0 + attr.getY(i) * (uv.v1 - uv.v0));
-  }
-  const mesh = new THREE.Mesh(geometry, material);
-  const [x, y, z] = wallRectCenter(wall, rect);
-  mesh.position.set(x, y, z);
-  mesh.rotation.y = wall.rotationY;
-  mesh.name = wall.id;
-  return mesh;
-}
-
 function createWalls(materials: RoomMaterials, unitBox: THREE.BufferGeometry): THREE.Group {
   const group = new THREE.Group();
   group.name = "walls";
@@ -89,7 +53,9 @@ function createWalls(materials: RoomMaterials, unitBox: THREE.BufferGeometry): T
     [WALLS.west, full(WALLS.west)],
   ];
   for (const [wall, rects] of pieces) {
-    for (const rect of rects) group.add(createWallPiece(wall, rect, materials.wall));
+    for (const rect of rects) {
+      group.add(createWallPiece(wall, rect, materials.wall, TILE_SIZE.wall));
+    }
   }
 
   // 幅木（ドアの前では途切れる）
@@ -281,7 +247,7 @@ function createLights(): THREE.Object3D[] {
 }
 
 /** 部屋（リビング）の空間を作る */
-export function createRoomScene(options: SceneBuildOptions): SceneSpace {
+export function createRoomScene(options: SpaceBuildOptions): Space {
   const root = new THREE.Group();
   root.name = "room";
   const materials = createRoomMaterials(options.maxAnisotropy);

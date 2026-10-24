@@ -2,8 +2,8 @@
 // PC での確認用に，ドラッグで視点を回せる（歩行・VR 表示は後の Issue で足す）
 import * as THREE from "three";
 import { DragLook } from "./controls/dragLook";
-import { AVAILABLE_SCENE_IDS, createSceneSpace } from "./scenes";
-import { resolveSceneId } from "./scenes/sceneParam";
+import { AVAILABLE_SPACE_IDS, createSpace } from "./scenes";
+import { resolveSpaceId } from "./scenes/spaceParam";
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 // 高解像度の端末で重くなりすぎないよう 2 倍までに抑える
@@ -11,8 +11,8 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 
-const sceneId = resolveSceneId(window.location.search, AVAILABLE_SCENE_IDS);
-const space = createSceneSpace(sceneId, {
+const spaceId = resolveSpaceId(window.location.search, AVAILABLE_SPACE_IDS);
+const space = createSpace(spaceId, {
   maxAnisotropy: Math.min(renderer.capabilities.getMaxAnisotropy(), 8),
 });
 
