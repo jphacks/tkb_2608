@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>input/ dev ページ</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 16px;
+        background: #000;
+        color: #ddd;
+        font-family: system-ui, sans-serif;
+      }
+      h1 {
+        font-size: 18px;
+        margin: 0 0 12px;
+      }
+      .page {
+        display: block;
+        margin: 0 0 12px;
+        padding: 18px 16px;
+        border: 1px solid #446;
+        border-radius: 8px;
+        background: #112;
+        color: #9cf;
+        text-decoration: none;
+      }
+      .page.last {
+        border-color: #9cf;
+      }
+      .title {
+        display: block;
+        font-size: 20px;
+        font-weight: bold;
+      }
+      .note {
+        display: block;
+        margin-top: 4px;
+        font-size: 13px;
+        color: #aaa;
+      }
+      p {
+        font-size: 13px;
+        color: #888;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>担当D の dev ページ</h1>
+    <div id="pages"></div>
+    <p>前回開いたページがあれば，この入口を開いた時に自動で移ります（止める時は URL に ?stay を付ける）．</p>
+    <script type="module" src="./devIndex.ts"></script>
+  </body>
+</html>

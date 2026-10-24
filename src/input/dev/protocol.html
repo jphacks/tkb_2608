@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>input/ 手順の記録（dev）</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #000;
+        color: #eee;
+        font-family: system-ui, sans-serif;
+      }
+      /* ゴーグル用に左右の 2 画面に同じ表示を出す */
+      #view {
+        display: flex;
+        height: 100%;
+      }
+      .eye {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        text-align: center;
+        padding: 8px;
+        border-right: 1px solid #222;
+      }
+      .eye .main {
+        font-size: 28px;
+        font-weight: bold;
+      }
+      .eye .sub {
+        font-size: 16px;
+        margin-top: 8px;
+        color: #bbb;
+      }
+      .eye .time {
+        font-size: 40px;
+        margin-top: 12px;
+        color: #9cf;
+      }
+      #panel {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        padding: 8px;
+        background: rgba(0, 0, 0, 0.8);
+        font-size: 12px;
+      }
+      button {
+        font-size: 16px;
+        padding: 10px 16px;
+        margin: 0 8px 8px 0;
+      }
+      .home {
+        display: block;
+        margin-bottom: 8px;
+        color: #9cf;
+      }
+      pre {
+        margin: 0;
+        white-space: pre-wrap;
+        color: #888;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="view">
+      <div class="eye">
+        <div class="main"></div>
+        <div class="sub"></div>
+        <div class="time"></div>
+      </div>
+      <div class="eye">
+        <div class="main"></div>
+        <div class="sub"></div>
+        <div class="time"></div>
+      </div>
+    </div>
+    <div id="panel">
+      <div id="controls">
+        <a class="home" href="./?stay">← dev ページの一覧</a>
+        <button id="start" type="button">開始（センサーと音を許可）</button>
+        <button id="download" type="button" disabled>記録をダウンロード（.jsonl）</button>
+      </div>
+      <button id="abort" type="button" disabled>中止</button>
+      <pre id="recorder">未開始</pre>
+    </div>
+    <script type="module" src="./protocolPage.ts"></script>
+  </body>
+</html>

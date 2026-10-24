@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>input/ センサーの確認（dev）</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 12px;
+        background: #000;
+        color: #ddd;
+        font-family: system-ui, sans-serif;
+        font-size: 14px;
+      }
+      h1 {
+        font-size: 16px;
+        margin: 0 0 8px;
+      }
+      h2 {
+        font-size: 14px;
+        margin: 12px 0 4px;
+        color: #9cf;
+      }
+      button {
+        font-size: 16px;
+        padding: 10px 16px;
+        margin: 0 8px 8px 0;
+      }
+      pre {
+        margin: 0;
+        white-space: pre-wrap;
+        font-family: ui-monospace, monospace;
+        font-size: 13px;
+      }
+      .home {
+        display: inline-block;
+        margin-bottom: 8px;
+        color: #9cf;
+      }
+      canvas {
+        display: block;
+        width: 100%;
+        height: 180px;
+      }
+    </style>
+  </head>
+  <body>
+    <a class="home" href="./?stay">← dev ページの一覧</a>
+    <h1>センサーの確認（担当D の dev ページ）</h1>
+    <button id="start" type="button">センサーを許可して記録を開始</button>
+    <button id="download" type="button" disabled>記録をダウンロード（.jsonl）</button>
+    <h2>許可</h2>
+    <pre id="permission">-</pre>
+    <h2>上下の加速度・回転速度（直近 5 秒）</h2>
+    <canvas id="chart"></canvas>
+    <h2>devicemotion</h2>
+    <pre id="motion">-</pre>
+    <h2>deviceorientation</h2>
+    <pre id="orientation">-</pre>
+    <h2>画面の向き</h2>
+    <pre id="screen">-</pre>
+    <h2>サンプルの周期（直近 120 個）</h2>
+    <pre id="rate">-</pre>
+    <h2>記録の状態（2 秒ごとに logs/input/ へ送信）</h2>
+    <pre id="recorder">未開始</pre>
+    <script type="module" src="./sensorsPage.ts"></script>
+  </body>
+</html>

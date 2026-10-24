@@ -158,6 +158,7 @@ bash .devcontainer/check.sh   # 最後に「✓ すべて OK」と出れば成�
 3. 出力に表示される `https://<ランダムな文字列>.trycloudflare.com` の QR コードをスマホのカメラで読み取り，ブラウザで開く（iPhone は Safari，Android は Chrome）
 
    - 特定の空間を開くときは `npm run tunnel -- train` のように空間の id を渡す（QR コードの URL に `?scene=train` が付く）
+   - 特定のページを開くときは `npm run tunnel -- /src/input/dev/` のように `/` で始まるパスを渡す（QR コードの URL にそのパスが付く）
 
 - `npm run tunnel` は Claude Code の auto mode では実行が止められる（外部から入る経路を開くため）．人間が VS Code のターミナルで実行し，張りっぱなしにする．使い終わったら `Ctrl+C` で止める
 
