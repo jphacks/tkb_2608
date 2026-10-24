@@ -63,6 +63,7 @@ export function startApp(): void {
     recording: null,
     plan: null,
     planLoadError: null,
+    drill: null,
   };
   // 開始画面で取れた機器．カメラは input/ の手の認識に渡す．AudioContext はホームの設定（音量の確認）に渡す（audio/ ができたらそちらにも渡す）
   const devices: { current: AcquiredDevices | null } = { current: null };
