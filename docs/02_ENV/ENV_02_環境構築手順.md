@@ -165,5 +165,7 @@ bash .devcontainer/check.sh   # 最後に「✓ すべて OK」と出れば成�
 - URL はトンネルを張り直すたびに変わる．URL を知っていれば誰でも開けるため，秘密情報を含むページを置かない
 - Vite は既定で知らないホスト名からのアクセスを拒否するため，`vite.config.ts` の `server.allowedHosts` に `.trycloudflare.com` を許可する（アプリの初期化時に設定する）
 - トンネル経由で開くと `Blocked request. This host (...) is not allowed.` と表示される（HTTP 403）場合は，`npm run dev` を止めて起動し直す．Vite が設定ファイルの変更を検知して自動で再起動すると，`allowedHosts` の設定が反映されないことがある（2026-10-24 に実際に起きた）．トンネルは張ったままでよい
+- `failed to request quick Tunnel: ... lookup api.trycloudflare.com ...: no such host` と出て URL が発行されない場合は，つないでいるネットワークが `trycloudflare.com` を DNS で止めている（大学の Wi-Fi で 2026-10-25 に実際に起きた）．コードや設定では直せないので，PC をスマホのテザリング等の別のネットワークにつないでからトンネルを張り直す（スマホはモバイル回線のままでよい）．同じ Wi-Fi の中で PC に直接つなぐ方法は，iPhone が HTTPS でないページにセンサー・カメラを使わせないため使えない
+- トンネルの向き先は `http://127.0.0.1:5173`（`scripts/tunnel.mjs`．開発サーバーの待ち受けと同じアドレスを直接指し，`localhost` が IPv6 に解決されてつながらないことを避ける）
 - 確認済み（2026-10-24．iPhone の Safari・モバイル回線）: トンネル経由でページが開き three.js の描画が動くこと，PC 側でファイルを保存すると iPhone の表示が自動で更新されること（Vite の HMR）
 - ※ 未検証: Quick Tunnel 経由でのカメラ・センサーの許可．最初の実装（ENV_01「最初に検証すること」）で確認して本手順に反映する

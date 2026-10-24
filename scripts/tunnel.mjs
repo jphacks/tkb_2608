@@ -6,8 +6,11 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import qrcode from "qrcode-terminal";
 
-const TARGET = "http://localhost:5173";
-const URL_PATTERN = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/;
+// 開発サーバーは IPv4 のループバックだけで待ち受ける（vite.config.ts の server.host）．"localhost" だと
+// 名前解決の順で先に ::1 へつなぐ環境があるため，待ち受けと同じアドレスを直接指す
+const TARGET = "http://127.0.0.1:5173";
+// api.trycloudflare.com はトンネル作成の受付で，作成に失敗した時のログにも出るため，発行された URL として拾わない
+const URL_PATTERN = /https:\/\/(?!api\.)[a-z0-9-]+\.trycloudflare\.com/;
 const SCENE_PATTERN = /^[a-z0-9-]+$/;
 // パスは "/" で始まり，英数字・/・-・_・. だけを使う（".." は許さない）
 const PATH_PATTERN = /^\/[A-Za-z0-9/_.-]*$/;

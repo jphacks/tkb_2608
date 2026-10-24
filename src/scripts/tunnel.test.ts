@@ -1,5 +1,6 @@
 // scripts/tunnel.mjs の純粋な関数のテスト（vitest の include が src/**/*.test.ts のため src に置く）
 // tsconfig は scripts/ の .mjs を型付けしないため，型を付けて動的に読み込む
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 interface TunnelModule {
@@ -85,5 +86,45 @@ describe("findTunnelUrl", () => {
 
   it("無ければ null", () => {
     expect(findTunnelUrl("INF Starting tunnel")).toBeNull();
+  });
+
+  it.each([
+    "https://seasonal-deck-organisms-sf.trycloudflare.com",
+    "https://api-deck-x.trycloudflare.com",
+    "https://x-api.trycloudflare.com",
+    "https://apix.trycloudflare.com",
+    "https://rapid-api-test.trycloudflare.com",
+  ])("発行された形の URL（%s）は拾う（api. 以外は外さない）", (url) => {
+    expect(findTunnelUrl(`2026-10-25T00:00:00Z INF |  ${url}                     |`)).toBe(url);
+  });
+
+  it("トンネル作成に失敗した時のログ（api.trycloudflare.com だけを含む）では null（誤った URL・QR を出さない）", () => {
+    const line =
+      '2026-10-25T00:00:00Z ERR failed to request quick Tunnel: Post "https://api.trycloudflare.com/tunnel": dial tcp: lookup api.trycloudflare.com on 192.168.65.7:53: no such host';
+    expect(findTunnelUrl(line)).toBeNull();
+  });
+
+  it.each([
+    "https://api.trycloudflare.com",
+    "https://api.trycloudflare.com/tunnel",
+    'Post "https://api.trycloudflare.com/tunnel"',
+  ])("受付の api.trycloudflare.com（%s）は拾わない", (line) => {
+    expect(findTunnelUrl(line)).toBeNull();
+  });
+
+  it("同じ行に受付と発行された URL があれば，発行された URL を拾う", () => {
+    expect(findTunnelUrl(`https://api.trycloudflare.com/tunnel -> ${URL}`)).toBe(URL);
+  });
+});
+
+// TARGET は export されていないため，ソースの文字列で vite.config.ts の server.host と揃っていることを確かめる
+describe("tunnel.mjs のトンネルの向き先", () => {
+  it("cloudflared は開発サーバーの待ち受けと同じ http://127.0.0.1:5173 を指す（localhost では ::1 につなぐ環境がある）", () => {
+    const source = readFileSync(
+      new globalThis.URL("../../scripts/tunnel.mjs", import.meta.url),
+      "utf8",
+    );
+    expect(source).toMatch(/const TARGET = "http:\/\/127\.0\.0\.1:5173";/);
+    expect(source).not.toMatch(/http:\/\/localhost:5173/);
   });
 });
