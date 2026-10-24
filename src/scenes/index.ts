@@ -4,6 +4,8 @@ import { createElevatorScene, isElevatorSpace } from "./elevator/elevator";
 import { createElevatorWalkWorld } from "./elevator/elevatorWalk";
 import { createRoomScene, isRoomSpace } from "./room/room";
 import { createRoomWalkWorld } from "./room/roomWalk";
+import { createSchoolPartsScene, isSchoolPartsSpace } from "./school/schoolPartsPreview";
+import { createSchoolPartsWalkWorld } from "./school/schoolPartsWalk";
 import type { SpaceId } from "./spaceParam";
 import { createTrainScene, isTrainSpace } from "./train/train";
 import { createTrainWalkWorld } from "./train/trainWalk";
@@ -14,6 +16,7 @@ const SPACE_FACTORIES: Partial<Record<SpaceId, SpaceFactory>> = {
   room: createRoomScene,
   train: createTrainScene,
   elevator: createElevatorScene,
+  "school-parts": createSchoolPartsScene,
 };
 
 /** 実装済みの空間の id */
@@ -31,5 +34,6 @@ export function createWalkWorld(space: Space): WalkWorld {
   if (isRoomSpace(space)) return createRoomWalkWorld(space);
   if (isTrainSpace(space)) return createTrainWalkWorld(space);
   if (isElevatorSpace(space)) return createElevatorWalkWorld(space);
+  if (isSchoolPartsSpace(space)) return createSchoolPartsWalkWorld(space);
   throw new Error(`歩行の当たり判定が未実装の空間です: ${space.id}`);
 }

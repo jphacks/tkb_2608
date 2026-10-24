@@ -19,6 +19,14 @@ import {
   roomDoorRotationY,
   WALLS,
 } from "./room/roomLayout";
+import {
+  type FireShutterUserData,
+  placePoint,
+  type SchoolDoorLeafUserData,
+  type SchoolDoorUserData,
+} from "./school/schoolLayout";
+import { setFireShutterClosed, setSchoolDoorOpen } from "./school/schoolParts";
+import { isSchoolPartsSpace, type SchoolPartsSpace } from "./school/schoolPartsPreview";
 import { isTrainSpace, type TrainSpace } from "./train/train";
 import {
   type DoorLeafUserData,
@@ -143,11 +151,51 @@ function elevatorDevDoors(space: ElevatorSpace): DevDoor[] {
   });
 }
 
+/** 部品の Group のローカル座標の点 (x, 0) を，親（パーツをまとめた Group．root と同じ座標）の XZ に変える */
+function partPoint(group: THREE.Object3D, localX: number): XZPoint {
+  return placePoint(
+    { x: localX, z: 0 },
+    { x: group.position.x, z: group.position.z, rotationY: group.rotation.y },
+  );
+}
+
+function schoolPartsDevDoors(space: SchoolPartsSpace): DevDoor[] {
+  const { parts } = space;
+  // 外側だけの教室のドア（locked）は開かない扱いのため含めない
+  const doors = parts.doors
+    .filter((group) => !(group.userData as SchoolDoorUserData).locked)
+    .map((group): DevDoor => {
+      const data = group.userData as SchoolDoorUserData;
+      const leaf = group.getObjectByName(data.leafName);
+      const closedX = leaf ? (leaf.userData as SchoolDoorLeafUserData).closedX : 0;
+      return {
+        id: data.id,
+        center: partPoint(group, closedX),
+        isOpen: () => data.open,
+        setOpen: (open) => {
+          setSchoolDoorOpen(group, open);
+        },
+      };
+    });
+  // 防火シャッターは「開ける」を幕を上げる（closed を false にする）として扱う
+  const shutters = parts.shutters.map((group): DevDoor => {
+    const data = group.userData as FireShutterUserData;
+    return {
+      id: data.id,
+      center: partPoint(group, 0),
+      isOpen: () => !data.closed,
+      setOpen: (open) => setFireShutterClosed(group, !open),
+    };
+  });
+  return [...doors, ...shutters];
+}
+
 /** 空間の確認用に開閉できるドアの一覧 */
 export function createDevDoors(space: Space): DevDoor[] {
   if (isRoomSpace(space)) return roomDevDoors(space);
   if (isTrainSpace(space)) return trainDevDoors(space);
   if (isElevatorSpace(space)) return elevatorDevDoors(space);
+  if (isSchoolPartsSpace(space)) return schoolPartsDevDoors(space);
   return [];
 }
 
