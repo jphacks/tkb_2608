@@ -8,7 +8,7 @@
 
 | パス | 内容 |
 | --- | --- |
-| `src/main.ts` | URL パラメータで空間を選び，開始位置から一人称で描画する．PC 確認用にドラッグで視点を回す |
+| `src/main.ts` | URL パラメータで空間を選び，開始位置から一人称で描画する．確認用の仮の入力（ドラッグで視点・画面のボタンで歩く／しゃがむ／ドア）を `SpaceWalker` につなぎ，エリアの出入りをイベントバスに流す（`app/` ができるまでの暫定） |
 | `src/scenes/types.ts` | 空間の共通インターフェース（`Space`・`SpaceFactory`・`SpaceBuildOptions`） |
 | `src/scenes/index.ts` | 実装済みの空間の一覧（`SPACE_FACTORIES`・`AVAILABLE_SPACE_IDS`）と `createSpace()` |
 | `src/scenes/spaceParam.ts` | `?scene=` の解釈（`SpaceId`・`parseSpaceId()`・`resolveSpaceId()`） |
@@ -16,7 +16,10 @@
 | `src/scenes/room/` | 部屋（リビング・シナリオ H1）．`roomLayout.ts` に寸法・配置・エリアと userData の型（three 非依存），`room.ts` に組み立て（部屋の殻・窓ガラス・ドア・廊下），`roomFurniture.ts` に家具の Group（テーブルの脚・コンロのつまみと火・ブレーカーのスイッチを含む），`roomMaterials.ts` に見た目 |
 | `src/scenes/train/` | 電車（通勤電車 1 両のうちドア 2 か所分）．`trainLayout.ts` に寸法・配置と userData の型（three 非依存），`train.ts` に組み立て，`trainFixtures.ts` に座席・手すり・つり革・ドア等の Group，`trainMaterials.ts`・`trainTextures.ts` に見た目 |
 | `src/scenes/elevator/` | エレベーター（かご内と扉の外の乗り場）．`elevatorLayout.ts` に寸法・配置と userData の型（three 非依存），`elevator.ts` に組み立て，`elevatorFixtures.ts` に操作盤・ボタン・手すり・扉・階の表示・照明の Group，`elevatorMaterials.ts`・`elevatorTextures.ts` に見た目 |
-| `src/controls/` | ドラッグで視点を回す操作（`lookAngles.ts` は純粋関数，`dragLook.ts` は Pointer Events） |
+| `src/scenes/walk/` | 歩行と当たり判定（three 非依存の純粋関数）．`collision.ts` に当たり判定，`areas.ts` にエリアの判定，`obstacles.ts`・`furnitureObstacles.ts` に障害物の生成，`locomotion.ts` に 1 フレーム分の移動（`stepWalk`），`walker.ts` に `ScenarioWorld` の実装（`SpaceWalker`） |
+| `src/scenes/<id>/<id>Walk.ts` | 各空間の `WalkWorld`（床の範囲・障害物・ドア・エリア・座席）．`createWalkWorld(space)`（`index.ts`）で作る |
+| `src/scenes/devDoors.ts` | 確認用: 近くのドアを開閉する（本物のドア開閉が入るまでのデバッグ用） |
+| `src/controls/` | 確認用の仮の入力．ドラッグで視点を回す操作（`lookAngles.ts` は純粋関数，`dragLook.ts` は Pointer Events），画面のボタン（`walkButtons.ts`）と，その状態から `PlayerInput` を作る純粋関数（`devInput.ts`）．本物の検知（`src/input/`）が入ったら差し替える |
 
 ## 空間の共通インターフェース (Space)
 
@@ -84,7 +87,7 @@
 
 ### エリア (Areas)
 
-シナリオの判定に使う床の範囲を `ROOM_AREAS`（`parts.areas`）に XZ の矩形（`id`・`minX`・`maxX`・`minZ`・`maxZ`）で定義している．家具・窓・ドアの定義から導くため，家具を動かすとエリアも動く．判定処理は後の Issue（#31）で作る．
+シナリオの判定に使う床の範囲を `ROOM_AREAS`（`parts.areas`）に XZ の矩形（`id`・`minX`・`maxX`・`minZ`・`maxZ`）で定義している．家具・窓・ドアの定義から導くため，家具を動かすとエリアも動く．今いるエリアの判定と出入りのイベントは「歩行と当たり判定」を参照．
 
 | id | 範囲 | 用途 |
 | --- | --- | --- |
@@ -158,6 +161,50 @@
 - ボタンの点灯は `setElevatorButtonLit(button, lit, parts.buttonMaterials)` で面のマテリアル（消灯は Lambert，点灯は橙の Basic）を差し替える．ボタンの文字（数字・開閉の記号・非常連絡のベル）は 1 枚の canvas テクスチャに並べ，面の UV で切り分ける
 - 照明の消灯は光源の `intensity` を 0 にする（`visible` の切り替えはシェーダーの作り直しで重い）．非常灯は既定で `intensity` 0
 - 状態の欄（`pressed`・`lit`・`grabbed`・`open`・`openAmount`・`locked`・`on`）は今は初期値だけで，変える処理（押す・開閉・明滅・階の移動）は後の Issue で作る
+
+## 歩行と当たり判定 (Walking & Collision)
+
+`SpaceWalker`（`src/scenes/walk/walker.ts`）が `ScenarioWorld` を実装する．毎フレーム `update(frame)` で `FrameInfo.input`（`PlayerInput`）からプレイヤーを動かし，`applyTo(rig)` でカメラの親（rig）の位置・目の高さ・体の向きを合わせる．頭の向きは rig の子のカメラに入れる（Issue #31）．
+
+### 移動 (Locomotion)
+
+- `walking` の間だけ，体の向き（`startYaw`）＋頭の向きの yaw の方へ `walkSpeed` で進む（上限 `MAX_WALK_SPEED` 2 m/s）
+- 1 フレームの時間は `MAX_STEP_SECONDS`（0.1 秒）までに抑え，移動は 5 cm ごとに分けてすり抜けを防ぐ．各刻みは「そのまま → X だけ → Z だけ」の順に試し，押し出した後も物と重なる候補は採らない（壁に沿って滑り，狭いすき間でめり込まない）
+- 目の高さは各空間の `EYE_HEIGHT` を基準に，`EYE_HEIGHT_SPEED`（2.5 m/s）で少しずつ変える
+
+### 当たり判定 (Collision)
+
+- 体は XZ 平面の円（半径 0.18 m）＋高さの範囲（足元〜目の高さ＋0.1 m）．障害物は軸に沿った直方体で，高さの範囲が体と重なる物だけが行く手をふさぐ．高さ 0.05 m 以下の物はまたげる
+- 壁は，見た目と同じ `splitWallAroundOpening(s)` で開口部を除いた板を，外側へ 0.1 m の厚みにする（窓の下の腰壁は残る）．家具は `furnitureFootprint()` と `size`・`origin` から作る（作るのは `createWalkWorld` の時の 1 回だけ．揺れで動いた後の更新は地震の揺れの Issue #32 で扱う）
+- 体の中心が出られない「床の範囲」を別に持ち，線路や空間の外へ出ないようにする
+- 部屋のテーブルは天板（0.68〜0.72 m）と脚 4 本に分ける．しゃがむ（目 0.55 m）と天板の下に入れる．机の下で立っても目は「天板の下面 − 0.1 m」で止まり，出ると立つ
+- ドア（`DoorBlocker`）は `userData.open` が false の間だけ開口部をふさぐ．部屋は廊下へ，エレベーターは乗り場へ，電車は左のホームと前後の貫通扉の向こうの通路へ出られる．電車の右（線路側）のドアは開いても開口部まで
+- 当たり判定に入れていない物: 電車のつり革（頭上の物），開いて内側に振れた部屋のドアの板（ドア開閉の Issue で扱う）
+
+### 着座 (Seating)
+
+電車の座席の前（座面の前端から 0.35 m）で，座席に背を向けて（±60° 以内．`SIT_FACING_LIMIT`）しゃがみ始めると座る．目の位置は座席の着座位置（高さ 1.2 m）．座っている間は歩かず，立つと座る前の位置に戻る．
+
+### エリアのイベント (Area Events)
+
+エリアは体の中心で判定し，前のフレームとの差を `areaExited` → `areaEntered` の順に `GameEvent` として流す．`observe()` は今いるエリアを返す．開始位置のエリアはイベントにしない．
+
+| 空間 | エリアの id |
+| --- | --- |
+| 部屋 | `ROOM_AREAS`（上記「エリア」） |
+| 電車 | 各ドアの前（`door-left-1-front`・`emergency-door-front` 等）・`platform`（ホーム）・`emergency-door-gangway`・`gangway-door-rear-gangway`（貫通扉の向こうの通路） |
+| エレベーター | `cabin`・`door-front`・`hall`（乗り場） |
+
+- 電車・エレベーターのエリアの id は Issue #31 で仮に決めたもの．シナリオ定義を書くときに合わせる
+- エレベーターの `locked` は見ていない（扉が閉じているかどうかだけで通れるかを決める）
+
+### 確認用の仮の入力 (Dev Controls)
+
+本物の検知（担当D の `src/input/`）とドアの開閉（手で触れて開く）が入るまでの確認用．スマホで `npm run tunnel -- <空間の id>` から開いて操作する（[ENV_04](../02_ENV/ENV_04_開発コマンド.md)）．
+
+- 「歩く」: 押している間 `walking: true`（`DEV_WALK_SPEED` 1 m/s）．「しゃがむ」: 押すたびに `posture` を切り替える．向きはドラッグ．ボタンは canvas と別の要素なので，別の指でドラッグしながら歩ける
+- 「ドア」: 体の中心から `DEV_DOOR_REACH`（1.5 m）以内で最も近いドア 1 つだけを開閉する（電車の両開き・エレベーターの扉は板をまとめて 1 つのドア）．範囲内に無ければ何もしない．1.5 m はこのデバッグ用の仕組みの中だけの値で，本物の開閉は手が触れたかで決める
+- 左上に状態（位置・目の高さ・座席・今いるエリア・最後のイベント・近くのドア）を出す
 
 ## 性能上の方針 (Performance)
 
