@@ -22,10 +22,10 @@
 - `npm run tunnel -- train` のように空間の id（`room`・`train`・`elevator`）を渡すと，QR コードの URL に `?scene=train` が付き，読み取るだけでその空間が開く
 - `npm run tunnel -- /src/input/dev/` のように `/` で始まるパスを渡すと，QR コードの URL にそのパスが付く（使える文字は英数字・`/`・`-`・`_`・`.`）
 - 体験の流れ（開始画面 → ロビー → シナリオ）は URL に `?app` を付けて開く（例: `http://localhost:5173/?app`．スマホでは QR コードの URL の末尾に `?app` を足す）．`?debug`・`?stereo=1` 等は [SPEC_01](../04_SPEC/SPEC_01_画面遷移とモジュール構成.md)「起動の切り替え」を参照
-- `http://localhost:5173/?input=mock` のように `?input=` を付けると，担当D の `src/input/` の入力で視点を動かす（`?scene=` と併用できる．例: `?scene=train&input=mock`）．指定しない時は今までどおりドラッグで視点を回す
-  - `?input=mock`: PC 用．W で歩く（1.0 m/s）・S でゆっくり歩く（0.5 m/s．足踏みには向きが無いため後ろへは進まない）・C でしゃがみの切り替え・ドラッグで頭の向き（A・D は今は使わない）
+- `http://localhost:5173/?input=mock` のように `?input=` を付けると，担当D の `src/input/` の入力で歩く（当たり判定あり．`?scene=` と併用できる．例: `?scene=train&input=mock`）．指定しない時は今までどおりドラッグで視点を回し，画面のボタンで歩く
+  - `?input=mock`: PC 用．W で歩く（1.0 m/s）・S でゆっくり歩く（0.5 m/s．足踏みには向きが無いため後ろへは進まない）・C でしゃがみの切り替え・E で近くのドアの開閉・ドラッグで頭の向き（A・D は今は使わない）
   - `?input=device`: スマホの実機用（トンネル経由の HTTPS で開く）．画面をタップしてセンサーを許可すると，頭の向き・足踏み・しゃがみの判定で動く．最初に受け取った向きが正面になる
-  - どちらも画面の左上に `PlayerInput` の中身（`posture`・`walking`・`walkSpeed`・頭のヨー）を出す．移動は当たり判定の無い仮のもの（担当B の Issue #31 で置き換える）
+  - どちらも画面の左上に `PlayerInput` の中身（`posture`・`walking`・`walkSpeed`・頭のヨー）と歩行の状態（位置・エリア・近くのドア）を出す．画面のボタンは出さない
 - `npm run tunnel` は外部からアクセスできる経路を開くため，Claude Code の auto mode では実行が止められる．人間が VS Code のターミナルで実行する
 - URL を知っていれば誰でも開けるため，使い終わったら `Ctrl+C` で止める
 
