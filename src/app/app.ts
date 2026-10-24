@@ -11,10 +11,12 @@ import { parseInputKind } from "../input/inputParam";
 import { createInputSource, type InputSource } from "../input/inputSource";
 import { resolveSceneRequest } from "../lobby/homeFlow";
 import { createHomeScene } from "../lobby/homeScene";
+import { createHomeMemory } from "../lobby/homeSettings";
 import { createLobbyScene } from "../lobby/lobbyScene";
 import { createOrientationGuide } from "../lobby/orientationGuide";
 import type { AcquiredDevices } from "../lobby/permissions";
 import { createStartScene } from "../lobby/startScene";
+import { createScreenWakeLock } from "../lobby/wakeLock";
 import { resolveDebug, resolveStereo } from "./launchMode";
 import { createScenarioPlaceholder } from "./placeholderScenes";
 import { yawOnly } from "./yawOnlyCalibration";
@@ -55,8 +57,14 @@ export function startApp(): void {
 
   const stage: Stage = { world, rig, overlay };
   const session: Session = { calibration: null, result: null, recording: null };
-  // 開始画面で取れた機器．カメラは input/ の手の認識に渡す．AudioContext は audio/ ができたら渡す
+  // 開始画面で取れた機器．カメラは input/ の手の認識に渡す．AudioContext はホームの設定（音量の確認）に渡す（audio/ ができたらそちらにも渡す）
   const devices: { current: AcquiredDevices | null } = { current: null };
+
+  // 画面の消灯を止める処理は ?app の間ずっと 1 つだけ持ち，ロビー・シナリオの間も保つ．
+  // 頼むのは許可の画面とホームのタップの中（画面を作り直しても外さない）
+  const wakeLock = createScreenWakeLock();
+  // 設定を開いたか．ホームを作り直しても（結果画面から戻った時も）その回の利用の中では保つ
+  const homeMemory = createHomeMemory();
 
   // ?app だけなら実機のセンサー（device），?app&input=mock なら PC のキーボード・ドラッグ（mock）
   const input = createInputSource({
@@ -68,6 +76,7 @@ export function startApp(): void {
   const factories: Partial<Record<SceneId, () => Scene>> = {
     start: () =>
       createStartScene({
+        onStartTap: () => wakeLock.request(),
         onDevices: (acquired) => {
           devices.current = acquired;
           // 許可は開始画面のタップの中で lobby/ が取り終えている．iOS は許可済みならタップの外でも
@@ -77,7 +86,12 @@ export function startApp(): void {
           input.attachCamera(acquired.cameraStream);
         },
       }),
-    home: () => createHomeScene(),
+    home: () =>
+      createHomeScene({
+        memory: homeMemory,
+        audioContext: () => devices.current?.audioContext ?? null,
+        wakeLock,
+      }),
     lobby: () => createLobbyScene({ debug, isPaused: () => orientationGuide.visible }),
     scenario: () => createScenarioPlaceholder(),
   };
