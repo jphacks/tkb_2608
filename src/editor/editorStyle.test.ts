@@ -1,7 +1,18 @@
 // エディタの色のテスト（教室の添字から色を選ぶ roomColor と，道具箱の並び）
 import { describe, expect, it } from "vitest";
 import type { CellKind } from "../core/schoolPlan";
-import { CELL_COLORS, CELL_KIND_LABELS, PART_TOOLS, ROOM_COLORS, roomColor } from "./editorStyle";
+import { FACINGS, type MarkerKind } from "./editorState";
+import {
+  CELL_COLORS,
+  CELL_KIND_LABELS,
+  EDITOR_COLORS,
+  FACING_LABELS,
+  MARKER_LABELS,
+  MARKER_TOOLS,
+  PART_TOOLS,
+  ROOM_COLORS,
+  roomColor,
+} from "./editorStyle";
 
 describe("roomColor", () => {
   it("教室の添字の順に ROOM_COLORS を使う", () => {
@@ -72,5 +83,39 @@ describe("CELL_COLORS / PART_TOOLS / CELL_KIND_LABELS", () => {
       if (k === "void") expect(CELL_COLORS[k]).toBeNull();
       else expect(CELL_COLORS[k]).toMatch(/^#[0-9a-f]{6}$/i);
     }
+  });
+});
+
+describe("MARKER_TOOLS / MARKER_LABELS / FACING_LABELS", () => {
+  const markerKinds: MarkerKind[] = ["fireOrigin", "start", "assembly"];
+
+  it("道具箱には火元・開始地点・集合場所が 1 つずつある", () => {
+    const kinds = MARKER_TOOLS.map((t) => t.kind);
+    expect(kinds).toHaveLength(3);
+    expect(new Set(kinds)).toEqual(new Set(markerKinds));
+  });
+
+  it("道具には名前と色見本（#rrggbb）がある．3 つの色は違う", () => {
+    for (const t of MARKER_TOOLS) {
+      expect(t.label).toBeTruthy();
+      expect(t.color).toMatch(/^#[0-9a-f]{6}$/i);
+    }
+    expect(new Set(MARKER_TOOLS.map((t) => t.color)).size).toBe(3);
+  });
+
+  it("道具の色見本は印の色と同じ", () => {
+    const byKind = Object.fromEntries(MARKER_TOOLS.map((t) => [t.kind, t.color]));
+    expect(byKind.fireOrigin).toBe(EDITOR_COLORS.fire);
+    expect(byKind.start).toBe(EDITOR_COLORS.start);
+    expect(byKind.assembly).toBe(EDITOR_COLORS.assembly);
+  });
+
+  it("印の種類すべてに名前がある", () => {
+    for (const k of markerKinds) expect(MARKER_LABELS[k]).toBeTruthy();
+  });
+
+  it("上下左右すべてに向きのボタンの文字があり，重ならない", () => {
+    for (const f of FACINGS) expect(FACING_LABELS[f]).toBeTruthy();
+    expect(new Set(FACINGS.map((f) => FACING_LABELS[f])).size).toBe(4);
   });
 });

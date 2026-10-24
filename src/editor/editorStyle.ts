@@ -1,6 +1,7 @@
 // エディタの上から見た図の色と，道具箱に出すパーツの名前（データだけ）．
 // マスの色は結果画面の地図（src/debrief/mapStyle.ts）と同じ値にそろえる（SPEC_01．関数・定数は共有せず，ここに書き写す）
 import type { CellKind } from "../core/schoolPlan";
+import type { Facing, MarkerKind } from "./editorState";
 
 /** マスの種類ごとの塗りの色（void は塗らず下地のまま．教室は ROOM_COLORS で教室ごとに分ける） */
 export const CELL_COLORS: Readonly<Record<CellKind, string | null>> = {
@@ -51,7 +52,42 @@ export const EDITOR_COLORS = {
   label: "rgba(16, 20, 28, 0.7)",
   /** マウスの下のマスの縁 */
   hover: "rgba(47, 111, 224, 0.9)",
+  /** 印の縁取り（教室の淡い色・壁の暗い線のどちらの上でも形が分かるように白で縁取る） */
+  markerOutline: "#ffffff",
+  /** 火元の炎の外側・内側 */
+  fire: "#e23b2e",
+  fireCore: "#ffb020",
+  /** 開始地点の人の印と向きの矢印 */
+  start: "#1d4fd8",
+  /** 集合場所の枠と旗 */
+  assembly: "#18a34a",
 } as const;
+
+/** 道具箱に出す訓練条件の道具の順番・名前・色見本 */
+export const MARKER_TOOLS: readonly {
+  readonly kind: MarkerKind;
+  readonly label: string;
+  readonly color: string;
+}[] = [
+  { kind: "fireOrigin", label: "火元", color: EDITOR_COLORS.fire },
+  { kind: "start", label: "開始地点（教室）", color: EDITOR_COLORS.start },
+  { kind: "assembly", label: "集合場所（屋外）", color: EDITOR_COLORS.assembly },
+];
+
+/** 訓練条件の印の名前（マウスの下のマスの表示に使う） */
+export const MARKER_LABELS: Readonly<Record<MarkerKind, string>> = {
+  fireOrigin: "火元",
+  start: "開始地点",
+  assembly: "集合場所",
+};
+
+/** 開始時の向きのボタンの文字（画面の上下左右） */
+export const FACING_LABELS: Readonly<Record<Facing, string>> = {
+  up: "↑ 上",
+  right: "→ 右",
+  down: "↓ 下",
+  left: "← 左",
+};
 
 /** 道具箱に出すパーツ（教室以外）の順番と名前 */
 export const PART_TOOLS: readonly {
