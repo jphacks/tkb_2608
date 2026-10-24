@@ -85,7 +85,7 @@ gh variable get STAGING_AUTO_DEPLOY                # 今の状態（未設定な
 
 - リポジトリの設定の変更なので，管理者（人間）が行う（GitHub の Settings → Secrets and variables → Actions → Variables でもよい）．切り替えたらチームに伝える
 - 手動モードでは，staging に出したい時に下記の手動実行を行う．`/deploy-prod` も，手動実行で staging に出た版だけを本番に出す
-- staging に出したい時・配信し直したい時（配信の失敗後・Secrets の登録直後等）は，Actions の画面の「Deploy (staging)」→ **Run workflow**（Branch は `main`）で手動実行する．`gh workflow run deploy-staging.yml --ref main` でもよい．手動実行では変更の判定と 3 分の待ちを飛ばしてすぐ配信する
+- staging に出したい時・配信し直したい時（配信の失敗後・Secrets の登録直後等）は，Claude Code で **`/deploy-staging`** を使う（`main` の先頭を出し，完了まで見届けて，今の staging がどのコミット・どの PR までかを報告する）．手で行う場合は Actions の画面の「Deploy (staging)」→ **Run workflow**（Branch は `main`）で手動実行する．`gh workflow run deploy-staging.yml --ref main` でもよい．手動実行では変更の判定と 3 分の待ちを飛ばしてすぐ配信する
 
 ### 本番に出す手順
 
