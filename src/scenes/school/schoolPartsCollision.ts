@@ -8,6 +8,7 @@ import type { Obstacle, XZRect } from "../walk/collision";
 import type { DoorBlocker } from "../walk/locomotion";
 import { type ClassroomUserData, classroomLayout, classroomObstacles } from "./classroomLayout";
 import {
+  blockObstacle,
   edgeClosableObstacle,
   edgeLayout,
   edgeStaticObstacles,
@@ -20,6 +21,7 @@ import {
   placeObstacle,
   placeRect,
   postObstacle,
+  type SchoolBlockUserData,
   type SchoolDoorUserData,
   type SchoolEdgeUserData,
   type SchoolPostUserData,
@@ -27,7 +29,7 @@ import {
 
 /** パーツから取り出した当たり判定の材料（root の座標） */
 export interface SchoolCollision {
-  /** 動かない障害物（壁の板・柱・シャッターのガイドレール・教室の中身） */
+  /** 動かない障害物（壁の板・柱・マスをふさぐ直方体・シャッターのガイドレール・教室の中身） */
   readonly obstacles: readonly Obstacle[];
   /** 閉じている間だけふさぐ物（ドアの開口部・シャッターの幕） */
   readonly doors: readonly DoorBlocker[];
@@ -41,14 +43,16 @@ type PartUserData =
   | FloorSurfaceUserData
   | ClassroomUserData
   | SchoolEdgeUserData
-  | SchoolPostUserData;
+  | SchoolPostUserData
+  | SchoolBlockUserData;
 
 function partUserData(object: THREE.Object3D): PartUserData | null {
   const kind = (object.userData as { kind?: unknown }).kind;
   return kind === "schoolFloor" ||
     kind === "schoolClassroom" ||
     kind === "schoolEdge" ||
-    kind === "schoolPost"
+    kind === "schoolPost" ||
+    kind === "schoolBlock"
     ? (object.userData as PartUserData)
     : null;
 }
@@ -100,6 +104,9 @@ export function collectSchoolCollision(root: THREE.Object3D): SchoolCollision {
       }
       case "schoolPost":
         obstacles.push(place(postObstacle(data.height, data.id)));
+        return;
+      case "schoolBlock":
+        obstacles.push(place(blockObstacle(data.width, data.depth, data.height, data.id)));
         return;
       case "schoolEdge": {
         const layout = edgeLayout(

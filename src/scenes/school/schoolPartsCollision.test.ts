@@ -11,6 +11,7 @@ import { classroomLayout } from "./classroomLayout";
 import { edgePlacementBetween, POST_SIZE, type XZPoint } from "./schoolLayout";
 import {
   createFloorSurface,
+  createSchoolBlock,
   createSchoolEdge,
   createSchoolPartContext,
   createSchoolPost,
@@ -196,6 +197,22 @@ describe("collectSchoolCollision の辺の物", () => {
       DEFAULT_BODY,
     );
     expect(end.z).toBeGreaterThan(0);
+  });
+});
+
+describe("collectSchoolCollision のマスをふさぐ直方体", () => {
+  it("直方体（wall のマス）は置いた位置で底面から高さまでをふさぎ，通れない", () => {
+    const root = new THREE.Group();
+    const block = createSchoolBlock(context, { width: 1, depth: 2, height: 3, id: "b" });
+    block.position.set(3, 0, 1);
+    root.add(block);
+    const collision = collectSchoolCollision(root);
+    expect(collision.obstacles).toEqual([
+      { id: "b", minX: 2.5, maxX: 3.5, minZ: 0, maxZ: 2, minY: 0, maxY: 3 },
+    ]);
+    const w = world(collision);
+    const end = walk(w, { x: 1, z: 1 }, { x: 5, z: 1 });
+    expect(end.x).toBeLessThan(2.5);
   });
 });
 
