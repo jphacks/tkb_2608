@@ -76,6 +76,7 @@
 | `?monitor#p=<埋め込みデータ>&room=<部屋の ID>`（`p=` は省略できる） | 見守り画面（PC のブラウザ）．エディタの E6 の「見守り画面を開く」から別のウィンドウで開く（デモの校舎の時は URL を手で開く）．校舎は `#p=` から `loadPlanFromHash()` で生徒と同じ方法で読む（`#p=` が無ければデモの校舎）．`room=` が無い時は「URL に room= を付けて開いてください」と出して何もしない（後述「見守り」）．`?app`・`?debrief`・`?editor` が優先 |
 | `?app&input=mock`／`?app&input=device` | 体験の流れの入力を切り替える（`?input=` の解釈は `src/input/inputParam.ts`．指定なしは `device`）．`mock` は PC 用で，キーボードとドラッグで同じ流れを通す．`?app&input=replay` は開発サーバーでだけ，記録した実機の動き（`logs/input/`）を流す（[ENV_04](../02_ENV/ENV_04_開発コマンド.md)） |
 | `?stereo=1`／`?stereo=0` | 左右 2 画面の表示を強制する．付けなければスマホ（`(pointer: coarse)` の端末）だけ 2 画面 |
+| `?audio` | 開発サーバーでだけ使える．音の確認ページ．効果音の ID ごとの再生・停止，ナレーションの読み上げ（`roomName` を入れられる），デモの校舎の訓練のシナリオを進行エンジンで流して `Cue` と `signal` を確かめる．本番のビルドには含まれない |
 | `?debrief`（`=late`／`=nosmoke`） | 開発サーバーでだけ使える．結果画面だけを，デモの校舎と手で作った記録（`src/app/sampleDrill.ts`）で表示する．`late` は逃げ遅れ，`nosmoke` は煙の中にいなかった場合．本番のビルドには含まれない．`?app` が優先 |
 | `?debug` | デバッグ用．ロビーで開始ボタンを 3 秒見つめて始める（横向きで端末がほぼ水平の時だけ数える），Enter／Space で今の段階を飛ばす．本番の経路では使わない |
 
@@ -171,7 +172,7 @@ src/
 | `src/input/` | 担当D | 足踏み・しゃがみ・頭の向き・ハンドトラッキング → `PlayerInput` | 判定は**純粋な関数**（センサーの値の列 → 判定結果）にし，記録したセンサーの値でテストする．センサー・カメラの購読は薄い殻に分ける．**判定の安定性に責任を持ち，しきい値と処理の調整を行う**（後述「判定の安定性」）．入力判定とハンドトラッキングの処理時間を予算内に保つ（後述「処理速度」） |
 | `src/scenes/` | 担当B | `school/`: `SchoolPlan` から校舎の 3D（床・壁・天井・ドア・シャッター・屋外）を組み立てる．当たり判定とエリア（`scenes/walk/` を流用）．火と煙の見た目（`SpreadMap` とその時刻から）．学習モードの床の矢印 | `Scene` と `ScenarioWorld` を実装する．`walking` と体の向きからプレイヤーを動かし，壁と燃えているマスとの衝突を決める．`?scene=school` で単独で確かめられるようにする |
 | `src/lobby/` | 担当C | 開始画面（HTML），許可の一括取得，ホーム，ロビーのシーン，キャリブレーションの手順 | `CalibrationProfile` を作って `Session.calibration` に書く．基準取りの流れと UI を担う（取った値の使い方は担当D．後述「判定の安定性」） |
-| `src/audio/` | 担当C | `Cue` の `narration`・`sound` を受けて再生する．校内放送は火元の教室の名前を入れて読み上げる（`narration` の `params`）．ナレーションが終わったら `signal`（`narration-ended:<ID>`）を送る | 素材の ID とファイルの対応表を持つ．素材が揃うまでは Web Speech API の読み上げ（`src/lobby/narrator.ts` と同じ方法）でよい |
+| `src/audio/` | 担当C | `Cue` の `narration`・`sound` を受けて再生する．校内放送は火元の教室の名前を入れて読み上げる（`narration` の `params`）．ナレーションが終わったら `signal`（`narration-ended:<ID>`）を送る | 効果音は Web Audio でコードから合成し，「音の ID → 鳴らし方」の対応表（`src/audio/synths.ts`）で持つ（音声ファイルに替える時はここを差し替える）．ナレーションは端末の読み上げ（speechSynthesis）．体験の間ずっと動く（後述「音の使い方」） |
 | `src/debrief/` | 担当C | 結果画面（HTML）．`SchoolPlan` の地図の上に `DrillEvaluation` を重ねて描く | Canvas 2D で描く．地図の描き方はエディタと同じ見た目にそろえる（関数は共有せず，それぞれが `SchoolPlan` から描く） |
 | `src/monitor/` | #128 の担当 | 見守り画面（`?monitor`）．中継への接続（受け取るだけ），届いた状態の並べ替え・約 100 ms 遅らせた補間，画面の状態（接続待ち → 準備中 → 体験中 → 終わり），赤い表示（`detectErrorBehaviors()`）．段階 2 で上から見た地図の上の生徒の点と名前・結果画面を足す | 校舎の 3D は生徒の画面と同じ `scenes/school/` で描き，結果は（段階 2 で）`debrief/` で開く．どちらも app/ が組み立てて渡す（画面を持つモジュール同士は直接 import しない）．カメラは 1 つで，左右 2 画面にしない |
 | `src/scenario/` | 担当D | 進行エンジン（純粋な関数）と，`SchoolPlan` から ① ② ③ のシナリオ（`ScenarioDefinition`）を組み立てる `buildDrillScenario()` | エンジンは実装済み．地震のサンプルは当面残す |
@@ -234,6 +235,7 @@ src/
 | `ScenarioWorld` | `core/scene.ts` | scenes/ → app/ | 校舎の今の状態．`WorldObservation` に，今いるエリアの ID に加えてプレイヤーの位置（階・X・Z）を足す（**変更**） |
 | `GameEvent` | `core/events.ts` | scenes/・audio/ → scenario/ | 部屋で起きた出来事．`objectTouched`（手で触れた）・`areaEntered`／`areaExited`・`signal`（その他の出来事．名前で区別） |
 | `AppEvent` | `core/events.ts` | 全員 | イベントバスに流すもの．`GameEvent` に加え，`cue`・`stepEntered`・`scenarioFinished` |
+| 音の ID | `core/audioIds.ts` | 全員 → audio/ | 効果音とナレーションの ID の定数と型（`SOUND_ID`・`NARRATION_ID`），音の `Cue` を作る関数（`soundCue`・`narrationCue`），ナレーションの終わりの signal の名前（`narrationEndedSignal`）．後述「音の使い方」 |
 | `Cue` | `core/cue.ts` | scenario/ → scenes/・audio/ | 演出の指示．`narration`（ナレーション ID．校内放送の教室名などを渡す任意の `params`），`sound`（効果音 ID・再生／停止・ループ・鳴らす物の ID），`happening`（部屋の出来事の ID とパラメータ） |
 | `ScenarioDefinition` | `scenario/types.ts` | scenario/ の `buildDrillScenario()` → scenario/ のエンジン | シナリオ定義（後述） |
 | `ScenarioInput` | `scenario/types.ts` | app/ → scenario/ | エンジンへの 1 フレーム分の入力（姿勢・足踏み中か・今いるエリア） |
@@ -339,6 +341,40 @@ PLAN_04 の非機能要件「iPhone で 30 fps 以上」を守るため，処理
 | 担当D（`input/`） | 手順の区間のセンサーの値をためて，判定のしきい値（または判定のモデル）を本人に当てはめることと，その結果の安定性．データが足りない・時間切れの時は既定の判定に戻し，既定より悪くしない |
 
 - #58 で lobby/ は区間（`segments`）を渡す形に改めた．input/ は区間でセンサーの値を切り出して，静止時の揺れ（`standing`）・しゃがみの深さと時間（`crouching`）・しゃがみ歩きの山（`crouchWalking`）・立った足踏みの山と間隔（`stepping`）を求める（`experiment_山﨑/04`・`05`・`09`）．`timeout`・`skipped` の区間やサンプルが足りない区間は捨てて既定の判定に戻す．input/ 側の実装は担当D の作業として残っている
+
+## 音の使い方 (Using Sounds)
+
+どのモジュールも `audio/` を import せず，イベントバスに `Cue` を流すだけで音を鳴らす（モジュール同士は直接 import しない．「依存の向き」）．ID と `Cue` を作る関数は `src/core/audioIds.ts` にある．
+
+```ts
+import { NARRATION_ID, SOUND_ID, narrationCue, narrationEndedSignal, soundCue } from "../core/audioIds";
+
+ctx.bus.emit({ type: "cue", cue: soundCue(SOUND_ID.nearFireWarning, "play") }); // 1 回だけ鳴らす
+ctx.bus.emit({ type: "cue", cue: soundCue(SOUND_ID.fireBurning, "play", { loop: true }) });
+ctx.bus.emit({ type: "cue", cue: soundCue(SOUND_ID.fireBurning, "stop") });
+ctx.bus.emit({ type: "cue", cue: narrationCue(NARRATION_ID.fireAnnouncement, { roomName: "3年1組" }) });
+// 読み終わりを待つ時は signal の name が narrationEndedSignal(NARRATION_ID.fireAnnouncement) のものを待つ
+```
+
+| 効果音の ID | 音 | ループ |
+| --- | --- | --- |
+| `classroom-ambience` | 教室のざわめきと時々の物音 | 既定でループ |
+| `fire-alarm` | 学校の非常ベル | 既定でループ |
+| `fire-burning` | 炎の音（ゴーという音とパチパチ） | 既定でループ |
+| `near-fire-warning` | 火に近づいた時の警告音 | 1 回だけ（`loop` は無視） |
+| `announcement-chime-start`／`announcement-chime-end` | 校内放送の前後のチャイム（audio/ が校内放送の前後に自分で鳴らす） | 1 回だけ |
+
+| ナレーションの ID | 文面 |
+| --- | --- |
+| `classroom-intro` | 授業中です．周りを見てみましょう |
+| `fire-announcement` | （チャイム）`{roomName}`で火事です．先生の指示に従って避難してください（チャイム）．`roomName` が無い時は場所を省く |
+| `evacuate-start` | 火と煙を避けて，校庭へ避難しましょう |
+| `drill-ending` | 集合場所に着きました．訓練を終わります |
+
+- `audio/` は開始画面で機器を取った後に app/ が 1 回だけ作り，体験の間ずっと動く．画面を切り替える時は app/ が音を止める（画面の側で止める必要はない）．ページを離れる時に片付ける
+- 鳴っているループに `play` を何度送っても二重には鳴らない．未知の ID と `happening` は何もしない
+- ナレーションが終わったら `narration-ended:<ID>` の `signal` を 1 回だけ流す．読み上げが使えない・終わりの知らせが来ない時も，見積もり（1 秒 7 文字）＋4 秒で必ず流す（シナリオが止まらない）．校内放送は途中で切らず，その間に来たナレーションは放送の後に読む．ループの音はナレーションの間だけ小さくする
+- 新しい音を足す時は，`core/audioIds.ts` に ID を足し（core の専用 PR），`audio/` に作り方（効果音）か文面（ナレーション）を足す
 
 ## シナリオ定義の形式 (Scenario Definition Format)
 
@@ -644,7 +680,9 @@ PLAN_04 の非機能要件「iPhone で 30 fps 以上」を守るため，処理
 ## 未決事項 (Open Questions)
 
 - [ ] 担当の割り当て（「モジュール構成と担当」の案をチームで確定する）
-- [ ] 必要な素材の一覧（非常ベル・炎の音・ナレーションと校内放送の文面）と入手先・ライセンス．ナレーション ID・効果音 ID・出来事 ID の一覧
+- [ ] 効果音を音声ファイルに替えるか（今は Web Audio で合成．「音の使い方」）．替える場合は入手先・ライセンス．出来事 ID の一覧
+- [ ] 校内放送はチャイム込みで約 8 秒かかり，② の打ち切り（`ALARM_SECONDS = 8`）とほぼ同じ．延ばすか（担当D と決める）．締めのナレーションが 3 秒の場面に収まらない件は #101 と合わせて決める
+- [ ] 読み上げの音量は Web Audio の全体の音量で変えられないため，効果音とのつりあいを実機で調整する
 - [ ] 「VR 避難の規則」「結果の評価」「経路の提案」の秒数・倍率・割合・重みの既定値（デモの校舎で歩いて決め直す）．余裕の 10 秒は，デモの理科室のように火元に近い開始地点では最初の 1 歩から取れず，常に余裕なしの探し直しになる．また 0 秒で歩き出す想定にすると，30 秒先の火がまだ廊下に届かず，理科室からの経路が火元の側を通る
 - [ ] 火と煙の見せ方（フォグ・パーティクル・半透明の板）と iPhone での負荷
 - [ ] `CalibrationProfile` の項目（「キャリブレーションとの分担」に合わせて担当C・D で決める．Issue #58）

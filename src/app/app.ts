@@ -3,6 +3,7 @@
 
 import * as THREE from "three";
 import { StereoEffect } from "three/examples/jsm/effects/StereoEffect.js";
+import { createAlarmSample, createDrillAudio, type DrillAudio } from "../audio";
 import { createEventBus } from "../core/event-bus";
 import type { AppEvent } from "../core/events";
 import type { Scene, SceneContext, SceneId, Session, Stage } from "../core/scene";
@@ -67,8 +68,26 @@ export function startApp(): void {
     planLoadError: null,
     drill: null,
   };
-  // 開始画面で取れた機器．カメラは input/ の手の認識に渡す．AudioContext はホームの設定（音量の確認）に渡す（audio/ ができたらそちらにも渡す）
+  // 開始画面で取れた機器．カメラは input/ の手の認識に渡す．AudioContext はホームの設定（音量の確認）と audio/ に渡す
   const devices: { current: AcquiredDevices | null } = { current: null };
+  const audioContext = (): AudioContext | null => devices.current?.audioContext ?? null;
+  // 設定の音量の確認で鳴らす非常ベル（audio/ の非常ベルと同じ音）．ホームを作り直しても 1 つを使い回す
+  const volumeCheckAlarm = createAlarmSample(audioContext);
+  // 体験の音（audio/）．開始画面で機器を取った後に 1 回だけ作り，体験の間ずっとバスの cue を受けて鳴らす．
+  // 画面を切り替える時は止めるだけにし，片付けるのはページを離れる時だけ．
+  // AudioContext が無い時（取れなかった等）も読み上げとナレーションの終わりの signal は動く
+  let drillAudio: DrillAudio | null = null;
+  window.addEventListener("pagehide", () => {
+    drillAudio?.dispose();
+    drillAudio = null;
+    volumeCheckAlarm.stop();
+  });
+  // 戻る・進むでページがそのまま戻された時（bfcache）は，機器を取り終えていれば作り直す
+  window.addEventListener("pageshow", (event) => {
+    if (event.persisted && devices.current !== null) {
+      drillAudio ??= createDrillAudio({ bus: ctx.bus, audioContext });
+    }
+  });
 
   // 画面の消灯を止める処理は ?app の間ずっと 1 つだけ持ち，ロビー・シナリオの間も保つ．
   // 頼むのは許可の画面とホームのタップの中（画面を作り直しても外さない）
@@ -93,6 +112,7 @@ export function startApp(): void {
         requireCamera: inputKind === "device",
         onDevices: (acquired) => {
           devices.current = acquired;
+          drillAudio ??= createDrillAudio({ bus: ctx.bus, audioContext });
           // 許可は開始画面のタップの中で lobby/ が取り終えている．iOS は許可済みならタップの外でも
           // requestPermission が granted を返すため，ここで呼んでも許可のダイアログは重ならない
           void input.activate();
@@ -104,7 +124,8 @@ export function startApp(): void {
     home: () =>
       createHomeScene({
         memory: homeMemory,
-        audioContext: () => devices.current?.audioContext ?? null,
+        audioContext,
+        volumeCheckAlarm,
         wakeLock,
       }),
     lobby: () => createLobbyScene({ debug, isPaused: () => orientationGuide.visible }),
@@ -149,6 +170,8 @@ export function startApp(): void {
     try {
       current?.exit();
       current = null;
+      // 前の画面の音は次の画面へ持ち越さない（購読は続けるので，次の画面の enter で流した cue は鳴る）
+      drillAudio?.stopAll();
       const factory = factories[id];
       if (factory === undefined) {
         console.warn(`未実装の画面です: ${id}`);

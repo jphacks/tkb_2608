@@ -4,6 +4,8 @@ import type { Scene, SceneContext } from "../core/scene";
 import { formatPlayerInput } from "../input/inputParam";
 import { LOBBY_EYE_HEIGHT } from "../lobby/lobbyRoom";
 import { createNoticeBoard, type NoticeBoard } from "../lobby/noticeBoard";
+import { buildDrillScenario } from "../scenario/drill";
+import { startScenario } from "../scenario/engine";
 import { DEMO_SCHOOL } from "../share/samples/demoSchool";
 import { createSampleDrill } from "./sampleDrill";
 import {
@@ -24,7 +26,9 @@ export interface ScenarioPlaceholderOptions {
 /**
  * 避難の画面の仮表示．VR の中の板に「避難の画面（仮）」と残り秒数を出し，
  * 決まった秒数（scenarioPlaceholderTimer.ts）たったら仮の記録（sampleDrill.ts の good）を
- * Session.drill に書いて結果画面へ進む（画面のタッチは使わない）
+ * Session.drill に書いて結果画面へ進む（画面のタッチは使わない）．
+ * 音（audio/）を確かめられるよう，火災訓練のシナリオの最初の場面（① 授業中の教室）の Cue だけを入る時に流す
+ * （シナリオのエンジンは動かさない．出る時に app/ が音を止める）
  */
 export function createScenarioPlaceholder(options: ScenarioPlaceholderOptions = {}): Scene {
   let board: NoticeBoard | null = null;
@@ -52,6 +56,11 @@ export function createScenarioPlaceholder(options: ScenarioPlaceholderOptions = 
           "color:#f2f4f8;font:11px/1.4 ui-monospace,monospace;border-radius:6px;";
         calibrationText = `Session.calibration:\n${JSON.stringify(ctx.session.calibration, null, 2)}`;
         ctx.stage.overlay.appendChild(debugRoot);
+      }
+      // 校舎データ（#p=）が無い・読めない時はデモの校舎を使う（SPEC_01「起動の切り替え」）
+      for (const effect of startScenario(buildDrillScenario(ctx.session.plan ?? DEMO_SCHOOL))
+        .effects) {
+        if (effect.type === "cue") ctx.bus.emit({ type: "cue", cue: effect.cue });
       }
     },
     update(frame) {

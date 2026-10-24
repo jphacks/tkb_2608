@@ -7,9 +7,19 @@ import { DEFAULT_VOLUME_CUES, VOLUME_CHECK_NARRATION } from "./volumeCheck";
 import { createVolumeCheckSound } from "./volumeCheckSound";
 import type { ScreenWakeLock } from "./wakeLock";
 
+/** 設定の音量の確認で，警報の例の代わりに鳴らす非常ベル（app/ が audio/ の非常ベルを渡す） */
+export interface VolumeCheckAlarm {
+  /** delaySeconds 秒（s）後から短く鳴らす */
+  play(delaySeconds: number): void;
+  /** 鳴っている・予定した音を止める（何度呼んでもよい） */
+  stop(): void;
+}
+
 export interface HomeSettingsPanelOptions {
   /** 効果音の例を鳴らす AudioContext（開始画面で再開済みのもの．無ければ null で，読み上げだけ流す） */
   readonly audioContext: () => AudioContext | null;
+  /** 警報の例の代わりに鳴らす非常ベル（無ければ volumeCheckSound.ts の警報の例を鳴らす） */
+  readonly alarm?: VolumeCheckAlarm | null;
   /** 画面の消灯を止める処理（無ければ「この端末では使えません」と出す） */
   readonly wakeLock: ScreenWakeLock | null;
   /** 「戻る」を押した時 */
@@ -47,6 +57,7 @@ const SWATCHES: readonly (readonly [string, string, string])[] = [
 
 export function createHomeSettingsPanel(options: HomeSettingsPanelOptions): HomeSettingsPanel {
   const sound = createVolumeCheckSound(options.audioContext);
+  const alarm = options.alarm ?? null;
   const root = document.createElement("div");
   root.className = "lobby-home__settings";
 
@@ -83,13 +94,17 @@ export function createHomeSettingsPanel(options: HomeSettingsPanelOptions): Home
   );
   const stopSound = (): void => {
     sound.stop();
+    alarm?.stop();
     stopNarration();
   };
   play.addEventListener("click", () => {
     // もう一度押した時は最初から鳴らし直す．読み上げはタップの処理の中で始める（iOS）
     stopSound();
     narrate(VOLUME_CHECK_NARRATION);
-    for (const cue of DEFAULT_VOLUME_CUES) sound.play(cue.kind, cue.at);
+    for (const cue of DEFAULT_VOLUME_CUES) {
+      if (cue.kind === "alarm" && alarm !== null) alarm.play(cue.at);
+      else sound.play(cue.kind, cue.at);
+    }
   });
 
   // 画面の明るさ
