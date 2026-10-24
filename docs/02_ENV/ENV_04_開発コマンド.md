@@ -20,7 +20,7 @@
 | `npm run dev:record` | 動きの記録用の開発サーバー（`vite --mode record`）．WebSocket を切るため，`src/` を編集しても開いているページが再読み込みされない（自動更新も効かない）．`npm run dev` と同じポート 5173 を使うので，`npm run dev` を止めてから起動する（手順は [TEST_01](../06_TEST/TEST_01_動きの記録の取り方.md)） |
 | `npm run tunnel` | 開発サーバーを cloudflared の Quick Tunnel で HTTPS の一時 URL として公開し，URL を QR コードでも表示する（スマホの実機確認用．実体は `scripts/tunnel.mjs`．`npm run dev` と別のターミナルで実行し，張りっぱなしにする．手順は [ENV_02](ENV_02_環境構築手順.md)「スマホの実機で確認する」） |
 
-- `npm run tunnel -- train` のように空間の id（`room`・`train`・`elevator`・`school-parts`）を渡すと，QR コードの URL に `?scene=train` が付き，読み取るだけでその空間が開く
+- `npm run tunnel -- train` のように空間の id（`room`・`train`・`elevator`・`school-parts`・`school`）を渡すと，QR コードの URL に `?scene=train` が付き，読み取るだけでその空間が開く
 - `npm run tunnel -- /src/input/dev/` のように `/` で始まるパスを渡すと，QR コードの URL にそのパスが付く（使える文字は英数字・`/`・`-`・`_`・`.`）
 - 体験の流れ（開始画面 → ホーム → ロビー → シナリオ）は URL に `?app` を付けて開く（例: `http://localhost:5173/?app`．スマホでは QR コードの URL の末尾に `?app` を足す）．`?debug`・`?stereo=1` 等は [SPEC_01](../04_SPEC/SPEC_01_画面遷移とモジュール構成.md)「起動の切り替え」を参照
   - `?app` だけなら入力はスマホのセンサー（`device`）で，頭の向き・足踏み・しゃがみが流れに届く．PC では `?app&input=mock` で開き，下記の `?input=mock` と同じキー・ドラッグで操作する（PC で `?app` だけだと視点は動かない）
