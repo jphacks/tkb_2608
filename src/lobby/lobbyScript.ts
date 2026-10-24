@@ -105,6 +105,18 @@ export function describeCalibration(
         progressLabel,
         remainingSeconds,
       };
+    case "crouchWalking": {
+      const required = config.crouchWalking.requiredSteps;
+      const counted = Math.min(countSteps(state, config), required);
+      return {
+        key,
+        title: "しゃがんだまま足踏みをしてください",
+        body: `しゃがんだまま，その場で足踏みを ${required} 歩ほどしてください（${counted} 歩）`,
+        narration: "しゃがんだまま，その場で足踏みをしてください",
+        progressLabel,
+        remainingSeconds,
+      };
+    }
     case "stepping": {
       const counted = Math.min(countSteps(state, config), config.stepping.requiredSteps);
       return {

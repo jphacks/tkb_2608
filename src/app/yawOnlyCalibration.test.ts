@@ -37,3 +37,29 @@ describe("yawOnly", () => {
     expect(original.crouchThreshold).toBe(0.8);
   });
 });
+
+describe("yawOnly（区間）", () => {
+  const segments = [
+    { kind: "standing", startMs: 1000, endMs: 4000, outcome: "completed" },
+    { kind: "stepping", startMs: 4000, endMs: 9000, outcome: "timeout" },
+  ] as const;
+
+  it("区間（segments）と正面（yawOffset）を残し，足踏み・しゃがみのしきい値を無効（NaN）にする", () => {
+    const result = yawOnly(profile({ segments }));
+    expect(result.segments).toEqual(segments);
+    expect(result.yawOffset).toBe(0.5);
+    expect(Number.isNaN(result.stepPeakThreshold)).toBe(true);
+    expect(Number.isNaN(result.crouchThreshold)).toBe(true);
+  });
+
+  it("区間が無い（省略）時は省略のまま", () => {
+    const result = yawOnly(profile());
+    expect(result.segments).toBeUndefined();
+  });
+
+  it("区間があっても入力のしきい値は既定のまま", () => {
+    expect(paramsFromCalibration(DEFAULT_INPUT_PARAMS, yawOnly(profile({ segments })))).toEqual(
+      DEFAULT_INPUT_PARAMS,
+    );
+  });
+});

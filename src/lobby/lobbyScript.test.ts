@@ -40,18 +40,19 @@ describe("describeCalibration", () => {
     expect(describeCalibration({ ...s, phaseElapsed: 4.2 }).remainingSeconds).toBe(11);
   });
 
-  it("手順ごとに「手順 n / 4」と制限時間の残りを出す", () => {
+  it("手順ごとに「手順 n / 5」と制限時間の残りを出す", () => {
     const steps = allStates(null).filter((s) => s.phase === "step");
     expect(steps.map((s) => currentStepId(s))).toEqual([
       "faceFront",
       "standing",
       "crouching",
+      "crouchWalking",
       "stepping",
     ]);
-    const expected = [8, 8, 10, 12];
+    const expected = [8, 8, 10, 12, 12];
     steps.forEach((s, i) => {
       const d = describeCalibration(s);
-      expect(d.progressLabel).toBe(`手順 ${i + 1} / 4`);
+      expect(d.progressLabel).toBe(`手順 ${i + 1} / 5`);
       expect(d.remainingSeconds).toBe(expected[i]);
       expect(d.title.length).toBeGreaterThan(0);
       expect(d.body.length).toBeGreaterThan(0);
@@ -91,6 +92,20 @@ describe("describeCalibration", () => {
     const s = allStates(null).find((x) => currentStepId(x) === "stepping");
     if (s === undefined) throw new Error("stepping が無い");
     expect(describeCalibration(s).body).toContain("6");
+  });
+
+  it("しゃがみ歩きの案内は「しゃがんだまま足踏み」で，必要な歩数（4）と数えた歩数を出す", () => {
+    const s = allStates(null).find((x) => currentStepId(x) === "crouchWalking");
+    if (s === undefined) throw new Error("crouchWalking が無い");
+    const d = describeCalibration(s);
+    expect(d.title).toBe("しゃがんだまま足踏みをしてください");
+    expect(d.body).toBe("しゃがんだまま，その場で足踏みを 4 歩ほどしてください（0 歩）");
+    expect(d.narration).not.toBeNull();
+    // 足踏みの手順とは別の案内（読み上げが切り替わる）
+    const stepping = allStates(null).find((x) => currentStepId(x) === "stepping");
+    if (stepping === undefined) throw new Error("stepping が無い");
+    expect(describeCalibration(stepping).key).not.toBe(d.key);
+    expect(describeCalibration(stepping).title).not.toBe(d.title);
   });
 
   it("outro では手順の番号・残り秒数を出さない", () => {

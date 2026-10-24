@@ -10,11 +10,13 @@ import {
   DEFAULT_CALIBRATION_CONFIG,
   DEFAULT_CALIBRATION_VALUES,
   detectPeaks,
+  FULL_CALIBRATION_PLAN,
   isCalibrationFinished,
   type MotionSample,
   type OrientationSample,
   remainingAlignSeconds,
   remainingStepSeconds,
+  restartCalibrationStep,
   STANDARD_GRAVITY,
   skipCalibrationStep,
   startCalibration,
@@ -158,6 +160,10 @@ describe("既定値・設定（決定事項）", () => {
     expect(c.crouching.minPeak).toBe(1.0);
     expect(c.crouching.stillSeconds).toBe(1.5);
     expect(c.crouching.timeoutSeconds).toBe(10);
+    expect(c.crouchWalking.requiredSteps).toBe(4);
+    expect(c.crouchWalking.minPeak).toBe(1.0);
+    expect(c.crouchWalking.minIntervalSeconds).toBe(0.25);
+    expect(c.crouchWalking.timeoutSeconds).toBe(12);
     expect(c.stepping.requiredSteps).toBe(6);
     expect(c.stepping.minPeak).toBe(1.0);
     expect(c.stepping.minIntervalSeconds).toBe(0.25);
@@ -169,10 +175,12 @@ describe("startCalibration", () => {
   it("初回は全手順を既定値から始め，見え方の調整（align）から入る", () => {
     const s = startCalibration(null);
     expect(s.phase).toBe("align");
-    expect(s.plan).toEqual(["faceFront", "standing", "crouching", "stepping"]);
+    expect(s.plan).toEqual(["faceFront", "standing", "crouching", "crouchWalking", "stepping"]);
+    expect(FULL_CALIBRATION_PLAN).toEqual(s.plan);
     expect(s.values).toEqual(DEFAULT_CALIBRATION_VALUES);
     expect(s.reused).toBe(false);
     expect(s.outcomes).toEqual({});
+    expect(s.segments).toEqual([]);
   });
 
   it("「もう一度」（前回の値あり）は正面だけを行い，前回の値を引き継ぐ", () => {
@@ -220,9 +228,10 @@ describe("段階の進行", () => {
       faceFront: 8,
       standing: 8,
       crouching: 10,
+      crouchWalking: 12,
       stepping: 12,
     };
-    for (const id of ["faceFront", "standing", "crouching", "stepping"] as const) {
+    for (const id of FULL_CALIBRATION_PLAN) {
       expect(currentStepId(s)).toBe(id);
       expect(remainingStepSeconds(s)).toBe(timeouts[id]);
       const r = runCurrentStep(s, {});
@@ -234,16 +243,25 @@ describe("段階の進行", () => {
     const outro = runCurrentStep(s, {});
     expect(outro.seconds).toBeCloseTo(3, 1);
     expect(isCalibrationFinished(outro.state)).toBe(true);
-    expect(toCalibrationProfile(outro.state, 123)).toEqual({
+    const profile = toCalibrationProfile(outro.state, 123);
+    expect(profile).toEqual({
       createdAt: 123,
       ...DEFAULT_CALIBRATION_VALUES,
+      segments: profile.segments,
     });
+    expect(profile.segments?.map((x) => [x.kind, x.outcome])).toEqual([
+      ["standing", "timeout"],
+      ["crouching", "timeout"],
+      ["crouchWalking", "timeout"],
+      ["stepping", "timeout"],
+    ]);
   });
 
-  it("センサーの値が無くても全体は 60 秒以内（15+4+8+8+10+12+3）で終わる", () => {
+  it("センサーの値が無くても全体は 72 秒以内（15+4+8+8+10+12+12+3）で終わる", () => {
     const r = runUntil(startCalibration(null), isCalibrationFinished, 120);
     expect(isCalibrationFinished(r.state)).toBe(true);
-    expect(r.seconds).toBeLessThanOrEqual(60 + 0.2);
+    expect(r.seconds).toBeLessThanOrEqual(72 + 0.2);
+    expect(r.seconds).toBeGreaterThan(72 - 0.2);
   });
 
   it("「もう一度」は align → intro → 正面 → outro で終わり，何もしなければ前回の値のまま", () => {
@@ -252,7 +270,8 @@ describe("段階の進行", () => {
     expect(r.seconds).toBeLessThanOrEqual(15 + 4 + 8 + 3 + 0.2);
     expect(Object.keys(r.state.outcomes)).toEqual(["faceFront"]);
     const profile = toCalibrationProfile(r.state, 999);
-    expect(profile).toEqual({ ...PREVIOUS, createdAt: 999 });
+    // 前回の区間が無ければ（segments 省略）区間は空のまま
+    expect(profile).toEqual({ ...PREVIOUS, createdAt: 999, segments: [] });
   });
 
   it("「もう一度」で正面を向けば yawOffset だけ測り直し，他は保つ", () => {
@@ -561,10 +580,21 @@ describe("toCalibrationProfile", () => {
   it("CalibrationProfile の全項目が入る", () => {
     const p = toCalibrationProfile(startCalibration(null), 42);
     expect(Object.keys(p).sort()).toEqual(
-      ["createdAt", "crouchThreshold", "stepPeakThreshold", "standingBaseline", "yawOffset"].sort(),
+      [
+        "createdAt",
+        "crouchThreshold",
+        "segments",
+        "stepPeakThreshold",
+        "standingBaseline",
+        "yawOffset",
+      ].sort(),
     );
     expect(p.createdAt).toBe(42);
-    for (const v of Object.values(p)) expect(Number.isFinite(v)).toBe(true);
+    for (const v of [p.createdAt, p.yawOffset, p.crouchThreshold, p.stepPeakThreshold]) {
+      expect(Number.isFinite(v)).toBe(true);
+    }
+    expect(Number.isFinite(p.standingBaseline)).toBe(true);
+    expect(p.segments).toEqual([]);
   });
 });
 
@@ -634,5 +664,285 @@ describe("advanceCalibration（止めている間）", () => {
     const s = runWithPause([...before, ...pausedLong, ...after], dt);
     expect(s.phase).toBe("align");
     expect(remainingAlignSeconds(s)).toBeCloseTo(DEFAULT_CALIBRATION_CONFIG.alignSeconds - 3);
+  });
+});
+
+describe("しゃがみ歩き（crouchWalking）", () => {
+  it("しゃがむの次・足踏みの前に行う", () => {
+    const s = skipCalibrationStep(enterStep("crouching"));
+    expect(currentStepId(s)).toBe("crouchWalking");
+    expect(currentStepId(skipCalibrationStep(s))).toBe("stepping");
+  });
+
+  it("4 歩踏めば制限時間より前に終わり，区間は completed．値は作らない", () => {
+    const before = enterStep("crouchWalking");
+    const r = runCurrentStep(before, { motion: stepMotion(10, 3) });
+    expect(currentStepId(r.state)).toBe("stepping");
+    expect(r.state.outcomes.crouchWalking).toBe("measured");
+    expect(r.seconds).toBeGreaterThan(0.5 + 3 * 0.5);
+    expect(r.seconds).toBeLessThan(12);
+    expect(r.state.values).toEqual(before.values);
+    const seg = r.state.segments.find((x) => x.kind === "crouchWalking");
+    expect(seg?.outcome).toBe("completed");
+  });
+
+  it("3 歩では終わらない", () => {
+    const r = runUntil(enterStep("crouchWalking"), () => false, 6, { motion: stepMotion(3, 3) });
+    expect(currentStepId(r.state)).toBe("crouchWalking");
+    expect(countSteps(r.state)).toBe(3);
+  });
+
+  it("歩かなければ 12 秒で時間切れになり，区間は timeout", () => {
+    const before = enterStep("crouchWalking");
+    const r = runCurrentStep(before, {});
+    expect(r.seconds).toBeCloseTo(12, 1);
+    expect(currentStepId(r.state)).toBe("stepping");
+    expect(r.state.outcomes.crouchWalking).toBe("timedOut");
+    expect(r.state.values).toEqual(before.values);
+    const seg = r.state.segments.find((x) => x.kind === "crouchWalking");
+    expect(seg?.outcome).toBe("timeout");
+    expect(remainingStepSeconds(before)).toBe(12);
+  });
+
+  it("山が 1.0 m/s² 未満なら歩数に数えない", () => {
+    const r = runUntil(enterStep("crouchWalking"), () => false, 6, {
+      motion: stepMotion(10, 0.8),
+    });
+    expect(countSteps(r.state)).toBe(0);
+  });
+});
+
+/** nowMs を渡して進める（時刻は base + 経過 ms） */
+function runWithNow(
+  state: CalibrationState,
+  done: (s: CalibrationState) => boolean,
+  baseMs: number,
+  maxSeconds = 120,
+): CalibrationState {
+  let s = state;
+  const maxFrames = Math.ceil(maxSeconds / DT);
+  for (let i = 1; i <= maxFrames && !done(s); i++) {
+    s = advanceCalibration(s, {
+      dt: DT,
+      nowMs: baseMs + i * DT * 1000,
+      motion: [],
+      orientation: [],
+    });
+  }
+  return s;
+}
+
+describe("区間（segments）の記録", () => {
+  it("何もしなければ 立つ → しゃがむ → しゃがみ歩き → 足踏み の順に，制限時間どおりの区間を timeout で記録する", () => {
+    const r = runUntil(startCalibration(null), isCalibrationFinished, 120);
+    // nowMs を渡さない時は dt の累積（0 ms から）で数える．align 15 + intro 4 + 正面 8 = 27 秒から立つが始まる
+    expect(r.state.segments).toEqual([
+      { kind: "standing", startMs: 27000, endMs: 35000, outcome: "timeout" },
+      { kind: "crouching", startMs: 35000, endMs: 45000, outcome: "timeout" },
+      { kind: "crouchWalking", startMs: 45000, endMs: 57000, outcome: "timeout" },
+      { kind: "stepping", startMs: 57000, endMs: 69000, outcome: "timeout" },
+    ]);
+  });
+
+  it("正面（faceFront）は区間を記録しない", () => {
+    const r = runCurrentStep(enterStep("faceFront"), { yawDeg: () => 10 });
+    expect(r.state.outcomes.faceFront).toBe("measured");
+    expect(r.state.segments).toEqual([]);
+    const skipped = skipCalibrationStep(enterStep("faceFront"));
+    expect(skipped.segments).toEqual([]);
+  });
+
+  it("各区間は startMs ≤ endMs で，前の区間の終わりより前に始まらない（時刻が戻らない）", () => {
+    const s = runWithNow(startCalibration(null), isCalibrationFinished, 1_000_000);
+    expect(s.segments.length).toBe(4);
+    let prevEnd = Number.NEGATIVE_INFINITY;
+    for (const seg of s.segments) {
+      expect(seg.startMs).toBeLessThanOrEqual(seg.endMs);
+      expect(seg.startMs).toBeGreaterThanOrEqual(prevEnd);
+      prevEnd = seg.endMs;
+    }
+  });
+
+  it("立って静止できれば completed", () => {
+    const r = runCurrentStep(enterStep("standing"), {
+      motion: (t) => 9.6 + 0.05 * Math.sin(t * 13),
+    });
+    expect(r.state.segments.map((x) => [x.kind, x.outcome])).toEqual([["standing", "completed"]]);
+  });
+
+  it("しゃがんで止まれば completed，6 歩踏めば足踏みも completed", () => {
+    const c = runCurrentStep(enterStep("crouching"), { motion: crouchMotion });
+    expect(c.state.segments.find((x) => x.kind === "crouching")?.outcome).toBe("completed");
+    const st = runCurrentStep(enterStep("stepping"), { motion: stepMotion(10, 3) });
+    expect(st.state.segments.find((x) => x.kind === "stepping")?.outcome).toBe("completed");
+  });
+
+  it("時間切れは timeout（数歩測れて outcomes が timedOut の時も）", () => {
+    const r = runCurrentStep(enterStep("stepping"), { motion: stepMotion(3, 3) });
+    expect(r.state.outcomes.stepping).toBe("timedOut");
+    expect(r.state.segments.find((x) => x.kind === "stepping")?.outcome).toBe("timeout");
+  });
+
+  it.each(["standing", "crouching", "crouchWalking", "stepping"] as const)(
+    "%s を skipCalibrationStep で飛ばすと skipped",
+    (id) => {
+      const s = skipCalibrationStep(enterStep(id));
+      const seg = s.segments.find((x) => x.kind === id);
+      expect(seg?.outcome).toBe("skipped");
+      // outcomes は従来どおり timedOut
+      expect(s.outcomes[id]).toBe("timedOut");
+    },
+  );
+
+  it("nowMs を渡すと，区間の時刻はその時刻になる", () => {
+    const base = 5_000_000;
+    let s = runWithNow(startCalibration(null), (x) => currentStepId(x) === "standing", base);
+    expect(s.stepStartMs).toBe(base + 27000);
+    s = runWithNow(s, (x) => currentStepId(x) === "crouching", base + 27000);
+    expect(s.segments).toEqual([
+      { kind: "standing", startMs: base + 27000, endMs: base + 35000, outcome: "timeout" },
+    ]);
+  });
+
+  it("nowMs を省略すると，前の時刻に dt × 1000 を足して数える", () => {
+    let s = startCalibration(null);
+    s = advanceCalibration(s, { dt: 0.5, nowMs: 10_000, motion: [], orientation: [] });
+    expect(s.clockMs).toBe(10_000);
+    s = advanceCalibration(s, { dt: 0.25, motion: [], orientation: [] });
+    expect(s.clockMs).toBe(10_250);
+    // 一度も時刻が無ければ 0 から数える
+    const first = advanceCalibration(startCalibration(null), {
+      dt: 0.5,
+      motion: [],
+      orientation: [],
+    });
+    expect(first.clockMs).toBe(500);
+  });
+
+  it("nowMs が前の時刻より戻っても時刻は戻らない", () => {
+    let s = startCalibration(null);
+    s = advanceCalibration(s, { dt: DT, nowMs: 10_000, motion: [], orientation: [] });
+    s = advanceCalibration(s, { dt: DT, nowMs: 9_000, motion: [], orientation: [] });
+    expect(s.clockMs).toBeGreaterThanOrEqual(10_000);
+  });
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY])("nowMs が不正（%s）なら dt で数える", (nowMs) => {
+    let s = startCalibration(null);
+    s = advanceCalibration(s, { dt: DT, nowMs: 10_000, motion: [], orientation: [] });
+    s = advanceCalibration(s, { dt: 0.5, nowMs, motion: [], orientation: [] });
+    expect(s.clockMs).toBe(10_500);
+  });
+
+  it("nowMs が戻った時も区間は startMs ≤ endMs", () => {
+    const base = 100_000;
+    let s = runWithNow(startCalibration(null), (x) => currentStepId(x) === "standing", base);
+    // 時刻が戻ったフレームの後に飛ばす
+    s = advanceCalibration(s, { dt: DT, nowMs: 0, motion: [], orientation: [] });
+    s = skipCalibrationStep(s);
+    const seg = s.segments[0];
+    expect(seg?.kind).toBe("standing");
+    if (seg === undefined) throw new Error("区間が無い");
+    expect(seg.startMs).toBeLessThanOrEqual(seg.endMs);
+  });
+
+  it("同じ種類の区間は 1 つまで（前回の区間を持って同じ手順を行えば差し替える）", () => {
+    const prev: CalibrationProfile = {
+      ...PREVIOUS,
+      segments: [
+        { kind: "standing", startMs: 1, endMs: 2, outcome: "completed" },
+        { kind: "stepping", startMs: 3, endMs: 4, outcome: "completed" },
+      ],
+    };
+    const s0: CalibrationState = { ...startCalibration(prev), plan: FULL_CALIBRATION_PLAN };
+    const r = runUntil(s0, isCalibrationFinished, 120);
+    const kinds = r.state.segments.map((x) => x.kind);
+    expect(new Set(kinds).size).toBe(kinds.length);
+    expect([...kinds].sort()).toEqual(
+      ["crouchWalking", "crouching", "standing", "stepping"].sort(),
+    );
+    expect(r.state.segments.find((x) => x.kind === "standing")?.outcome).toBe("timeout");
+  });
+});
+
+describe("restartCalibrationStep", () => {
+  function midStanding(): CalibrationState {
+    const s = runWithNow(startCalibration(null), (x) => currentStepId(x) === "standing", 0);
+    return runUntil(s, () => false, 2, { motion: () => BASE, yawDeg: () => 0 }).state;
+  }
+
+  it("手順の途中なら，経過時間とサンプルを捨て，開始時刻を再開の時刻にする", () => {
+    const s = midStanding();
+    expect(s.phaseElapsed).toBeGreaterThan(0);
+    expect(s.motion.length).toBeGreaterThan(0);
+    const r = restartCalibrationStep(s, 900_000);
+    expect(currentStepId(r)).toBe("standing");
+    expect(r.phaseElapsed).toBe(0);
+    expect(r.motion).toEqual([]);
+    expect(r.orientation).toEqual([]);
+    expect(r.stepStartMs).toBe(900_000);
+    expect(remainingStepSeconds(r)).toBe(8);
+  });
+
+  it("やり直した後の区間は再開の時刻から始まる", () => {
+    const r = restartCalibrationStep(midStanding(), 900_000);
+    const next = skipCalibrationStep(
+      advanceCalibration(r, { dt: DT, nowMs: 901_000, motion: [], orientation: [] }),
+    );
+    expect(next.segments).toEqual([
+      { kind: "standing", startMs: 900_000, endMs: 901_000, outcome: "skipped" },
+    ]);
+  });
+
+  it("やり直した後は制限時間をもう一度最初から数える", () => {
+    const r = restartCalibrationStep(midStanding(), 900_000);
+    const run = runCurrentStep(r, {});
+    expect(run.seconds).toBeCloseTo(8, 1);
+  });
+
+  it("再開の時刻が前の時刻より前でも，時刻は戻らない", () => {
+    const s = midStanding();
+    const r = restartCalibrationStep(s, 0);
+    expect(r.stepStartMs).toBeGreaterThanOrEqual(s.clockMs ?? 0);
+  });
+
+  it("手順の最中でなければ（align・intro・outro・finished）状態を変えない", () => {
+    const align = startCalibration(null);
+    expect(restartCalibrationStep(align, 1000)).toBe(align);
+    const intro = skipCalibrationStep(align);
+    expect(restartCalibrationStep(intro, 1000)).toBe(intro);
+    let s = align;
+    for (let i = 0; i < 20 && s.phase !== "outro"; i++) s = skipCalibrationStep(s);
+    expect(restartCalibrationStep(s, 1000)).toBe(s);
+    const fin = skipCalibrationStep(s);
+    expect(restartCalibrationStep(fin, 1000)).toBe(fin);
+  });
+
+  it("状態を書き換えない（不変更新）", () => {
+    const s = deepFreeze(midStanding());
+    const snapshot = JSON.parse(JSON.stringify(s));
+    restartCalibrationStep(s, 900_000);
+    expect(JSON.parse(JSON.stringify(s))).toEqual(snapshot);
+  });
+});
+
+describe("「もう一度」と区間", () => {
+  const prevWithSegments: CalibrationProfile = {
+    ...PREVIOUS,
+    segments: [
+      { kind: "standing", startMs: 100, endMs: 200, outcome: "completed" },
+      { kind: "crouching", startMs: 200, endMs: 300, outcome: "timeout" },
+      { kind: "crouchWalking", startMs: 300, endMs: 400, outcome: "skipped" },
+      { kind: "stepping", startMs: 400, endMs: 500, outcome: "completed" },
+    ],
+  };
+
+  it("前回の区間をそのまま引き継ぎ，正面だけを行っても区間は変わらない", () => {
+    expect(startCalibration(prevWithSegments).segments).toEqual(prevWithSegments.segments);
+    const r = runUntil(startCalibration(prevWithSegments), isCalibrationFinished, 120, {
+      yawDeg: () => 30,
+    });
+    const profile = toCalibrationProfile(r.state, 999);
+    expect(profile.segments).toEqual(prevWithSegments.segments);
+    expect(profile.yawOffset).toBeCloseTo(30 * DEG, 3);
   });
 });

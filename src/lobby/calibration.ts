@@ -1,13 +1,21 @@
-// キャリブレーションの手順の進行と，センサーの値の列 → CalibrationProfile の各値の集計．
+// キャリブレーションの手順の進行と，各手順の区間（CalibrationProfile.segments）の記録．
 // DOM・three.js に依存しない純粋な関数（センサーの購読は sensorFeed.ts，表示は lobbyScene.ts）．
 //
-// 各値の意味（暫定．担当D の input/ の判定方法に合わせて見直す．docs/04_SPEC/SPEC_01「判定の安定性」）
-// - yawOffset: 正面を向いた時の頭のヨー角（rad）．headYawFromDeviceOrientation() で求めた角度の円周平均
+// lobby/ は手順の開始と終了（区間）を記録して渡し，しきい値の計算は input/ が行う（Issue #58．SPEC_01「キャリブレーションとの分担」）．
+// ここでのセンサーの集計は，手順を早く終える判定（止まった・何歩踏んだ）に要る分だけにする．
+// - yawOffset: 正面を向いた時の頭のヨー角（rad）．headYawFromDeviceOrientation() で求めた角度の円周平均（lobby/ が測る）
+//
+// 以下は非推奨（core/types.ts の CalibrationProfile）．終わりの判定の途中で出る値をそのまま入れている（新しい集計は足さない）
 // - standingBaseline: 立って静止している時の加速度の大きさ（|accelerationIncludingGravity|，m/s^2）の平均
 // - crouchThreshold: しゃがむ動作で加速度の大きさが standingBaseline から最も離れた量（m/s^2）× 係数
 // - stepPeakThreshold: 足踏みで加速度の大きさが standingBaseline を上回った山の高さ（m/s^2）の中央値 × 係数
 
-import type { CalibrationProfile } from "../core/types";
+import type {
+  CalibrationProfile,
+  CalibrationSegment,
+  CalibrationSegmentKind,
+  CalibrationSegmentOutcome,
+} from "../core/types";
 import { angleDifference, circularMean, headYawFromDeviceOrientation } from "./orientation";
 
 /** devicemotion の 1 回分（accelerationIncludingGravity，m/s^2）．t は秒（performance.now() / 1000 等） */
@@ -27,8 +35,8 @@ export interface OrientationSample {
   readonly screenAngle: number;
 }
 
-/** CalibrationProfile のうち測る値 */
-export type CalibrationValues = Omit<CalibrationProfile, "createdAt">;
+/** CalibrationProfile のうち測る値（区間 segments は別に持つ） */
+export type CalibrationValues = Omit<CalibrationProfile, "createdAt" | "segments">;
 
 export const STANDARD_GRAVITY = 9.80665;
 
@@ -40,15 +48,33 @@ export const DEFAULT_CALIBRATION_VALUES: CalibrationValues = {
   stepPeakThreshold: 2.0,
 };
 
-export type CalibrationStepId = "faceFront" | "standing" | "crouching" | "stepping";
+export type CalibrationStepId =
+  | "faceFront"
+  | "standing"
+  | "crouching"
+  | "crouchWalking"
+  | "stepping";
 
-/** 全手順の順番 */
+/**
+ * 全手順の順番．しゃがんだ流れのまましゃがみ歩きをし，最後に立ち上がって足踏みする
+ * （姿勢の切り替えはしゃがむ・立つの 2 回だけ．立った姿勢で体験に入れる）
+ */
 export const FULL_CALIBRATION_PLAN: readonly CalibrationStepId[] = [
   "faceFront",
   "standing",
   "crouching",
+  "crouchWalking",
   "stepping",
 ];
+
+/** 区間を記録する手順と，区間の種類（正面は区間を使わないため記録しない） */
+const SEGMENT_KIND: Readonly<Record<CalibrationStepId, CalibrationSegmentKind | null>> = {
+  faceFront: null,
+  standing: "standing",
+  crouching: "crouching",
+  crouchWalking: "crouchWalking",
+  stepping: "stepping",
+};
 
 export interface CalibrationConfig {
   /**
@@ -89,6 +115,15 @@ export interface CalibrationConfig {
     readonly thresholdRatio: number;
     readonly timeoutSeconds: number;
   };
+  /** しゃがみ歩き．終わりの判定は足踏みと同じく山を数える（値の集計はしない） */
+  readonly crouchWalking: {
+    readonly requiredSteps: number;
+    /** 1 歩とみなす山の最小の高さ（m/s^2） */
+    readonly minPeak: number;
+    /** 山と山の最短の間隔（秒） */
+    readonly minIntervalSeconds: number;
+    readonly timeoutSeconds: number;
+  };
   readonly stepping: {
     readonly requiredSteps: number;
     /** 1 歩とみなす山の最小の高さ（m/s^2） */
@@ -127,6 +162,7 @@ export const DEFAULT_CALIBRATION_CONFIG: CalibrationConfig = {
     thresholdRatio: 0.5,
     timeoutSeconds: 10,
   },
+  crouchWalking: { requiredSteps: 4, minPeak: 1.0, minIntervalSeconds: 0.25, timeoutSeconds: 12 },
   stepping: {
     requiredSteps: 6,
     minPeak: 1.0,
@@ -158,6 +194,12 @@ export interface CalibrationState {
   /** 今までに決まった値（最初は既定値か前回の値） */
   readonly values: CalibrationValues;
   readonly outcomes: Readonly<Partial<Record<CalibrationStepId, StepOutcome>>>;
+  /** 終えた手順の区間（行った順．「もう一度」では前回のもの） */
+  readonly segments: readonly CalibrationSegment[];
+  /** 最後に進めた時の時刻（performance.now() の ms）．まだ進めていなければ null */
+  readonly clockMs: number | null;
+  /** 今の手順に入った時刻（performance.now() の ms）．手順の最中でなければ null */
+  readonly stepStartMs: number | null;
   /** 前回のキャリブレーションを引き継いだか */
   readonly reused: boolean;
 }
@@ -165,13 +207,19 @@ export interface CalibrationState {
 /** 1 フレーム分の入力 */
 export interface CalibrationFrame {
   readonly dt: number;
+  /**
+   * 今の時刻（performance.now() の ms．input/ のセンサーのサンプルと同じ時計）．区間の記録に使う．
+   * 無い時は前の時刻に dt を足して数える
+   */
+  readonly nowMs?: number;
   readonly motion: readonly MotionSample[];
   readonly orientation: readonly OrientationSample[];
 }
 
 /**
  * キャリブレーションを始める．previous があれば（結果画面の「もう一度」で戻った時），
- * 姿勢と足踏みの値は引き継ぎ，正面のリセットだけをやり直す（付け直しや立つ位置で正面がずれるため）
+ * 姿勢と足踏みの値・区間は引き継ぎ，正面のリセットだけをやり直す（付け直しや立つ位置で正面がずれるため）．
+ * 区間は前回のものをそのまま渡す（input/ が前回求めた値を保てるように．空にすると既定に戻りうる）
  */
 export function startCalibration(previous: CalibrationProfile | null): CalibrationState {
   const values: CalibrationValues =
@@ -193,6 +241,9 @@ export function startCalibration(previous: CalibrationProfile | null): Calibrati
     orientation: [],
     values,
     outcomes: {},
+    segments: previous?.segments ?? [],
+    clockMs: null,
+    stepStartMs: null,
     reused: previous !== null,
   };
 }
@@ -223,11 +274,16 @@ export function remainingAlignSeconds(
 
 /** 1 フレーム進める */
 export function advanceCalibration(
-  state: CalibrationState,
+  current: CalibrationState,
   frame: CalibrationFrame,
   config: CalibrationConfig = DEFAULT_CALIBRATION_CONFIG,
 ): CalibrationState {
   const dt = Number.isFinite(frame.dt) && frame.dt > 0 ? frame.dt : 0;
+  if (current.phase === "finished") return current;
+  const state: CalibrationState = {
+    ...current,
+    clockMs: nextClock(current.clockMs, frame.nowMs, dt),
+  };
   switch (state.phase) {
     case "align": {
       const elapsed = state.phaseElapsed + dt;
@@ -261,8 +317,33 @@ export function advanceCalibration(
   }
 }
 
+/** 時刻を進める．nowMs が使えればそれを，無ければ前の時刻に dt を足す（戻らないようにする） */
+function nextClock(clockMs: number | null, nowMs: number | undefined, dt: number): number {
+  const fallback = (clockMs ?? 0) + dt * 1000;
+  if (nowMs === undefined || !Number.isFinite(nowMs)) return fallback;
+  return clockMs === null ? nowMs : Math.max(clockMs, nowMs);
+}
+
 /**
- * 今の段階を飛ばす（開発用．手順の最中なら時間切れと同じ扱いで次へ進む）
+ * 今の手順を最初からやり直す（縦向きの案内で止めた後に再開した時．lobbyScene が呼ぶ）．
+ * 止めている間はゴーグルに入っておらず，その前後の値が混ざると区間の値が正しく求まらないため，
+ * 経過時間・サンプルを捨てて，区間の始まりを nowMs（performance.now() の ms）にする．手順の最中でなければそのまま
+ */
+export function restartCalibrationStep(state: CalibrationState, nowMs: number): CalibrationState {
+  if (state.phase !== "step") return state;
+  const clockMs = nextClock(state.clockMs, nowMs, 0);
+  return {
+    ...state,
+    phaseElapsed: 0,
+    motion: [],
+    orientation: [],
+    clockMs,
+    stepStartMs: clockMs,
+  };
+}
+
+/**
+ * 今の段階を飛ばす（開発用．手順の最中なら時間切れと同じ扱いで次へ進む．区間の outcome は skipped）
  */
 export function skipCalibrationStep(
   state: CalibrationState,
@@ -287,17 +368,24 @@ export function isCalibrationFinished(state: CalibrationState): boolean {
   return state.phase === "finished";
 }
 
-/** 今までに決まった値を CalibrationProfile にする */
+/** 今までに決まった値と区間を CalibrationProfile にする */
 export function toCalibrationProfile(
   state: CalibrationState,
   createdAt: number,
 ): CalibrationProfile {
-  return { createdAt, ...state.values };
+  return { createdAt, ...state.values, segments: state.segments };
 }
 
 function enterStep(state: CalibrationState, index: number): CalibrationState {
   if (index >= state.plan.length) {
-    return { ...state, phase: "outro", phaseElapsed: 0, motion: [], orientation: [] };
+    return {
+      ...state,
+      phase: "outro",
+      phaseElapsed: 0,
+      motion: [],
+      orientation: [],
+      stepStartMs: null,
+    };
   }
   return {
     ...state,
@@ -306,7 +394,23 @@ function enterStep(state: CalibrationState, index: number): CalibrationState {
     phaseElapsed: 0,
     motion: [],
     orientation: [],
+    stepStartMs: state.clockMs ?? 0,
   };
+}
+
+/** 終えた手順の区間を足す（正面は区間を記録しない） */
+function appendSegment(
+  state: CalibrationState,
+  id: CalibrationStepId,
+  outcome: CalibrationSegmentOutcome,
+): readonly CalibrationSegment[] {
+  const kind = SEGMENT_KIND[id];
+  if (kind === null) return state.segments;
+  const endMs = state.clockMs ?? 0;
+  const startMs = Math.min(state.stepStartMs ?? endMs, endMs);
+  // 同じ種類は 1 つまで（「もう一度」で前回の区間を持っている時に同じ手順を行えば差し替える）
+  const others = state.segments.filter((s) => s.kind !== kind);
+  return [...others, { kind, startMs, endMs, outcome }];
 }
 
 function finishStepIfDone(
@@ -319,11 +423,17 @@ function finishStepIfDone(
   const timedOut = force || state.phaseElapsed >= config[id].timeoutSeconds;
   const result = evaluateStep(id, state, config, timedOut);
   if (result === null) return state;
+  const segmentOutcome: CalibrationSegmentOutcome = force
+    ? "skipped"
+    : result.outcome === "measured"
+      ? "completed"
+      : "timeout";
   return enterStep(
     {
       ...state,
       values: { ...state.values, ...result.patch },
       outcomes: { ...state.outcomes, [id]: result.outcome },
+      segments: appendSegment(state, id, segmentOutcome),
     },
     state.stepIndex + 1,
   );
@@ -348,6 +458,8 @@ function evaluateStep(
       return evaluateStanding(state, config, timedOut);
     case "crouching":
       return evaluateCrouching(state, config, timedOut);
+    case "crouchWalking":
+      return evaluateCrouchWalking(state, config, timedOut);
     case "stepping":
       return evaluateStepping(state, config, timedOut);
   }
@@ -450,16 +562,31 @@ function evaluateStepping(
   };
 }
 
-/** 今の手順で数えた足踏みの歩数（表示用） */
+/**
+ * しゃがみ歩き: 山を requiredSteps 回数えたら終える．値は作らない（しゃがみ歩きの山の大きさ等は input/ が区間から求める）
+ */
+function evaluateCrouchWalking(
+  state: CalibrationState,
+  config: CalibrationConfig,
+  timedOut: boolean,
+): StepResult | null {
+  if (countSteps(state, config) >= config.crouchWalking.requiredSteps) {
+    return { outcome: "measured", patch: {} };
+  }
+  return timedOut ? { outcome: "timedOut", patch: {} } : null;
+}
+
+/** 今の手順で数えた歩数（表示・しゃがみ歩きの終わりの判定用）．しゃがみ歩きの最中はその設定で数える */
 export function countSteps(
   state: CalibrationState,
   config: CalibrationConfig = DEFAULT_CALIBRATION_CONFIG,
 ): number {
+  const c = currentStepId(state) === "crouchWalking" ? config.crouchWalking : config.stepping;
   const baseline = state.values.standingBaseline;
   return detectPeaks(
     state.motion.map((s) => ({ t: s.t, value: accelerationMagnitude(s) - baseline })),
-    config.stepping.minPeak,
-    config.stepping.minIntervalSeconds,
+    c.minPeak,
+    c.minIntervalSeconds,
   ).length;
 }
 
