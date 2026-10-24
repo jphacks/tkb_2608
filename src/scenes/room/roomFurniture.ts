@@ -1,11 +1,30 @@
-// 部屋の家具．1 つずつ独立した Group（原点・正面・userData は roomLayout の定義どおり）として作る
+// 部屋の家具．1 つずつ独立した Group（原点・正面・userData は roomLayout の定義どおり）として作る．
+// 触れる・動かす部品（テーブルの脚・コンロのつまみと火・ブレーカーのメインスイッチ）は家具の Group の中の
+// 独立した子 Group にする
 
 import * as THREE from "three";
 import { type FurnitureDef, massFromDensity, type Size3 } from "../common/furniture";
 import { createFurnitureGroup } from "../common/furnitureGroup";
-import { createBox } from "../common/meshHelpers";
+import { createBox, mergeBoxes } from "../common/meshHelpers";
 import { mulberry32, randomInt, randomRange } from "../common/random";
-import type { RoomFurnitureKind } from "./roomLayout";
+import {
+  type BookUserData,
+  BREAKER,
+  type BreakerPanelUserData,
+  type BreakerSwitchUserData,
+  type RoomFurnitureKind,
+  STOVE,
+  STOVE_BURNERS,
+  type StoveFlameUserData,
+  type StoveKnobUserData,
+  type StoveUserData,
+  TABLE_PARTS,
+  type TableLegUserData,
+  type TableUserData,
+  type TvUserData,
+  tableLegId,
+  tableLegLocalPositions,
+} from "./roomLayout";
 import type { RoomMaterials } from "./roomMaterials";
 
 /** 家具を作るときに共有する部品 */
@@ -16,12 +35,27 @@ export interface FurnitureContext {
   readonly unitCylinder: THREE.BufferGeometry;
   readonly materials: RoomMaterials;
   readonly rand: () => number;
+  /** 形が同じ部品のジオメトリのキャッシュ（キーごとに 1 つだけ作って共有する） */
+  readonly geometryCache: Map<string, THREE.BufferGeometry>;
 }
 
 type Builder = (group: THREE.Group, size: Size3, ctx: FurnitureContext, id: string) => void;
 
 /** 本の密度（kg/m^3） */
 const BOOK_DENSITY = 600;
+
+function cached(
+  ctx: FurnitureContext,
+  key: string,
+  build: () => THREE.BufferGeometry,
+): THREE.BufferGeometry {
+  let geometry = ctx.geometryCache.get(key);
+  if (!geometry) {
+    geometry = build();
+    ctx.geometryCache.set(key, geometry);
+  }
+  return geometry;
+}
 
 function cylinder(
   ctx: FurnitureContext,
@@ -38,11 +72,13 @@ function cylinder(
   return mesh;
 }
 
-/** テーブル．天板と脚は別 Mesh（後で脚だけ揺らす等ができるように） */
+/**
+ * テーブル．天板と脚は別にし，脚は 1 本ずつ独立した子 Group（原点は脚の底面中央）にする
+ * （テーブルの下に潜る当たり判定と，脚を握る判定のため）
+ */
 const buildTable: Builder = (group, size, { unitBox, materials }, id) => {
-  const top = 0.04;
-  const leg = 0.05;
-  const inset = 0.06;
+  const top = TABLE_PARTS.topThickness;
+  const leg = TABLE_PARTS.legThickness;
   group.add(
     createBox(
       unitBox,
@@ -52,25 +88,29 @@ const buildTable: Builder = (group, size, { unitBox, materials }, id) => {
       `${id}-top`,
     ),
   );
-  const lx = size.x / 2 - inset - leg / 2;
-  const lz = size.z / 2 - inset - leg / 2;
   const legHeight = size.y - top;
-  [
-    [-lx, -lz],
-    [lx, -lz],
-    [-lx, lz],
-    [lx, lz],
-  ].forEach(([x, z], i) => {
-    group.add(
-      createBox(
-        unitBox,
-        materials.woodDark,
-        [leg, legHeight, leg],
-        [x, legHeight / 2, z],
-        `${id}-leg-${i + 1}`,
-      ),
+  const legIds = tableLegLocalPositions(size).map(([x, y, z], i) => {
+    const legId = tableLegId(id, i);
+    const legGroup = new THREE.Group();
+    legGroup.name = legId;
+    legGroup.position.set(x, y, z);
+    const userData: TableLegUserData = {
+      id: legId,
+      kind: "tableLeg",
+      tableId: id,
+      index: i + 1,
+      size: { x: leg, y: legHeight, z: leg },
+      grabbed: false,
+    };
+    legGroup.userData = userData;
+    legGroup.add(
+      createBox(unitBox, materials.woodDark, [leg, legHeight, leg], [0, legHeight / 2, 0]),
     );
+    group.add(legGroup);
+    return legId;
   });
+  const userData: TableUserData = { ...(group.userData as TableUserData), legIds };
+  group.userData = userData;
 };
 
 /** 椅子（背もたれは -Z 側．前脚は座面の下まで，後脚は全高まで） */
@@ -162,12 +202,13 @@ const buildBookshelf: Builder = (group, size, ctx, id) => {
         [x + bookSize.x / 2, baseY + bookSize.y / 2, -halfZ + t + bookSize.z / 2],
         bookId,
       );
-      book.userData = {
+      const bookData: BookUserData = {
         id: bookId,
         kind: "book",
         size: bookSize,
         mass: massFromDensity(bookSize, BOOK_DENSITY),
       };
+      book.userData = bookData;
       group.add(book);
       x += bookSize.x + 0.002;
     }
@@ -202,7 +243,7 @@ const buildTvStand: Builder = (group, size, { unitBox, materials }) => {
   }
 };
 
-/** テレビ（台座＋首＋本体＋画面．画面は +Z 向き） */
+/** テレビ（台座＋首＋本体＋画面．画面は +Z 向き）．① で音を流す発生源で，既定は点いている */
 const buildTv: Builder = (group, size, { unitBox, materials }, id) => {
   group.add(createBox(unitBox, materials.black, [0.35, 0.02, size.z], [0, 0.01, 0]));
   group.add(createBox(unitBox, materials.black, [0.06, 0.1, 0.03], [0, 0.07, -0.02]));
@@ -218,6 +259,12 @@ const buildTv: Builder = (group, size, { unitBox, materials }, id) => {
   screen.position.set(0, bodyY, bodyDepth / 2 + 0.001);
   screen.name = `${id}-screen`;
   group.add(screen);
+  const userData: TvUserData = {
+    ...(group.userData as TvUserData),
+    screenName: screen.name,
+    on: true,
+  };
+  group.userData = userData;
 };
 
 /** ソファ（台座＋座面＋背もたれ＋肘掛け 2＋座・背クッション各 2．背もたれは -Z 側） */
@@ -362,6 +409,201 @@ const buildClock: Builder = (group, size, ctx, id) => {
   });
 };
 
+/**
+ * キッチンカウンター（正面 +Z．台輪＋本体＋扉 3 枚＋天板＋シンク＋水栓）．
+ * コンロは上に載る別の家具（stove）
+ */
+const buildKitchenCounter: Builder = (group, size, { unitBox, materials }) => {
+  const plinth = 0.1;
+  const topThickness = 0.03;
+  const bodyHeight = size.y - topThickness - plinth;
+  const halfZ = size.z / 2;
+  group.add(
+    createBox(unitBox, materials.black, [size.x, plinth, size.z - 0.08], [0, plinth / 2, -0.04]),
+    createBox(
+      unitBox,
+      materials.cabinet,
+      [size.x, bodyHeight, size.z - 0.03],
+      [0, plinth + bodyHeight / 2, -0.015],
+    ),
+    createBox(
+      unitBox,
+      materials.counterTop,
+      [size.x, topThickness, size.z],
+      [0, size.y - topThickness / 2, 0],
+    ),
+  );
+  const doorWidth = size.x / 3 - 0.02;
+  for (const x of [-size.x / 3, 0, size.x / 3]) {
+    group.add(
+      createBox(
+        unitBox,
+        materials.woodLight,
+        [doorWidth, bodyHeight - 0.04, 0.012],
+        [x, plinth + bodyHeight / 2, halfZ - 0.03 + 0.006],
+      ),
+    );
+  }
+  // シンク（コンロと反対の端．天板の上の薄い板）と水栓
+  const sinkX = -size.x / 4;
+  group.add(
+    createBox(unitBox, materials.sink, [0.5, 0.004, 0.36], [sinkX, size.y + 0.002, 0]),
+    createBox(unitBox, materials.metal, [0.03, 0.26, 0.03], [sinkX, size.y + 0.13, -halfZ + 0.06]),
+    createBox(
+      unitBox,
+      materials.metal,
+      [0.025, 0.025, 0.18],
+      [sinkX, size.y + 0.25, -halfZ + 0.15],
+    ),
+  );
+};
+
+/**
+ * ガスコンロ（正面 +Z．本体＋天板＋口 2 つ）．口ごとに火（子 Group．既定は点火）と，
+ * 正面に消す操作の対象のつまみ（子 Group）を置く
+ */
+const buildStove: Builder = (group, size, ctx, id) => {
+  const { unitBox, materials } = ctx;
+  const plate = 0.01;
+  group.add(
+    createBox(
+      unitBox,
+      materials.stoveBody,
+      [size.x, size.y - plate, size.z],
+      [0, (size.y - plate) / 2, 0],
+    ),
+    createBox(unitBox, materials.stoveTop, [size.x, plate, size.z], [0, size.y - plate / 2, 0]),
+  );
+  const flameGeometry = cached(
+    ctx,
+    "stove-flame",
+    () =>
+      // 上へ細くなる円錐台の側面（青い炎の輪）
+      new THREE.CylinderGeometry(
+        STOVE.flameDiameter * 0.3,
+        STOVE.flameDiameter / 2,
+        STOVE.flameHeight,
+        16,
+        1,
+        true,
+      ),
+  );
+  for (const burner of STOVE_BURNERS) {
+    const burnerTop = size.y + STOVE.burnerHeight;
+    const cap = cylinder(
+      ctx,
+      materials.black,
+      STOVE.burnerDiameter,
+      STOVE.burnerHeight,
+      size.y + STOVE.burnerHeight / 2,
+      `${id}-burner-${burner.index}`,
+    );
+    cap.position.x = burner.x;
+    cap.position.z = STOVE.burnerZ;
+    group.add(cap);
+
+    const flame = new THREE.Group();
+    flame.name = burner.flameId;
+    flame.position.set(burner.x, burnerTop, STOVE.burnerZ);
+    const flameData: StoveFlameUserData = {
+      id: burner.flameId,
+      kind: "stoveFlame",
+      stoveId: id,
+      knobId: burner.knobId,
+      lit: true,
+    };
+    flame.userData = flameData;
+    const flameMesh = new THREE.Mesh(flameGeometry, materials.flame);
+    flameMesh.position.y = STOVE.flameHeight / 2;
+    flame.add(flameMesh);
+    group.add(flame);
+
+    // つまみ（正面の板から +Z へ出る円柱と，向きを示す白い印）
+    const knob = new THREE.Group();
+    knob.name = burner.knobId;
+    knob.position.set(burner.x, STOVE.knobY, size.z / 2);
+    const knobData: StoveKnobUserData = {
+      id: burner.knobId,
+      kind: "stoveKnob",
+      stoveId: id,
+      flameId: burner.flameId,
+      diameter: STOVE.knobDiameter,
+      on: true,
+    };
+    knob.userData = knobData;
+    const body = cylinder(ctx, materials.black, STOVE.knobDiameter, STOVE.knobDepth, 0);
+    body.rotation.x = Math.PI / 2;
+    body.position.z = STOVE.knobDepth / 2;
+    knob.add(
+      body,
+      createBox(
+        unitBox,
+        materials.white,
+        [0.006, STOVE.knobDiameter * 0.45, 0.003],
+        [0, STOVE.knobDiameter * 0.2, STOVE.knobDepth + 0.0015],
+        `${burner.knobId}-mark`,
+      ),
+    );
+    group.add(knob);
+  }
+  const userData: StoveUserData = {
+    ...(group.userData as StoveUserData),
+    knobIds: STOVE_BURNERS.map((b) => b.knobId),
+    flameIds: STOVE_BURNERS.map((b) => b.flameId),
+  };
+  group.userData = userData;
+};
+
+/**
+ * 分電盤（原点は箱の中心，正面 +Z）．左にメインスイッチ（子 Group．既定は入），
+ * 右下に動かない分岐ブレーカーの列
+ */
+const buildBreakerPanel: Builder = (group, size, { unitBox, materials }, id) => {
+  const front = size.z / 2;
+  group.add(createBox(unitBox, materials.cabinet, [size.x, size.y, size.z], [0, 0, 0]));
+  // 分岐ブレーカー（台の板と，小さなレバーを 1 Mesh にまとめた列）
+  const rowY = -0.08;
+  group.add(createBox(unitBox, materials.metal, [0.2, 0.06, 0.01], [0.04, rowY, front + 0.005]));
+  const pitch = 0.03;
+  const firstX = 0.04 - (pitch * (BREAKER.branchCount - 1)) / 2;
+  const levers = new THREE.Mesh(
+    mergeBoxes(
+      Array.from({ length: BREAKER.branchCount }, (_, i) => ({
+        size: [0.014, 0.022, 0.012] as const,
+        position: [firstX + i * pitch, rowY + 0.006, front + 0.016] as const,
+      })),
+    ),
+    materials.breakerLever,
+  );
+  levers.name = `${id}-branches`;
+  group.add(levers);
+
+  const mainSwitch = new THREE.Group();
+  mainSwitch.name = BREAKER.mainSwitchId;
+  mainSwitch.position.set(BREAKER.mainSwitchX, BREAKER.mainSwitchY, front);
+  const leverName = `${BREAKER.mainSwitchId}-lever`;
+  const switchData: BreakerSwitchUserData = {
+    id: BREAKER.mainSwitchId,
+    kind: "breakerSwitch",
+    panelId: id,
+    leverName,
+    on: true,
+  };
+  mainSwitch.userData = switchData;
+  mainSwitch.add(
+    createBox(unitBox, materials.metal, [0.07, 0.1, 0.02], [0, 0, 0.01]),
+    // レバー（入で上側）
+    createBox(unitBox, materials.breakerLever, [0.026, 0.04, 0.016], [0, 0.02, 0.028], leverName),
+  );
+  group.add(mainSwitch);
+
+  const userData: BreakerPanelUserData = {
+    ...(group.userData as BreakerPanelUserData),
+    switchIds: [BREAKER.mainSwitchId],
+  };
+  group.userData = userData;
+};
+
 const BUILDERS: Record<RoomFurnitureKind, Builder> = {
   table: buildTable,
   chair: buildChair,
@@ -372,6 +614,9 @@ const BUILDERS: Record<RoomFurnitureKind, Builder> = {
   pendant: buildPendant,
   plant: buildPlant,
   clock: buildClock,
+  kitchenCounter: buildKitchenCounter,
+  stove: buildStove,
+  breakerPanel: buildBreakerPanel,
 };
 
 /** 家具 1 つの Group を作る */
@@ -395,6 +640,7 @@ export function createRoomFurniture(
     unitCylinder: new THREE.CylinderGeometry(0.5, 0.5, 1, 16),
     materials,
     rand: mulberry32(505),
+    geometryCache: new Map(),
   };
   return defs.map((def) => createFurniture(def, ctx));
 }

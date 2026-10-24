@@ -33,7 +33,8 @@ export function createRoomMaterials(maxAnisotropy: number) {
     fabric: lambert(0x5d7a8c),
     cushion: lambert(0x7d97a6),
     black: lambert(0x1c1c1e),
-    screen: new THREE.MeshLambertMaterial({ color: 0x05070a, emissive: 0x0d1828 }),
+    // 点いている画面（光の影響を受けない明るい色．消すときは color を暗くする）
+    screen: new THREE.MeshBasicMaterial({ color: 0x8fb4d6 }),
     metal: lambert(0x9a9a9a),
     white: lambert(0xf2f0ea),
     shade: new THREE.MeshLambertMaterial({
@@ -46,6 +47,32 @@ export function createRoomMaterials(maxAnisotropy: number) {
     soil: lambert(0x3b2a1e),
     leaf: new THREE.MeshLambertMaterial({ color: 0x3f8a43, flatShading: true }),
     books: BOOK_COLORS.map(lambert),
+    // キッチン
+    counterTop: lambert(0xd9d6cf),
+    cabinet: lambert(0xece8df),
+    sink: lambert(0xb8bcc0),
+    stoveBody: lambert(0x3a3c40),
+    stoveTop: lambert(0x18191b),
+    flame: new THREE.MeshBasicMaterial({
+      color: 0x4f8dff,
+      transparent: true,
+      opacity: 0.8,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    }),
+    // ブレーカー
+    breakerLever: lambert(0x2b2b2b),
+    // 床に散らばった窓ガラスの破片（床の上で見えるよう窓より濃く）
+    shard: new THREE.MeshLambertMaterial({
+      color: 0xcfe6f2,
+      emissive: 0x3a4a52,
+      transparent: true,
+      opacity: 0.7,
+      side: THREE.DoubleSide,
+    }),
+    // 廊下
+    hallwayLight: new THREE.MeshBasicMaterial({ color: 0xfffaf0 }),
+    frontDoor: lambert(0x4a3a2e),
   };
 }
 
