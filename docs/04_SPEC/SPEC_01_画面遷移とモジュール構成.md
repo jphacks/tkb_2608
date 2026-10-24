@@ -221,7 +221,7 @@ src/
 | `ScenarioWorld` | `core/scene.ts` | scenes/ → app/ | 校舎の今の状態．`WorldObservation` に，今いるエリアの ID に加えてプレイヤーの位置（階・X・Z）を足す（**変更**） |
 | `GameEvent` | `core/events.ts` | scenes/・audio/ → scenario/ | 部屋で起きた出来事．`objectTouched`（手で触れた）・`areaEntered`／`areaExited`・`signal`（その他の出来事．名前で区別） |
 | `AppEvent` | `core/events.ts` | 全員 | イベントバスに流すもの．`GameEvent` に加え，`cue`・`stepEntered`・`scenarioFinished` |
-| `Cue` | `core/cue.ts` | scenario/ → scenes/・audio/ | 演出の指示．`narration`（ナレーション ID．校内放送の教室名を渡す `params` を足す．**変更**），`sound`（効果音 ID・再生／停止・ループ・鳴らす物の ID），`happening`（部屋の出来事の ID とパラメータ） |
+| `Cue` | `core/cue.ts` | scenario/ → scenes/・audio/ | 演出の指示．`narration`（ナレーション ID．校内放送の教室名などを渡す任意の `params`），`sound`（効果音 ID・再生／停止・ループ・鳴らす物の ID），`happening`（部屋の出来事の ID とパラメータ） |
 | `ScenarioDefinition` | `scenario/types.ts` | scenario/ の `buildDrillScenario()` → scenario/ のエンジン | シナリオ定義（後述） |
 | `ScenarioInput` | `scenario/types.ts` | app/ → scenario/ | エンジンへの 1 フレーム分の入力（姿勢・足踏み中か・今いるエリア） |
 | `ScenarioResult` | `core/result.ts` | scenario/ → debrief/・recording/ | 場面ごとの記録（`StepRecord`）と行動の評価（`EvaluationRecord`）．火災訓練では避難時間と逃げ遅れの判定にだけ使い，評価の中身は `DrillEvaluation` に持つ |
@@ -429,7 +429,7 @@ PLAN_04 の非機能要件「iPhone で 30 fps 以上」を守るため，処理
 - ③ の制限時間は ② の既定の 8 秒で固定して引く．放送が 8 秒より早く終わると，非常ベルから打ち切りまでが `timeLimitSeconds` より最大 8 秒短くなる（実際にかかった秒数を引く形にはしていない）
 - 逃げ遅れは，`ScenarioResult` では `evacuate` の `outcome: "timedOut"` で表す（`aborted` は `false` のまま）．結果画面は `DrillEvaluation.lateEscape` を見て判断する
 - 校内放送で伝える火元の名前は `fireOriginName(plan)` で引く．火元のマスの教室名（`rooms[roomOf[...]].name`）を，火元が複数なら同じ名前を除いて「と」でつなぐ．教室の火元が無い時はマスの種類から「廊下」「昇降口」「校庭」「校舎の中」とする
-- **仮の形**: `Cue` の `narration` にまだ `params` が無いため（「受け渡すデータ」の**変更**が未実施），今は火元の名前を `fire-start` の `params.roomName` に載せている．core の専用 PR で `params` を足したら，`fire-announcement` の `params` に移す
+- 火元の名前は `fire-announcement` の `narration` の `params.roomName` で渡す（以前は仮に `fire-start` の `params.roomName` に載せていたが，`Cue` の `narration` に `params` を足して正式な形に移した．`fire-start` は `params` を持たない）
 - 効果音・ナレーションの ID（`classroom-ambience`・`fire-alarm`・`classroom-intro`・`evacuate-start`・`drill-ending`）は仮．音の素材に合わせて担当C と決め直す（`DRILL_CUE_ID` にまとめてある）
 
 ### 書き方の例（サンプル）(Sample)
