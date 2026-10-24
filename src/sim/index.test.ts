@@ -35,6 +35,10 @@ describe("sim/index.ts", () => {
     "resolveReferenceRoute",
     "worldToCell",
     "cellCenter",
+    "detectErrorBehaviors",
+    "errorBehaviorsAt",
+    "isInSmoke",
+    "positionCell",
   ])("%s を公開する", (name) => {
     expect(typeof (sim as Record<string, unknown>)[name]).toBe("function");
   });
@@ -45,7 +49,13 @@ describe("依存の向き（SPEC_01）", () => {
 
   it("sim/ のコードがある", () => {
     expect(files).toEqual(
-      expect.arrayContaining(["walls.ts", "spread.ts", "route.ts", "evaluate.ts"]),
+      expect.arrayContaining([
+        "walls.ts",
+        "spread.ts",
+        "route.ts",
+        "evaluate.ts",
+        "errorBehavior.ts",
+      ]),
     );
   });
 
