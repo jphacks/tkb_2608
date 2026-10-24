@@ -1,0 +1,59 @@
+# CI（品質ゲート）
+#
+# main 宛ての PR で lint・型チェック・テスト・ビルドを実行する．
+# GUIDE_03 のセルフマージ条件「CI 緑」はこのワークフローを指す．
+#
+# 設計方針:
+#   - Secrets を一切参照しない（PR から起動されるジョブに認証情報を渡さない）
+#   - public リポジトリのため Actions の実行時間は無料．検証は軽いので，変更の種類によるスキップはせず毎回すべて実行する
+#     （スキップすると必須チェックが作られず「保留」のまま残るおそれもある）
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+
+# 最小権限．コードを読むだけ．
+permissions:
+  contents: read
+
+# 同じ PR に新しい push があったら，走っている古い実行をキャンセルする．
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Dev Container（.devcontainer/devcontainer.json の node feature）と揃える．
+  # 更新時は deploy-staging.yml・deploy-prod.yml と本ファイルを同時に直す．
+  NODE_VERSION: "24"
+
+jobs:
+  check:
+    name: Lint / typecheck / test / build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build

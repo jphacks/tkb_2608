@@ -30,8 +30,8 @@
 | lint・整形 | Biome | lint と整形を 1 つのツールで行え，設定が少ない |
 | パッケージ管理 | npm | 追加のツールが要らない |
 | 実行環境 | Node.js 24（LTS） | Dev Container に追加する（現状のコンテナには Node.js が入っていない） |
-| 配信 | GitHub Pages（GitHub Actions でデプロイ） | 提出リポジトリが public なので無料で HTTPS 配信できる．外部サービスのアカウントが要らない |
-| CI | GitHub Actions | lint・テスト・ビルドを PR ごとに実行する |
+| 配信 | Cloudflare Pages（GitHub Actions から `wrangler` でアップロード） | 無料で HTTPS 配信できる．将来サーバー関数（Workers / Pages Functions）を同じ場所に置ける．`main` へのマージで staging，`v*` タグで本番に出す（ENV_04「デプロイ」．決定の経緯は Issue #21） |
+| CI | GitHub Actions（`.github/workflows/ci.yml`） | lint・型チェック・テスト・ビルドを PR ごとに実行する |
 | 実機での開発確認 | cloudflared の Quick Tunnel | 後述「実機での確認方法」 |
 
 ## 機能ごとの実現方法 (Implementation Approach)
@@ -86,7 +86,7 @@
 - そのため，開発サーバーを cloudflared の Quick Tunnel（アカウント不要．`https://〜.trycloudflare.com` の一時 URL が発行される）で公開し，スマホからその URL を開いて確認する
   - Vite 側で `server.allowedHosts` にトンネルのドメインを許可する必要がある
   - URL を知っていれば誰でも開けるため，秘密情報は置かない（静的サイトなので通常は問題ない）
-- 代替: VS Code のポート転送（GitHub ログインが要る），`main` にマージ後の GitHub Pages
+- 代替: VS Code のポート転送（GitHub ログインが要る），`main` にマージ後の staging（`https://staging.tkb2608.pages.dev`）
 - 具体的なコマンドは環境構築フェーズで ENV_04 に書く
 
 ## 実機のログの確認 (Viewing Logs from Devices)
@@ -95,7 +95,7 @@
 - このアプリではセンサーの値・判定結果・fps を見ながらしきい値を調整するため，実機のログが見えないと開発が進まない．しかもゴーグルを付けている間は画面を見られない
 - そこで，**開発時だけ iPhone のログを開発サーバーに送り，ターミナルとファイルに出す**．Claude もそのファイルを読めるため，「iPhone で試す → Claude がログを読んで直す」を繰り返せる
 - 画面上にログを出すツール（eruda）は，ゴーグルを外してその場で確かめたい時の補助として開発時だけ読み込む
-- 本番（GitHub Pages）では，どちらも読み込まない
+- staging・本番（Cloudflare Pages）では，どちらも読み込まない
 
 ## 3D ライブラリの比較 (3D Library Comparison)
 
@@ -120,7 +120,8 @@ Babylon.js は機能が揃っている点で有力だが，このアプリで最
 | React Three Fiber | VR 以外の画面が少なく，React を入れる利点が小さい |
 | ブラウザの読み上げ（`speechSynthesis`） | 声が機械的で端末ごとに違う．iPhone では鳴らない場合がある |
 | 音声認識（Web Speech API） | 要件で声による操作を行わないことにした |
-| Vercel・Cloudflare Pages | PR ごとのプレビューは便利だが，外部アカウントの作成と連携が要る．必要になったら移行する |
+| GitHub Pages | 外部アカウントが要らず手軽だが，サーバー関数を置けず，PR ごとのプレビューも無い．バックエンドを作る可能性があるため Cloudflare Pages にした |
+| Vercel・Netlify | 機能は Cloudflare Pages と同等だが，今回の用途で優れる点が無い．Organization のリポジトリへの GitHub アプリ連携には運営の承認が要る可能性もある |
 
 ## 最初に検証すること (Spikes on Day 1)
 
