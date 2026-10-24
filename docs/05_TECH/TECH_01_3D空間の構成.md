@@ -17,7 +17,7 @@
 | `src/scenes/room/` | 部屋（リビング・シナリオ H1）．`roomLayout.ts` に寸法・配置・エリアと userData の型（three 非依存），`room.ts` に組み立て（部屋の殻・窓ガラス・ドア・廊下），`roomFurniture.ts` に家具の Group（テーブルの脚・コンロのつまみと火・ブレーカーのスイッチを含む），`roomMaterials.ts` に見た目 |
 | `src/scenes/train/` | 電車（通勤電車 1 両のうちドア 2 か所分）．`trainLayout.ts` に寸法・配置と userData の型（three 非依存），`train.ts` に組み立て，`trainFixtures.ts` に座席・手すり・つり革・ドア等の Group，`trainMaterials.ts`・`trainTextures.ts` に見た目 |
 | `src/scenes/elevator/` | エレベーター（かご内と扉の外の乗り場）．`elevatorLayout.ts` に寸法・配置と userData の型（three 非依存），`elevator.ts` に組み立て，`elevatorFixtures.ts` に操作盤・ボタン・手すり・扉・階の表示・照明の Group，`elevatorMaterials.ts`・`elevatorTextures.ts` に見た目 |
-| `src/scenes/school/` | 校舎のパーツと確認用の空間（`?scene=school-parts`）．`schoolLayout.ts` に床の面・辺の物・柱の寸法と当たり判定の範囲，`classroomLayout.ts` に教室の中身の並び，`schoolPartsPreviewLayout.ts` に確認用の空間に並べる一覧（いずれも three 非依存），`schoolParts.ts`・`classroom.ts` に組み立て，`schoolMerge.ts` に動かない Mesh の結合，`schoolPartsCollision.ts` に当たり判定の取り出し，`schoolMaterials.ts`・`schoolTextures.ts` に見た目．詳細は「校舎のパーツの構成」 |
+| `src/scenes/school/` | 校舎のパーツと確認用の空間（`?scene=school-parts`）．`routeArrowsLayout.ts`・`routeArrows.ts` に床の正解経路の矢印，`dev/` に確認用のページ．`schoolLayout.ts` に床の面・辺の物・柱の寸法と当たり判定の範囲，`classroomLayout.ts` に教室の中身の並び，`schoolPartsPreviewLayout.ts` に確認用の空間に並べる一覧（いずれも three 非依存），`schoolParts.ts`・`classroom.ts` に組み立て，`schoolMerge.ts` に動かない Mesh の結合，`schoolPartsCollision.ts` に当たり判定の取り出し，`schoolMaterials.ts`・`schoolTextures.ts` に見た目．詳細は「校舎のパーツの構成」 |
 | `src/scenes/walk/` | 歩行と当たり判定（three 非依存の純粋関数）．`collision.ts` に当たり判定，`areas.ts` にエリアの判定，`obstacles.ts`・`furnitureObstacles.ts` に障害物の生成，`locomotion.ts` に 1 フレーム分の移動（`stepWalk`），`walker.ts` に `ScenarioWorld` の実装（`SpaceWalker`） |
 | `src/scenes/<id>/<id>Walk.ts` | 各空間の `WalkWorld`（床の範囲・障害物・ドア・エリア・座席）．`createWalkWorld(space)`（`index.ts`）で作る |
 | `src/scenes/devDoors.ts` | 確認用: 近くのドアを開閉する（本物のドア開閉が入るまでのデバッグ用） |
@@ -239,6 +239,31 @@
 
 - 開始位置は 2 棟の間の外（北（-Z）を向く）．出口から廊下へ入り，ドア・シャッター・教室を見て回れる．外の地面（`PREVIEW_GROUND`）も歩ける
 - E キー（`?input=mock`）で近くのドアとシャッターを開閉できる（`devDoors.ts`）
+
+### 床の正解経路の矢印 (Route Arrows)
+
+学習モードで，正解経路（`SchoolPlan.drill.route`）のマスの床に緑の矢印を並べる（F6．Issue #95）．校舎の組み立てとは別の部品にしてあり，校舎の `root` に足すだけで使える．
+
+```ts
+const arrows = createRouteArrows(plan); // テストモード（drill.mode が "test"）では null
+if (arrows) root.add(arrows.object);
+// 校舎を解放する時に arrows?.dispose()
+```
+
+- 計算は `routeArrowsLayout.ts` の `layoutRouteArrows(plan, route)`（three 非依存）．マスの中心は `sim/grid.ts` の `cellCenter()` で求め，矢印はワールド座標で置く（`root` は原点のままでよい）
+- 各マスの中心に 1 つ置き，次のマスへ進む向きを指す．`kind` は最初のマスが `start`，曲がった後の向きを指すマスが `turn`，最後のマス（集合場所）が `goal`（入ってきた向き）で，残りは `straight`
+- 高さは `(level - 1) * 3.5 + 0.02` m（SPEC_02「座標」の床の高さから 2 cm 浮かせ，`polygonOffset` と合わせて床とのちらつきを防ぐ）．大きさは長さがマスの一辺の 0.6 倍（0.3〜1.2 m），幅が長さの 0.75 倍
+- 全部の矢印を `InstancedMesh` 1 つ（描画 1 回）にまとめ，光源が無くても見える `MeshBasicMaterial`（`ROUTE_ARROW_COLOR`）にする．位置は作る時に 1 回だけ決め，毎フレームの更新は無い
+- `options.route` で `drill.route` 以外の経路（`proposeRoute()` の結果等）を描ける
+- 経路の異常は例外にせず，描けるところだけ描く
+
+| 経路の状態 | 扱い |
+| --- | --- |
+| 空 | 矢印は 0 個（子の無い Group） |
+| 階が無い・マス目の外・整数でないマス | そのマスを飛ばし，前後の続きはそこで切れる |
+| 同じマスの連続 | 1 つにまとめる |
+| 隣り合わないマス・別の階への飛び | そこで区切り，区切った部分ごとに描く（区切りの直前のマスは入ってきた向き，直後のマスは `straight`） |
+| 前後どちらにも続くマスが無いマス（1 マスだけの経路等） | 向きが決まらないので描かない |
 
 ## 歩行と当たり判定 (Walking & Collision)
 

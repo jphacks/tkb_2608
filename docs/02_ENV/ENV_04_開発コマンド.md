@@ -58,6 +58,14 @@
 - 開発サーバーにつながらない間の記録はページのメモリに残り，「記録をダウンロード」で `.jsonl` として保存できる（ページを閉じると消える）
 - 記録を取る間は `npm run dev` ではなく `npm run dev:record` を使う（誰かが `src/` を保存すると記録中のページが再読み込みされ，記録が途切れるため）．取り方は [TEST_01](../06_TEST/TEST_01_動きの記録の取り方.md)
 
+### 担当B の確認用ページ (Scene Dev Pages)
+
+`src/scenes/school/dev/` の HTML も，開発サーバーで直接開ける（本番のビルドには含まれない）．
+
+| ページ | URL（`npm run dev` の後） | 内容 |
+| --- | --- | --- |
+| 床の正解経路の矢印 | `http://localhost:5173/src/scenes/school/dev/routeArrows.html` | デモの校舎のマス目を種類ごとの色の板で並べ，その上に正解経路の矢印を出す（開始地点は黄色の輪，集合場所は白い輪）．左上に矢印の数と種類ごとの内訳．ドラッグで回す・ホイールで寄る・右ドラッグで動かす．`?mode=test` で矢印を作らない（テストモード），`?route=broken` で異常を混ぜた経路 |
+
 ### 正解付きの記録の集計 (Replay & Evaluate)
 
 `protocol.html` で取った正解付きの記録を今の判定に流し直し，区間ごとの指標を SPEC_01「判定の安定性」の目安と照らして端末に表で出す（`src/input/replay/replayCli.ts`．実体は `scripts/replay.mjs`）．
