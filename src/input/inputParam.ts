@@ -1,0 +1,23 @@
+// ?input=mock|device の解釈と，入力の確認用の表示の文字列（DOM に依存しない純粋な関数）
+import type { PlayerInput } from "../core/types";
+import { pitchOfQuat, yawOfQuat } from "./head/quat";
+import type { InputKind } from "./inputSource";
+
+/** ?input= の値 → 入力の種類．指定なし・不正な値は null（今までどおりの操作のまま）．大文字小文字は区別しない */
+export function parseInputKind(search: string): InputKind | null {
+  const v = new URLSearchParams(search).get("input")?.trim().toLowerCase();
+  return v === "mock" || v === "device" ? v : null;
+}
+
+function deg(rad: number): string {
+  return `${Math.round((rad * 180) / Math.PI)}°`;
+}
+
+/** PlayerInput の中身を短い数行にする（画面の隅の表示用） */
+export function formatPlayerInput(input: PlayerInput): string {
+  return [
+    `posture  ${input.posture}`,
+    `walking  ${input.walking}  ${input.walkSpeed.toFixed(2)} m/s`,
+    `head     yaw ${deg(yawOfQuat(input.head))}  pitch ${deg(pitchOfQuat(input.head))}`,
+  ].join("\n");
+}

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  detectRecord,
   type InputRecord,
   joinJsonl,
   type MarkRecord,
@@ -131,5 +132,58 @@ describe("joinJsonl・toJsonl", () => {
     const cyclic: Record<string, unknown> = { type: "mark", t: 0, kind: "x" };
     cyclic.note = cyclic;
     expect(toJsonl([cyclic as unknown as InputRecord])).toBe("");
+  });
+});
+
+describe("detectRecord", () => {
+  it("判定の途中の値を丸め，非有限の値は null にする", () => {
+    const r = detectRecord({
+      t: 1234.56789,
+      av: 1.234567,
+      bp: -0.000049,
+      high: 1.1,
+      low: Number.NaN,
+      gyro: 12.34567,
+      loco: "walking",
+      speed: Number.POSITIVE_INFINITY,
+      phase: "integrating",
+      v: -0.123456,
+      h: 0.98765,
+      step: 2,
+    });
+    expect(r).toEqual({
+      type: "detect",
+      t: 1234.568,
+      av: 1.2346,
+      bp: 0,
+      high: 1.1,
+      low: null,
+      gyro: 12.346,
+      loco: "walking",
+      speed: null,
+      phase: "integrating",
+      v: -0.1235,
+      h: 0.9877,
+      step: 2,
+    });
+    expect(Object.is(r.bp, 0)).toBe(true);
+  });
+
+  it("JSON Lines の 1 行にできる", () => {
+    const r = detectRecord({
+      t: 1,
+      av: Number.NaN,
+      bp: Number.NaN,
+      high: 1,
+      low: 0.3,
+      gyro: Number.NaN,
+      loco: "stopped",
+      speed: 0,
+      phase: "idle",
+      v: 0,
+      h: 0,
+      step: 0,
+    });
+    expect(JSON.parse(toRecordLine(r) ?? "null")).toEqual(r);
   });
 });
