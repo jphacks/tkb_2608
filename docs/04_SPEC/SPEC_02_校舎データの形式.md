@@ -190,6 +190,14 @@ https://<配信先>/?app#p=<埋め込みデータ>
 - 壁をまたぐ経路（ドアを通らずに教室から廊下へ抜ける等）は `validatePlan` では確かめない（壁の規則は `src/sim/walls.ts` にあり，`share/` からは使わないため）．エディタが経路を確かめる時に `src/sim/` の関数で見る
 - `encodePlan` は中身を確かめない．エディタは QR を出す前に `validatePlan` を呼ぶ
 - `?app` だけで `#p=` が無い時は，同梱のデモの校舎（`src/share/samples/`）で起動する（デモと開発で QR を使わずに試せるようにする）
+- フラグメントからの読み出しは `src/share/planHash.ts` の `loadPlanFromHash()` が行い，app/ は起動時に結果を `Session.plan`・`Session.planLoadError` に書いてから開始画面へ進む．フラグメントは `URLSearchParams` の形で読む（`#x=1&p=...` のように他の値と並べてもよい）
+
+  | フラグメント | `plan` | `planLoadError` |
+  | --- | --- | --- |
+  | `p` が無い（`#` だけ・空・他の値だけ） | デモの校舎 | `null` |
+  | `#p=<読めるデータ>` | その校舎 | `null` |
+  | `#p=<読めないデータ>` | `null` | `decodePlan` の失敗の `kind`・`reason` |
+  | `#p=`（中身が空） | `null` | `corrupted`（QR の読み取りが途中で切れた等とみなし，デモの校舎にはしない．違う校舎で訓練させないため） |
 
 ### 長さの上限 (Length Limit)
 
