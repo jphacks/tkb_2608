@@ -30,7 +30,9 @@ import {
   resizeGrid,
   selectTool,
   setDrillMode,
+  setSpreadSeconds,
   setStartFacing,
+  setTimeLimit,
   startBlank,
   undo,
 } from "./editorState";
@@ -45,6 +47,8 @@ import {
   roomColor,
 } from "./editorStyle";
 import { createSharePanel } from "./sharePanel";
+import { createSpreadPanel } from "./spreadPanel";
+import { countSpreadAt, createSpreadCache } from "./spreadPreview";
 
 /** 画面の隅に並べる校舎の誤りの件数（残りは件数だけ出す） */
 const SHOWN_ERRORS = 5;
@@ -125,6 +129,11 @@ const STYLE = `
 .editor__share-error { margin: 0; color: #ffb4a8; }
 .editor__share-reasons { margin: 4px 0 0; padding-left: 18px; font-size: 13px; }
 .editor__share-actions { justify-content: flex-end; margin-top: 12px; }
+.editor__spread-field { display: flex; align-items: center; gap: 6px; }
+.editor__spread-field span { width: 5em; }
+.editor__warning { color: #ffc56b; white-space: pre-line; }
+.editor__warning[hidden], .editor__spread-time[hidden] { display: none; }
+.editor__row input[type="range"] { flex: 1; min-width: 0; }
 `;
 
 /** エディタを立ち上げる（document.body に画面を置く）．最初はデモの校舎を開いた状態にする */
@@ -221,6 +230,17 @@ export function startEditor(initialPlan: SchoolPlan = DEMO_SCHOOL): void {
   });
   const modeHint = el("p", "editor__hint");
   side.append(modeRow, modeHint);
+
+  // 延焼の速さとプレビュー（E4）．通知の帯はこの後に作るので，呼ばれた時に引く
+  const spreadPanel = createSpreadPanel({
+    onSpreadSeconds: (key, seconds) => update(setSpreadSeconds(state, key, seconds)),
+    onTimeLimit: (seconds) => update(setTimeLimit(state, seconds)),
+    onPreviewChange: () => render(),
+    notify: (message) => showNotice(message),
+  });
+  side.appendChild(spreadPanel.element);
+  /** 延焼の計算結果（校舎が変わった時だけ計算し直す．E5 の経路の提案でも使う） */
+  const spreadOf = createSpreadCache();
 
   side.append(heading("生徒用の QR コード"));
   const shareButton = button("QR コードを出す");
@@ -393,6 +413,9 @@ export function startEditor(initialPlan: SchoolPlan = DEMO_SCHOOL): void {
     if (tool.kind === "classroom") renameInput.value = state.plan.rooms[tool.room].name;
   }
 
+  /** 最後に誤りを検査した校舎 */
+  let checkedPlan: SchoolPlan | null = null;
+
   function render(): void {
     const floor = editingFloor(state);
     // 大きさを変えてマウスの下のマスが外に出た時は消す
@@ -428,6 +451,14 @@ export function startEditor(initialPlan: SchoolPlan = DEMO_SCHOOL): void {
       canvas.height = Math.round(h * dpr);
     }
     layout = computeGridLayout(floor, w, h);
+    const previewSeconds = spreadPanel.previewSeconds();
+    const spread = previewSeconds === null ? null : spreadOf(state.plan);
+    spreadPanel.sync(
+      state.plan,
+      spread === null || previewSeconds === null
+        ? null
+        : countSpreadAt(spread, EDIT_FLOOR, previewSeconds),
+    );
     if (ctx !== null) {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       drawEditorGrid(
@@ -440,6 +471,9 @@ export function startEditor(initialPlan: SchoolPlan = DEMO_SCHOOL): void {
         hover,
         drillMarkers(state.plan.drill, EDIT_FLOOR, floor),
         state.plan.drill.startYaw,
+        spread === null || previewSeconds === null
+          ? null
+          : { spread, floorIndex: EDIT_FLOOR, atSeconds: previewSeconds },
       );
     }
 
@@ -451,11 +485,20 @@ export function startEditor(initialPlan: SchoolPlan = DEMO_SCHOOL): void {
       const roomName = kind === "classroom" ? state.plan.rooms[floor.roomOf[i]]?.name : undefined;
       hoverBox.hidden = false;
       const marks = markersAt(state, hover).map((m) => `・${MARKER_LABELS[m]}`);
-      hoverBox.textContent = `(${hover.x}, ${hover.z}) ${roomName ?? CELL_KIND_LABELS[kind]}${marks.join("")}`;
+      const ref = { floor: EDIT_FLOOR, x: hover.x, z: hover.z };
+      const arrival =
+        spread === null
+          ? ""
+          : `　${arrivalText("火", spread.fireAt(ref))}・${arrivalText("煙", spread.smokeAt(ref))}`;
+      hoverBox.textContent = `(${hover.x}, ${hover.z}) ${roomName ?? CELL_KIND_LABELS[kind]}${marks.join("")}${arrival}`;
     }
 
-    // 塗っている途中は検査しない（ドラッグ中に毎回検査すると重く，途中の誤りが出入りしてちらつくため）
-    if (state.stroke === null) renderErrors(validatePlan(state.plan));
+    // 塗っている途中は検査しない（ドラッグ中に毎回検査すると重く，途中の誤りが出入りしてちらつくため）．
+    // プレビューの再生で毎フレーム描き直すので，同じ校舎は検査し直さない
+    if (state.stroke === null && state.plan !== checkedPlan) {
+      checkedPlan = state.plan;
+      renderErrors(validatePlan(state.plan));
+    }
   }
 
   function renderErrors(errors: readonly string[]): void {
@@ -491,6 +534,11 @@ function markersAt(state: EditorState, cell: CellXZ): MarkerKind[] {
   if (at(start)) marks.push("start");
   if (assembly.some(at)) marks.push("assembly");
   return marks;
+}
+
+/** マスに火・煙が着く時刻の表示（着かなければ「着かない」） */
+function arrivalText(name: string, seconds: number): string {
+  return Number.isFinite(seconds) ? `${name} ${Math.round(seconds)} 秒` : `${name}は着かない`;
 }
 
 function isSameTool(a: EditorTool, b: EditorTool): boolean {

@@ -335,6 +335,40 @@ export function setDrillMode(state: EditorState, mode: DrillMode): EditorState {
   return commit(settled, withDrill(settled.plan, { ...drill, mode }));
 }
 
+/** 延焼の速さ（SPEC_02 の SpreadSettings）のうち，エディタで変える秒数の項目 */
+export type SpreadSecondsKey = "fireSecondsPerCell" | "smokeSecondsPerCell";
+
+/** 秒数として受け付けるか（0 より大きい有限の数．validatePlan と同じ条件） */
+export function isValidSeconds(value: number): boolean {
+  return Number.isFinite(value) && value > 0;
+}
+
+/**
+ * 火・煙が隣のマスへ移るまでの秒数（s）を変える（E4）．
+ * 0 以下・NaN・Infinity は受け付けず何もしない（誤った校舎を作らないため．入力欄の値は呼び出し側で元に戻す）．同じ値なら何もしない
+ */
+export function setSpreadSeconds(
+  state: EditorState,
+  key: SpreadSecondsKey,
+  seconds: number,
+): EditorState {
+  const settled = endStroke(state);
+  const drill = settled.plan.drill;
+  if (!isValidSeconds(seconds) || drill.spread[key] === seconds) return settled;
+  return commit(
+    settled,
+    withDrill(settled.plan, { ...drill, spread: { ...drill.spread, [key]: seconds } }),
+  );
+}
+
+/** 制限時間（s．非常ベルから）を変える．受け付けない値・同じ値の時は何もしない（setSpreadSeconds と同じ） */
+export function setTimeLimit(state: EditorState, seconds: number): EditorState {
+  const settled = endStroke(state);
+  const drill = settled.plan.drill;
+  if (!isValidSeconds(seconds) || drill.timeLimitSeconds === seconds) return settled;
+  return commit(settled, withDrill(settled.plan, { ...drill, timeLimitSeconds: seconds }));
+}
+
 /** 元に戻す（ドラッグの途中なら先に塗り終える）．戻す先が無ければ何もしない */
 export function undo(state: EditorState): EditorState {
   const settled = endStroke(state);
