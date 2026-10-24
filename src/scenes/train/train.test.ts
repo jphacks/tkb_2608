@@ -3,8 +3,6 @@
 
 import * as THREE from "three";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { AVAILABLE_SPACE_IDS, createSpace } from "../index";
-import { resolveSpaceId } from "../spaceParam";
 import { createTrainScene, isTrainSpace, type TrainSpace } from "./train";
 import {
   CAR,
@@ -280,34 +278,4 @@ describe("createTrainScene", () => {
   });
 });
 
-describe("空間の切り替え（?scene=）", () => {
-  it("room と train が実装済み", () => {
-    expect([...AVAILABLE_SPACE_IDS].sort()).toEqual(["room", "train"]);
-  });
-
-  it("?scene=train は train，?scene=room は room", () => {
-    expect(resolveSpaceId("?scene=train", AVAILABLE_SPACE_IDS)).toBe("train");
-    expect(resolveSpaceId("?scene=room", AVAILABLE_SPACE_IDS)).toBe("room");
-  });
-
-  it.each(["?scene=elevator", "?scene=bus", "?scene=", ""])(
-    "%j は room にフォールバック",
-    (search) => {
-      expect(resolveSpaceId(search, AVAILABLE_SPACE_IDS)).toBe("room");
-    },
-  );
-
-  it("createSpace で train と room を作れる（部屋は壊れていない）", () => {
-    const train = createSpace("train", { maxAnisotropy: 1 });
-    expect(train.id).toBe("train");
-    train.dispose();
-    const room = createSpace("room", { maxAnisotropy: 1 });
-    expect(room.id).toBe("room");
-    expect(room.root.children.length).toBeGreaterThan(0);
-    room.dispose();
-  });
-
-  it("未実装の空間（elevator）は createSpace で例外", () => {
-    expect(() => createSpace("elevator", { maxAnisotropy: 1 })).toThrow();
-  });
-});
+// 空間の切り替え（?scene=）のテストは src/scenes/spaceSwitch.test.ts
