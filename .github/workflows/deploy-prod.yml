@@ -1,0 +1,118 @@
+# 本番への昇格デプロイ
+#
+# `v*` タグの push で Cloudflare Pages の本番（`<プロジェクト名>.pages.dev`）に配信する（通常の main マージは staging 止まり）．
+# staging で確認した main 上のコミットに annotated タグを打って昇格させる（手順は docs/02_ENV/ENV_04「デプロイ」）．
+#
+# 設計方針:
+#   - 本番の安全装置を先に通す: タグが annotated タグであること・main 上のコミットを指すことを検証し，満たさなければ配信しない
+#   - CI（ci.yml）と同じ検証（lint・型チェック・テスト・ビルド）を配信前に再実行する
+#   - Secrets が未登録なら失敗させる（本番の配信が黙って飛ばされないようにする）
+name: Deploy (prod)
+
+on:
+  push:
+    tags:
+      - "v*"
+
+# 最小権限．読み取りのみ．
+permissions:
+  contents: read
+
+# 中途半端な状態を避けるため，走行中の実行はキャンセルせず直列化する．
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+env:
+  # ci.yml・deploy-staging.yml と揃える．
+  NODE_VERSION: "24"
+  # Cloudflare Pages のプロジェクト名．deploy-staging.yml と揃える．
+  PAGES_PROJECT: tkb2608
+  # Cloudflare Pages の本番ブランチ（プロジェクト作成時に production branch として指定した名前．ENV_03）．
+  PAGES_BRANCH: main
+
+jobs:
+  verify-tag:
+    name: Verify release tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # タグと main の履歴を比べるため全履歴を取る．
+          fetch-depth: 0
+
+      - name: Verify tag is annotated and on main
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          git fetch --force origin "refs/tags/${TAG}:refs/tags/${TAG}"
+
+          # 1. annotated タグのみ受理する（軽量タグは拒否）．
+          if [ "$(git cat-file -t "refs/tags/${TAG}")" != "tag" ]; then
+            echo "::error::タグ ${TAG} は軽量タグです．git tag -d ${TAG} && git push --delete origin ${TAG} で削除し，git tag -a ${TAG} -m \"<リリース内容>\" で作り直してください．"
+            exit 1
+          fi
+
+          # 2. タグが main 上のコミットを指していること．
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          tagged_sha=$(git rev-list -n 1 "refs/tags/${TAG}")
+          if ! git merge-base --is-ancestor "$tagged_sha" refs/remotes/origin/main; then
+            echo "::error::タグ ${TAG} が指すコミット ${tagged_sha} は main に含まれていません．main にマージ済みのコミットにタグを打ち直してください．"
+            exit 1
+          fi
+
+  deploy:
+    name: Validate and deploy to production
+    needs: verify-tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check secrets
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error::CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID が未登録のため本番に配信できない（docs/02_ENV/ENV_03）"
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Deploy to Cloudflare Pages (production)
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: "4.152.0"
+          command: >-
+            pages deploy dist
+            --project-name=${{ env.PAGES_PROJECT }}
+            --branch=${{ env.PAGES_BRANCH }}
+            --commit-hash=${{ github.sha }}
+            --commit-dirty=true

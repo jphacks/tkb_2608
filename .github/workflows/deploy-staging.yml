@@ -1,0 +1,147 @@
+# staging への自動デプロイ
+#
+# main への push（PR のマージを含む）で Cloudflare Pages の staging（`staging.<プロジェクト名>.pages.dev`）に配信する．
+# 本番は deploy-prod.yml（v* タグ）でのみ配信する．手順は docs/02_ENV/ENV_04「デプロイ」．
+#
+# 設計方針:
+#   - 品質ゲートは PR 時の ci.yml で通っている前提とし，ここではビルド（型チェックを含む）だけ行う
+#   - Cloudflare Pages の無料プランのビルド回数（月 500 回．アカウント全体で本番と共有）を節約するため，次の 3 つで配信回数を抑える
+#     1. 配信物に影響しない変更（docs/・.claude/・*.md 等）だけの push では配信しない
+#     2. 配信の前に DEBOUNCE_SECONDS だけ待ち，その間に次のマージが来たら前の待ちを取り消して待ち直す（wait ジョブ．細かいマージをまとめる）
+#     3. 配信中に続けてマージされたら，待ちは最新の 1 件だけに絞る（deploy ジョブの concurrency の標準の動き）
+#   - Secrets（CLOUDFLARE_API_TOKEN・CLOUDFLARE_ACCOUNT_ID）が未登録の間は，警告を出して配信を飛ばす（ENV_03 で登録する）
+name: Deploy (staging)
+
+on:
+  push:
+    branches:
+      - main
+
+# 最小権限．チェックアウトと変更ファイルの参照しかしない．
+permissions:
+  contents: read
+
+env:
+  # ci.yml・deploy-prod.yml と揃える．
+  NODE_VERSION: "24"
+  # Cloudflare Pages のプロジェクト名（ENV_03 で作成する）．deploy-prod.yml と揃える．
+  PAGES_PROJECT: tkb2608
+  # staging の配信先（`staging.<プロジェクト名>.pages.dev` になる）．
+  PAGES_BRANCH: staging
+  # 配信前に待つ秒数（この間に次のマージが来たら待ち直す）．staging への反映はこの分だけ遅れる．
+  DEBOUNCE_SECONDS: "180"
+
+jobs:
+  # push で変更されたファイルから，配信が必要かを判定する．
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      deploy: ${{ steps.filter.outputs.deploy }}
+    steps:
+      - name: Filter changed paths
+        id: filter
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          set -uo pipefail
+
+          # before が取れない場合（ブランチ新規作成等）と，compare API が失敗した場合は安全側に倒して配信する．
+          files=""
+          if [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            files=$(gh api "repos/${{ github.repository }}/compare/${BEFORE}...${AFTER}" \
+              --paginate --jq '.files[].filename') || files=""
+          fi
+
+          echo "--- changed files ---"
+          echo "$files"
+
+          run_deploy=false
+          if [ -z "$files" ]; then
+            run_deploy=true
+          fi
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            case "$f" in
+              # 配信物に影響しない変更
+              docs/*|.claude/*|*.md|.devcontainer/*|.github/dependabot.yml|.github/CODEOWNERS) ;;
+              *) run_deploy=true ;;
+            esac
+          done <<< "$files"
+
+          echo "deploy=${run_deploy}" >> "$GITHUB_OUTPUT"
+          echo "deploy=${run_deploy}"
+
+  # 細かいマージをまとめるための待ち．新しい実行が来たら，待っている古い実行は取り消される
+  # （取り消された実行の deploy ジョブは動かない）．docs だけの push はここに来ないので，待ちを取り消さない．
+  wait:
+    name: Wait for further merges
+    needs: changes
+    if: needs.changes.outputs.deploy == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: deploy-staging-wait
+      cancel-in-progress: true
+    steps:
+      - name: Debounce
+        run: sleep "$DEBOUNCE_SECONDS"
+
+  deploy:
+    name: Deploy to staging
+    needs: wait
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # 配信は途中でキャンセルせず直列化する．待ちの実行は最新の 1 件だけが残る．
+    concurrency:
+      group: deploy-staging
+      cancel-in-progress: false
+    steps:
+      - name: Check secrets
+        id: secrets
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::warning::CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID が未登録のため staging への配信を飛ばした（docs/02_ENV/ENV_03）"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout
+        if: steps.secrets.outputs.ready == 'true'
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        if: steps.secrets.outputs.ready == 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        if: steps.secrets.outputs.ready == 'true'
+        run: npm ci
+
+      - name: Build
+        if: steps.secrets.outputs.ready == 'true'
+        run: npm run build
+
+      - name: Deploy to Cloudflare Pages (staging)
+        if: steps.secrets.outputs.ready == 'true'
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: "4.152.0"
+          command: >-
+            pages deploy dist
+            --project-name=${{ env.PAGES_PROJECT }}
+            --branch=${{ env.PAGES_BRANCH }}
+            --commit-hash=${{ github.sha }}
+            --commit-dirty=true

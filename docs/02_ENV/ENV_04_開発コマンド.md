@@ -38,6 +38,30 @@ PR を作る前に，以下がすべて通ることを確認する．
 - Biome の対象は `src/`・`scripts/`・`vite.config.ts` と設定ファイル（`biome.json`・`tsconfig.json`・`package.json`）だけに絞っている（`biome.json` の `files.includes`）．Biome は Markdown も整形できるため，対象を広げると `docs/`・`.claude/` のフロントマターや表が書き換えられてルールが壊れる（実際に起きた）．対象を広げない
 - ビルド時の「500 kB を超えるチャンクがある」という警告は three.js 等の大きさによるもので，現時点では無視してよい（必要になったら分割する）
 
-## 未確定 (To Be Decided)
+## デプロイ (Deployment)
 
-- デプロイ（開発用・本番の URL と配信方法）．[ENV_03](ENV_03_管理者用環境構築手順.md)「GitHub Pages の有効化」を前提に，管理者が決めて追記する
+Cloudflare Pages に GitHub Actions が配信する（準備は [ENV_03](ENV_03_管理者用環境構築手順.md)「Cloudflare Pages の準備」）．手元からデプロイのコマンドは打たない．
+
+| 環境 | URL | 配信されるタイミング |
+| --- | --- | --- |
+| staging | `https://staging.tkb2608.pages.dev` | `main` へのマージで自動（`deploy-staging.yml`）．無料枠の配信回数を節約するため，マージから 3 分待って続くマージをまとめてから配信する（反映まで 5 分ほど）．docs 等だけの変更では配信しない |
+| 本番 | `https://tkb2608.pages.dev` | `main` 上のコミットに `v*` の annotated タグを push したとき（`deploy-prod.yml`） |
+
+PR では CI（`ci.yml`: lint・型チェック・テスト・ビルド）だけが動く．PR ごとのプレビューは今は作っていない（必要になったら追加する）．
+
+### 本番に出す手順
+
+1. staging（`https://staging.tkb2608.pages.dev`）を iPhone で開き，出したい版が動くことを確かめる
+2. `main` を最新にして，staging で確かめたコミットに annotated タグを打って push する
+
+   ```bash
+   git switch main && git pull
+   git tag -a v0.1.0 -m "<リリース内容>"   # -a を付ける（軽量タグは deploy-prod.yml が拒否する）
+   git push origin v0.1.0
+   ```
+
+3. Actions の「Deploy (prod)」が成功したら，`https://tkb2608.pages.dev` を iPhone で開いて確かめる
+
+- バージョンは `v0.1.0` から始め，出すたびに上げる（同じタグは使い回さない）
+- 発表・デモの前に本番を出し，以降は確かめた版だけを出す（`main` に入っただけの変更は本番に出ない）
+- タグを間違えた場合は `git push --delete origin <タグ>` と `git tag -d <タグ>` で消してから打ち直す
