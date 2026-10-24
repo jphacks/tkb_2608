@@ -1,13 +1,20 @@
 // 起動の経路を URL パラメータから決める（DOM に依存しない純粋な関数）
 // - 既定: 空間のビューア（?scene=room 等．PC 確認用．従来どおり）
-// - ?app: 体験の流れ（開始画面 → ロビー → シナリオ）
+// - ?app: 体験の流れ（開始画面 → ロビー → シナリオ → 結果）
+// - ?debrief: 結果画面だけを，デモの校舎と手で作った記録で表示する（開発用．?app が優先）
 
-export type LaunchMode = "viewer" | "app";
+export type LaunchMode = "viewer" | "app" | "debrief";
 
 export function resolveLaunchMode(search: string): LaunchMode {
-  const value = new URLSearchParams(search).get("app");
-  if (value === null || value === "0" || value.toLowerCase() === "false") return "viewer";
-  return "app";
+  const params = new URLSearchParams(search);
+  if (isOn(params.get("app"))) return "app";
+  if (isOn(params.get("debrief"))) return "debrief";
+  return "viewer";
+}
+
+/** URL パラメータが付いていて，0・false（大文字小文字を問わない）でないか */
+function isOn(value: string | null): boolean {
+  return value !== null && value !== "0" && value.toLowerCase() !== "false";
 }
 
 /**

@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>scenes/school 床の正解経路の矢印（dev）</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #101820;
+        color: #ddd;
+        font-family: system-ui, sans-serif;
+      }
+      canvas {
+        display: block;
+      }
+      #info {
+        position: fixed;
+        top: 8px;
+        left: 8px;
+        padding: 8px 10px;
+        background: rgba(0, 0, 0, 0.6);
+        font-size: 13px;
+        line-height: 1.6;
+        white-space: pre-line;
+        pointer-events: none;
+      }
+      #links {
+        position: fixed;
+        bottom: 8px;
+        left: 8px;
+        font-size: 13px;
+      }
+      a {
+        color: #9cf;
+        margin-right: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="info"></div>
+    <div id="links">
+      <a href="?mode=learn">学習モード</a>
+      <a href="?mode=test">テストモード</a>
+      <a href="?mode=learn&amp;route=broken">異常な経路</a>
+    </div>
+    <script type="module" src="./routeArrowsPage.ts"></script>
+  </body>
+</html>

@@ -2,6 +2,7 @@
 // three.js は型だけを import する（実行時には依存しない）．
 // input/・scenario/ はこのファイルを import しない（types.ts・events.ts 等だけを使う）
 import type { Object3D, Scene as ThreeScene } from "three";
+import type { DrillEvaluation, DrillTrack } from "./drill";
 import type { EventBus } from "./event-bus";
 import type { AppEvent } from "./events";
 import type { ScenarioResult } from "./result";
@@ -33,6 +34,11 @@ export interface Session {
   plan: SchoolPlan | null;
   /** app/ が書く（校舎データを読み込めなかった理由．開始画面（lobby/）が読んで案内を出す）．読み込めた時と URL に無い時は null */
   planLoadError: PlanLoadError | null;
+  /**
+   * app/ が書く（避難の記録と，sim/ の evaluateDrill() の評価．結果画面（debrief/）が読む）．
+   * 避難を一度も終えていない時は null
+   */
+  drill: { readonly track: DrillTrack; readonly evaluation: DrillEvaluation } | null;
 }
 
 export interface SceneContext {

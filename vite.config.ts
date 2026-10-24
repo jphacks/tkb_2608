@@ -11,6 +11,9 @@ export default defineConfig(({ mode }) => ({
     format: "es",
   },
   server: {
+    // 既定の "localhost" は IPv6（[::1]）だけで待ち受けることがあり，127.0.0.1 につなぐ
+    // Dev Container のポート転送・cloudflared から開けなくなるため，IPv4 のループバックに固定する
+    host: "127.0.0.1",
     // スマホの実機確認は cloudflared の Quick Tunnel 経由で開く（docs/02_ENV/ENV_02）
     allowedHosts: [".trycloudflare.com"],
     // 動きの記録用（npm run dev:record）は WebSocket を切り，ファイルの変更で記録中のページが再読み込みされないようにする

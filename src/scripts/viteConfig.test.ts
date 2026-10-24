@@ -21,8 +21,19 @@ describe("vite.config.ts", () => {
     },
   );
 
+  it.each(["development", "record", "production", "staging"])(
+    "mode %s でも開発サーバーは IPv4 のループバック（127.0.0.1）で待ち受ける（Issue #99）",
+    (mode) => {
+      expect(resolve(mode).server?.host).toBe("127.0.0.1");
+    },
+  );
+
+  it("vite build（command: build）でも server.host は 127.0.0.1 のまま", () => {
+    expect(resolve("production", "build").server?.host).toBe("127.0.0.1");
+  });
+
   it("どの mode でもトンネルのホストを許可し，テストの対象は src/**/*.test.ts のまま", () => {
-    for (const mode of ["record", "development"]) {
+    for (const mode of ["record", "development", "production", "staging"]) {
       const c = resolve(mode) as UserConfig & { test?: { include?: string[] } };
       expect(c.server?.allowedHosts).toEqual([".trycloudflare.com"]);
       expect(c.test?.include).toEqual(["src/**/*.test.ts"]);

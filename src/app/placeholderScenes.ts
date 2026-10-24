@@ -2,10 +2,13 @@
 
 import type { Scene } from "../core/scene";
 import { formatPlayerInput } from "../input/inputParam";
+import { DEMO_SCHOOL } from "../share/samples/demoSchool";
+import { createSampleDrill } from "./sampleDrill";
 
 /**
  * シナリオの画面の仮表示．到達したことと，受け取った CalibrationProfile と，
- * 毎フレームの PlayerInput（頭の向き・姿勢・足踏み．入力が体験の流れに届いているかの確認用）を表示する
+ * 毎フレームの PlayerInput（頭の向き・姿勢・足踏み．入力が体験の流れに届いているかの確認用）を表示する．
+ * 仮の記録（sampleDrill.ts）で結果画面へ進むボタンも置く
  */
 export function createScenarioPlaceholder(): Scene {
   let root: HTMLDivElement | null = null;
@@ -27,14 +30,24 @@ export function createScenarioPlaceholder(): Scene {
       inputView.style.cssText = "margin:8px 0;white-space:pre-wrap;";
       const again = document.createElement("button");
       again.type = "button";
-      again.textContent = "もう一度（ロビーへ．結果画面の代わりの確認用）";
+      again.textContent = "同じ訓練をもう一度（ロビーへ．結果画面の代わりの確認用）";
       again.addEventListener("click", () => ctx.goTo("lobby"));
       const home = document.createElement("button");
       home.type = "button";
       home.textContent = "ホームへ（結果画面の代わりの確認用）";
       home.style.marginLeft = "8px";
       home.addEventListener("click", () => ctx.goTo("home"));
-      root.append(title, pre, inputView, again, home);
+      const debrief = document.createElement("button");
+      debrief.type = "button";
+      debrief.textContent = "結果画面へ（仮の記録．確認用）";
+      debrief.style.marginLeft = "8px";
+      debrief.addEventListener("click", () => {
+        // 校舎の読み込み（#p=）を app/ に足すまでは Session.plan が空のため，デモの校舎を使う（SPEC_01「起動の切り替え」）
+        ctx.session.plan ??= DEMO_SCHOOL;
+        ctx.session.drill = createSampleDrill(ctx.session.plan);
+        ctx.goTo("debrief");
+      });
+      root.append(title, pre, inputView, again, home, debrief);
       ctx.stage.overlay.appendChild(root);
     },
     update(frame) {
