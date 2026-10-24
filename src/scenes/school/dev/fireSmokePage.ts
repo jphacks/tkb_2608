@@ -2,6 +2,7 @@
 // デモの校舎のマス目を簡易な床（種類ごとの色の板）・柱のマスの箱・天井の板で並べ，computeSpread() の結果で createFireSmoke() の火と煙を描く．
 // 時刻はスライダーと再生で動かす．一人称の視点（立つ 1.6 m／しゃがむ 0.9 m）と見下ろす視点を切り替えられる．
 // ?plan=large で 60 × 34 マス（約 2,000 マス）の廊下だけの校舎にし，更新にかかる時間を確かめる．
+// 同じ場面を見比べるため，?t=<秒>・?at=<x>,<z>（m）・?yaw=<度>・?pitch=<度>・?crouch=1 で始める時刻と視点を決められる．
 // 校舎の 3D（#92）とは独立に確かめるため，dev ページの中で three.js を直接使う
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
@@ -11,7 +12,12 @@ import { createFloorFromRows } from "../../../share/samples/floorFromRows";
 import { cellCenter, kindAt, worldToCell } from "../../../sim/grid";
 import { computeSpread } from "../../../sim/spread";
 import { createFireSmoke } from "../fireSmoke";
-import { FIRE_PARTICLES, SMOKE_CEILING_HEIGHT, SMOKE_LAYER_COUNT } from "../fireSmokeLayout";
+import {
+  FIRE_PARTICLES,
+  isEmberParticle,
+  SMOKE_CEILING_HEIGHT,
+  SMOKE_VOLUME,
+} from "../fireSmokeLayout";
 
 /** マスの種類ごとの板の色（routeArrowsPage.ts と同じ） */
 const CELL_COLORS: Record<CellKind, number> = {
@@ -154,8 +160,24 @@ controls.update();
 
 const fpCamera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.05, 300);
 fpCamera.rotation.order = "YXZ";
+/** URL パラメータの数（無い・数でない時は fallback） */
+function numberParam(name: string, fallback: number): number {
+  const value = Number(params.get(name) ?? Number.NaN);
+  return Number.isFinite(value) ? value : fallback;
+}
 const start = cellCenter(plan.cellSize, plan.drill.start);
-const player = { x: start.x, z: start.z, eye: EYE_STANDING, yaw: 0, pitch: 0, crouching: false };
+const at = (params.get("at") ?? "").split(",").map(Number);
+const startCrouching = params.get("crouch") === "1";
+const player = {
+  x: Number.isFinite(at[0]) && at.length === 2 ? at[0] : start.x,
+  z: Number.isFinite(at[1]) && at.length === 2 ? at[1] : start.z,
+  eye: startCrouching ? EYE_CROUCHING : EYE_STANDING,
+  yaw: THREE.MathUtils.degToRad(numberParam("yaw", 0)),
+  pitch: THREE.MathUtils.degToRad(numberParam("pitch", 0)),
+  crouching: startCrouching,
+};
+let emberCount = 0;
+for (let i = 0; i < FIRE_PARTICLES.count; i++) if (isEmberParticle(i)) emberCount++;
 
 let firstPerson = params.get("view") !== "top";
 controls.enabled = !firstPerson;
@@ -229,7 +251,8 @@ const crouchButton = document.getElementById("crouch") as HTMLButtonElement;
 const info = document.getElementById("info") as HTMLDivElement;
 timeSlider.max = String(maxSeconds);
 
-let seconds = 0;
+let seconds = Math.max(0, Math.min(maxSeconds, numberParam("t", 0)));
+timeSlider.value = String(seconds);
 let playing = false;
 function togglePlay(): void {
   playing = !playing;
@@ -246,6 +269,7 @@ function toggleCrouch(): void {
 playButton.addEventListener("click", togglePlay);
 viewButton.addEventListener("click", toggleView);
 crouchButton.addEventListener("click", toggleCrouch);
+if (startCrouching) crouchButton.textContent = "立つ（C）";
 timeSlider.addEventListener("input", () => {
   seconds = Number(timeSlider.value);
 });
@@ -267,6 +291,8 @@ let fps = 0;
 let updateAvg = 0;
 let updatePeak = 0;
 let last = performance.now();
+/** 前のフレームの描画の回数（renderer.info は render のたびに数え直す） */
+let drawCalls = 0;
 
 renderer.setAnimationLoop(() => {
   const now = performance.now();
@@ -305,8 +331,8 @@ renderer.setAnimationLoop(() => {
   timeLabel.textContent = `${seconds.toFixed(1)} / ${maxSeconds} 秒`;
   info.textContent = [
     `${plan.name}（${floor.width} × ${floor.depth} マス．火の対象 ${fireSmoke.cells.fire.length}・煙の対象 ${fireSmoke.cells.smoke.length}）`,
-    `炎の粒: ${FIRE_PARTICLES.count} 個・煙の層: 階ごとに ${SMOKE_LAYER_COUNT} 枚（描画はそれぞれ 1 回）`,
-    `fps: ${fps.toFixed(0)}・update: 平均 ${updateAvg.toFixed(3)} ms／最大 ${updatePeak.toFixed(3)} ms`,
+    `炎の粒: ${FIRE_PARTICLES.count} 個（うち火の粉 ${emberCount}）・煙: 視線に垂直な板 ${SMOKE_VOLUME.sliceCount} 枚（描画はそれぞれ 1 回）`,
+    `fps: ${fps.toFixed(0)}・update: 平均 ${updateAvg.toFixed(3)} ms／最大 ${updatePeak.toFixed(3)} ms・描画: ${drawCalls} 回（簡易な校舎の 3 回を含む）`,
     `時刻: ${seconds.toFixed(1)} 秒・燃えているマス: ${s.burningCells}・煙のあるマス: ${s.smokyCells}`,
     firstPerson
       ? `目の高さ: ${player.eye.toFixed(2)} m（${player.crouching ? "しゃがむ" : "立つ"}）・目の位置の煙: ${s.eyeSmoke.toFixed(2)}・フォグ: ${s.fogDensity.toFixed(3)} /m`
@@ -317,6 +343,7 @@ renderer.setAnimationLoop(() => {
   ].join("\n");
 
   renderer.render(scene, firstPerson ? fpCamera : topCamera);
+  drawCalls = renderer.info.render.calls;
 });
 
 // HMR で読み直す時に作った物を解放する（dispose() の確認も兼ねる）

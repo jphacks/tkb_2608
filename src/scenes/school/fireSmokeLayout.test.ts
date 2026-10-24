@@ -18,6 +18,7 @@ import {
   createCellAtlas,
   createFireParticleSeeds,
   eyeSmokeDensity,
+  FIRE_EMBERS,
   FIRE_GLOW_SPREAD,
   FIRE_PARTICLES,
   type FireSmokeCell,
@@ -25,17 +26,25 @@ import {
   floorBaseY,
   HIDDEN_IGNITION_SECONDS,
   hash01,
+  isEmberParticle,
   listFireSmokeCells,
   type ParticleSpawn,
   particleCycle,
   particleCycleStart,
   SMOKE_CEILING_HEIGHT,
+  SMOKE_LOOK,
+  SMOKE_SHEET,
+  SMOKE_VOLUME,
+  type SmokeSliceRange,
   smokeAtHeight,
+  smokeBounds,
   smokeDensity,
   smokeFogDensity,
   smokeLayerBottom,
-  smokeLayerHeight,
-  smokeLayerSpacing,
+  smokeShadeAtHeight,
+  smokeSliceDepth,
+  smokeSliceRange,
+  smokeSlices,
   sortByIgnition,
   writeCellTexels,
 } from "./fireSmokeLayout";
@@ -97,7 +106,16 @@ function fireCell(seconds: number, overrides: Partial<FireSmokeCell> = {}): Fire
 }
 
 function newSpawn(): ParticleSpawn {
-  return { active: true, x: Number.NaN, y: Number.NaN, z: Number.NaN, ignition: 0, boost: 0 };
+  return {
+    active: true,
+    x: Number.NaN,
+    y: Number.NaN,
+    z: Number.NaN,
+    centerX: Number.NaN,
+    centerZ: Number.NaN,
+    ignition: 0,
+    boost: 0,
+  };
 }
 
 describe("fireIntensity", () => {
@@ -283,37 +301,120 @@ describe("smokeAtHeight", () => {
   });
 });
 
-describe("smokeLayerHeight / smokeLayerSpacing", () => {
-  it("4 枚の層は 2.90・2.38・1.87・1.35 m（天井の側から）", () => {
-    const heights = [0, 1, 2, 3].map((i) => smokeLayerHeight(i));
-    expect(heights[0]).toBeCloseTo(2.9, 10);
-    expect(heights[1]).toBeCloseTo(2.38, 2);
-    expect(heights[2]).toBeCloseTo(1.87, 2);
-    expect(heights[3]).toBeCloseTo(1.35, 10);
+describe("SMOKE_VOLUME", () => {
+  it("煙を描く高さは，しゃがんだ目より上・最も濃い煙の下の端より下から天井まで（しゃがむと前が晴れる）", () => {
+    expect(SMOKE_VOLUME.bottom).toBeGreaterThan(CROUCHING_EYE);
+    expect(SMOKE_VOLUME.bottom).toBeLessThan(smokeLayerBottom(1));
+    expect(SMOKE_VOLUME.top).toBe(SMOKE_CEILING_HEIGHT);
+  });
+});
+
+describe("smokeSlices", () => {
+  it("0〜1 を等分した区間を奥から手前の順に並べ，板は区間の真ん中", () => {
+    expect(smokeSlices(4)).toEqual([
+      { start: 0.75, center: 0.875, end: 1 },
+      { start: 0.5, center: 0.625, end: 0.75 },
+      { start: 0.25, center: 0.375, end: 0.5 },
+      { start: 0, center: 0.125, end: 0.25 },
+    ]);
   });
 
-  it("層は天井（3 m）より下・最も濃い煙の下の端（1.2 m）より上にあり，上から順に低くなる", () => {
-    const heights = [0, 1, 2, 3].map((i) => smokeLayerHeight(i));
-    for (const h of heights) {
-      expect(h).toBeLessThan(SMOKE_CEILING_HEIGHT);
-      expect(h).toBeGreaterThan(smokeLayerBottom(1));
-    }
-    for (let i = 1; i < heights.length; i++) expect(heights[i]).toBeLessThan(heights[i - 1]);
+  it("既定の枚数は SMOKE_VOLUME.sliceCount で，区間はすき間なくつながる", () => {
+    const slices = smokeSlices();
+    expect(slices).toHaveLength(SMOKE_VOLUME.sliceCount);
+    expect(slices[0].end).toBe(1);
+    expect(slices[slices.length - 1].start).toBe(0);
+    for (let i = 1; i < slices.length; i++) expect(slices[i].end).toBe(slices[i - 1].start);
   });
 
-  it("層は立った目より上・しゃがんだ目より上にある（しゃがむと層を下から見上げる）", () => {
-    expect(smokeLayerHeight(3)).toBeGreaterThan(CROUCHING_EYE);
-    expect(smokeLayerHeight(3)).toBeLessThan(STANDING_EYE);
+  it.each([0, -3, Number.NaN])("枚数 %s は 1 枚として扱う", (count) => {
+    expect(smokeSlices(count)).toEqual([{ start: 0, center: 0.5, end: 1 }]);
+  });
+});
+
+describe("smokeSliceDepth", () => {
+  const range = { near: 0.5, far: 32 };
+
+  it("0 で near，1 で far，その間は等比（手前ほど細かい）", () => {
+    expect(smokeSliceDepth(0, range)).toBeCloseTo(0.5, 10);
+    expect(smokeSliceDepth(1, range)).toBeCloseTo(32, 10);
+    expect(smokeSliceDepth(0.5, range)).toBeCloseTo(4, 10);
+    expect(smokeSliceDepth(0.25, range) - smokeSliceDepth(0, range)).toBeLessThan(
+      smokeSliceDepth(1, range) - smokeSliceDepth(0.75, range),
+    );
+  });
+});
+
+describe("smokeBounds", () => {
+  it("全ての階の幅・奥行きの最大と，最も低い階の煙の下の端〜最も高い階の天井", () => {
+    const plan = makePlan([["hhh", "hhh"], ["hhhhh"]]);
+    expect(smokeBounds(plan)).toEqual({
+      minX: 0,
+      minY: SMOKE_VOLUME.bottom,
+      minZ: 0,
+      maxX: 5,
+      maxY: 3.5 + SMOKE_CEILING_HEIGHT,
+      maxZ: 2,
+    });
   });
 
-  it("層の間の高さは隣り合う層の差と同じ", () => {
-    expect(smokeLayerSpacing()).toBeCloseTo(smokeLayerHeight(0) - smokeLayerHeight(1), 10);
-    expect(smokeLayerSpacing()).toBeCloseTo((2.9 - 1.35) / 3, 10);
+  it("階が無い校舎は大きさ 0", () => {
+    expect(smokeBounds({ cellSize: 1, floors: [] })).toEqual({
+      minX: 0,
+      minY: 0,
+      minZ: 0,
+      maxX: 0,
+      maxY: 0,
+      maxZ: 0,
+    });
+  });
+});
+
+describe("smokeSliceRange", () => {
+  const bounds = { minX: 0, minY: 1, minZ: 0, maxX: 100, maxY: 3, maxZ: 10 };
+  const out = (): SmokeSliceRange => ({ near: 0, far: 0 });
+
+  it("目が校舎の中なら，最も手前から reach 先まで", () => {
+    const r = smokeSliceRange(bounds, 50, 2, 5, out());
+    expect(r.near).toBe(SMOKE_VOLUME.nearest);
+    expect(r.far).toBeCloseTo(SMOKE_VOLUME.nearest + SMOKE_VOLUME.reach, 10);
   });
 
-  it("層が 1 枚なら天井の少し下（2.9 m）", () => {
-    expect(smokeLayerHeight(0, 1)).toBeCloseTo(2.9, 10);
-    expect(smokeLayerSpacing(1)).toBeGreaterThan(0);
+  it("目が校舎の中でも，最も遠い角より奥には置かない", () => {
+    const small = { minX: 0, minY: 1, minZ: 0, maxX: 4, maxY: 3, maxZ: 3 };
+    const r = smokeSliceRange(small, 0, 1, 0, out());
+    expect(r.near).toBe(SMOKE_VOLUME.nearest);
+    expect(r.far).toBeCloseTo(Math.hypot(4, 2, 3), 10);
+  });
+
+  it("目が校舎の外（真上 20 m）なら，校舎の最も近い所から reach 先まで", () => {
+    const r = smokeSliceRange(bounds, 50, 23, 5, out());
+    expect(r.near).toBeCloseTo(20, 10);
+    expect(r.far).toBeCloseTo(20 + SMOKE_VOLUME.reach, 10);
+  });
+
+  it("目が校舎の外でも，最も遠い角より奥には置かない", () => {
+    const small = { minX: 0, minY: 1, minZ: 0, maxX: 20, maxY: 3, maxZ: 10 };
+    const r = smokeSliceRange(small, 10, 6, 5, out());
+    expect(r.near).toBeCloseTo(3, 10);
+    expect(r.far).toBeCloseTo(Math.hypot(10, 5, 5), 10);
+  });
+
+  it("奥は手前の 2 倍以上（区間が潰れない）", () => {
+    const tiny = { minX: 0, minY: 0, minZ: 0, maxX: 0.1, maxY: 0.1, maxZ: 0.1 };
+    const r = smokeSliceRange(tiny, 0, 0, 0, out());
+    expect(r.far).toBeGreaterThanOrEqual(r.near * 2);
+  });
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY])("目の位置が %s なら既定の範囲", (v) => {
+    const r = smokeSliceRange(bounds, v, 2, 5, out());
+    expect(r.near).toBe(SMOKE_VOLUME.nearest);
+    expect(r.far).toBe(SMOKE_VOLUME.nearest + SMOKE_VOLUME.reach);
+  });
+
+  it("渡した out に書いて返す（新しい値を作らない）", () => {
+    const o = out();
+    expect(smokeSliceRange(bounds, 50, 2, 5, o)).toBe(o);
   });
 });
 
@@ -984,6 +1085,19 @@ describe("chooseParticleSpawn", () => {
     }
   });
 
+  it("割り当てたマスの中心を centerX・centerZ に書く（炎の先を細くするため）", () => {
+    const sorted = burning(5, 2, 0);
+    const out = newSpawn();
+    for (let i = 0; i < 50; i++) {
+      chooseParticleSpawn(sorted, i, 2, seed, 2, null, out);
+      const cell = sorted.find((c) => c.centerX === out.centerX && c.centerZ === out.centerZ);
+      expect(cell).toBeDefined();
+      if (cell === undefined) continue;
+      expect(Math.abs(out.x - cell.centerX)).toBeLessThanOrEqual(0.625 * 2);
+      expect(Math.abs(out.z - cell.centerZ)).toBeLessThanOrEqual(0.625 * 2);
+    }
+  });
+
   it("燃えている全てのマスに粒が割り当てられる", () => {
     // マスの中心を 10 m ずつ離し，粒の位置からどのマスか分かるようにする
     const sorted = sortByIgnition(
@@ -1046,5 +1160,72 @@ describe("chooseParticleSpawn", () => {
     expect(out.active).toBe(true);
     expect(Number.isFinite(out.ignition)).toBe(true);
     expect(out.ignition).toBeLessThanOrEqual(0);
+  });
+});
+
+describe("smokeShadeAtHeight", () => {
+  const heights = [0, 0.5, 0.9, 1.2, 1.35, 1.6, 2, 2.5, 2.9, 3, 3.2];
+
+  it.each([0, 0.05, 0.3, 0.7, 1])("濃さ %d では，どの高さでも smokeAtHeight 以上で 1 以下", (d) => {
+    for (const h of heights) {
+      expect(smokeShadeAtHeight(d, h)).toBeGreaterThanOrEqual(smokeAtHeight(d, h));
+      expect(smokeShadeAtHeight(d, h)).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it("濃さ 0・NaN，高さ NaN は 0", () => {
+    expect(smokeShadeAtHeight(0, 2.9)).toBe(0);
+    expect(smokeShadeAtHeight(Number.NaN, 2.9)).toBe(0);
+    expect(smokeShadeAtHeight(0.5, Number.NaN)).toBe(0);
+  });
+
+  it("範囲外の濃さは 0〜1 に収めて扱う", () => {
+    expect(smokeShadeAtHeight(-1, 2.9)).toBe(0);
+    expect(smokeShadeAtHeight(5, 2.9)).toBe(smokeShadeAtHeight(1, 2.9));
+  });
+
+  it("着いたばかり（濃さ 0.1）は天井の近くだけが見える濃さで，下の層の高さでは薄い煙だけ", () => {
+    const d = 0.1;
+    // 天井の膜は strength × √d
+    expect(smokeShadeAtHeight(d, 2.9)).toBeCloseTo(SMOKE_SHEET.strength * Math.sqrt(d), 6);
+    expect(smokeShadeAtHeight(d, 2.9)).toBeGreaterThan(3 * smokeAtHeight(d, 2.9));
+    // 下の端（2.82 m）の softEdge より下は smokeAtHeight（薄い煙）のまま
+    expect(smokeShadeAtHeight(d, 2.3)).toBe(smokeAtHeight(d, 2.3));
+    expect(smokeShadeAtHeight(d, 1.35)).toBeCloseTo(SMOKE_LOOK.hazeRatio * d, 6);
+  });
+
+  it("時間とともに下へ厚くなる（2 m の高さの濃淡は濃さとともに増える）", () => {
+    let prev = -1;
+    for (const d of [0.05, 0.2, 0.4, 0.6, 0.8, 1]) {
+      const v = smokeShadeAtHeight(d, 2);
+      expect(v).toBeGreaterThanOrEqual(prev);
+      prev = v;
+    }
+    expect(smokeShadeAtHeight(0.05, 2)).toBeLessThan(0.05);
+    expect(smokeShadeAtHeight(1, 2)).toBeCloseTo(SMOKE_SHEET.strength, 6);
+  });
+
+  it("しゃがんだ目（0.9 m）の高さでは smokeAtHeight と同じ（しゃがむと晴れる挙動を変えない）", () => {
+    for (const d of [0.1, 0.5, 1]) {
+      expect(smokeShadeAtHeight(d, CROUCHING_EYE)).toBe(smokeAtHeight(d, CROUCHING_EYE));
+    }
+  });
+});
+
+describe("isEmberParticle", () => {
+  it("粒のうちおよそ FIRE_EMBERS.ratio の割合が火の粉になる", () => {
+    let embers = 0;
+    for (let i = 0; i < FIRE_PARTICLES.count; i++) if (isEmberParticle(i)) embers++;
+    const ratio = embers / FIRE_PARTICLES.count;
+    expect(ratio).toBeGreaterThan(FIRE_EMBERS.ratio * 0.6);
+    expect(ratio).toBeLessThan(FIRE_EMBERS.ratio * 1.4);
+  });
+
+  it("同じ粒はいつも同じ結果", () => {
+    for (let i = 0; i < 50; i++) expect(isEmberParticle(i)).toBe(isEmberParticle(i));
+  });
+
+  it("火の粉を決める塩は粒の位置の乱数（0・1・101・202）と重ならない", () => {
+    expect([0, 1, 101, 202]).not.toContain(FIRE_EMBERS.salt);
   });
 });
