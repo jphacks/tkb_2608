@@ -24,6 +24,21 @@ export function buildLogFileName(date: Date, sessionId: string): string | null {
   return stamp === null ? null : `${stamp}_${sessionId}.jsonl`;
 }
 
+const LOG_FILE_PATTERN = /^\d{8}-\d{6}_([A-Za-z0-9-]{1,64})\.jsonl$/;
+
+/**
+ * 記録のファイル名の書式（<YYYYMMDD-HHMMSS>_<セッション ID>.jsonl）か．
+ * 再生のために中身を返す時，"../" 等でほかのファイルを読ませないよう，この書式の名前だけを受け付ける
+ */
+export function isLogFileName(name: unknown): name is string {
+  return typeof name === "string" && LOG_FILE_PATTERN.test(name);
+}
+
+/** 記録のファイル名だけを残し，新しい順（名前の日時の降順）に並べる */
+export function sortLogFileNames(names: readonly string[]): string[] {
+  return names.filter(isLogFileName).sort((a, b) => (a < b ? 1 : a > b ? -1 : 0));
+}
+
 /** そのセッションの既存のファイル（開発サーバーを再起動した後も同じファイルに追記するため）．無ければ null */
 export function findLogFileForSession(
   fileNames: readonly string[],

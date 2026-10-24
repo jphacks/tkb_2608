@@ -4,6 +4,27 @@
 /** 記録を受け取る開発サーバーの口（POST．?session=<セッション ID>，本文は JSONL） */
 export const INPUT_LOG_ENDPOINT = "/__input-log";
 
+/**
+ * 記録の口の下に置く小さな口（すべて開発サーバーだけ．src/input/dev/inputLogPlugin.ts）．
+ * - time（GET）: 開発サーバーの Date.now() を返す（時刻合わせ）
+ * - sessions（GET）: 記録を送ってきている端末の一覧（操作盤のページ用）
+ * - mark（POST）: 印を記録に書き込む（操作盤のページ用）
+ * - list（GET）: logs/input/ の記録の一覧．file（GET ?name=）: 記録の中身（再生用）
+ */
+export const INPUT_LOG_ROUTES = {
+  time: "/time",
+  sessions: "/sessions",
+  mark: "/mark",
+  list: "/list",
+  file: "/file",
+} as const;
+
+/** 印の種類の書式（英小文字・数字・ハイフン．記録にそのまま書くため短く限る） */
+export const MARK_KIND_PATTERN = /^[a-z0-9-]{1,32}$/;
+
+/** 印に添える説明の長さの上限（文字） */
+export const MAX_MARK_NOTE_LENGTH = 200;
+
 /** 1 回の POST の本文の上限（バイト）．レコーダーの 1 回の送信はこれより小さくする */
 export const MAX_REQUEST_BYTES = 1024 * 1024;
 

@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>input/ 操作盤（dev）</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 12px;
+        background: #000;
+        color: #ddd;
+        font-family: system-ui, sans-serif;
+        font-size: 14px;
+      }
+      h1 {
+        font-size: 16px;
+        margin: 0 0 8px;
+      }
+      h2 {
+        font-size: 14px;
+        margin: 12px 0 4px;
+        color: #9cf;
+      }
+      select,
+      button {
+        font-size: 14px;
+        padding: 6px 10px;
+        margin: 0 6px 6px 0;
+      }
+      pre {
+        margin: 0;
+        white-space: pre-wrap;
+        font-family: ui-monospace, monospace;
+        font-size: 13px;
+      }
+      .home {
+        display: inline-block;
+        margin-bottom: 8px;
+        color: #9cf;
+      }
+      #state {
+        font-size: 22px;
+        font-weight: bold;
+        color: #fff;
+      }
+      #flash {
+        font-size: 28px;
+        font-weight: bold;
+        color: #ff8a80;
+        min-height: 1.4em;
+      }
+    </style>
+  </head>
+  <body>
+    <a class="home" href="./?stay">← dev ページの一覧</a>
+    <h1>操作盤（担当D の dev ページ．PC 用）</h1>
+    <p>スマホで dev ページ（判定の確認・ゴーグルでの確認等）の記録を始めてから，誤判定を見たらキーを押す．印は開発サーバー経由でスマホの記録に書き込まれる．</p>
+    <h2>記録している端末</h2>
+    <select id="sessions"></select>
+    <pre id="sessionInfo">-</pre>
+    <h2>端末の判定の状態（約 2 秒遅れ）</h2>
+    <pre id="state">-</pre>
+    <h2>キー</h2>
+    <pre id="keys"></pre>
+    <div id="flash"></div>
+    <h2>付けた印（新しい順）</h2>
+    <pre id="log">-</pre>
+    <h2>この PC の時刻合わせ</h2>
+    <pre id="clock">合わせています…</pre>
+    <button id="resync" type="button">時刻を合わせ直す</button>
+    <script type="module" src="./panelPage.ts"></script>
+  </body>
+</html>

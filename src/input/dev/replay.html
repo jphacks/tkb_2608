@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>input/ 再生と調整（dev）</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 12px;
+        background: #000;
+        color: #ddd;
+        font-family: system-ui, sans-serif;
+        font-size: 14px;
+      }
+      h1 {
+        font-size: 16px;
+        margin: 0 0 8px;
+      }
+      h2 {
+        font-size: 14px;
+        margin: 12px 0 4px;
+        color: #9cf;
+      }
+      button,
+      select {
+        font-size: 14px;
+        padding: 6px 10px;
+        margin: 0 6px 6px 0;
+      }
+      pre {
+        margin: 0;
+        white-space: pre-wrap;
+        font-family: ui-monospace, monospace;
+        font-size: 12px;
+      }
+      .home {
+        display: inline-block;
+        margin-bottom: 8px;
+        color: #9cf;
+      }
+      canvas {
+        display: block;
+        width: 100%;
+        height: 520px;
+      }
+      .layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 26em;
+        gap: 12px;
+      }
+      .slider {
+        display: grid;
+        grid-template-columns: 11em 1fr 3.5em;
+        align-items: center;
+        gap: 6px;
+        margin: 2px 0;
+      }
+      .slider input {
+        width: 100%;
+      }
+      table {
+        border-collapse: collapse;
+        font-size: 13px;
+      }
+      td,
+      th {
+        border: 1px solid #333;
+        padding: 2px 8px;
+        text-align: right;
+      }
+      th:first-child,
+      td:first-child {
+        text-align: left;
+      }
+      td.worse {
+        color: #ff8a80;
+      }
+      td.better {
+        color: #b9f6ca;
+      }
+      textarea {
+        width: 100%;
+        height: 10em;
+        background: #111;
+        color: #ddd;
+        font-family: ui-monospace, monospace;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <a class="home" href="./?stay">← dev ページの一覧</a>
+    <h1>再生と調整（担当D の dev ページ．PC 用）</h1>
+    <div>
+      <select id="logs"><option value="">（logs/input/ の記録）</option></select>
+      <button id="load" type="button">読み込む</button>
+      <input id="file" type="file" accept=".jsonl,application/x-ndjson,text/plain" />
+    </div>
+    <pre id="info">記録を選んでください（URL に ?log=&lt;ファイル名&gt; を付けると開いた時に読み込む）</pre>
+    <div class="layout">
+      <div>
+        <h2>時間軸（ラベル・印・判定の前と後）</h2>
+        <canvas id="timeline"></canvas>
+        <label class="slider"><span>表示の始まり（秒）</span><input id="viewStart" type="range" min="0" max="1" step="0.1" value="0" /><output id="viewStartOut">0</output></label>
+        <label class="slider"><span>表示の長さ（秒）</span><input id="viewLength" type="range" min="1" max="1" step="0.5" value="1" /><output id="viewLengthOut">1</output></label>
+        <button id="clip" type="button" disabled>表示の範囲を切り出す（.jsonl．回帰テスト用）</button>
+        <h2>指標（前: 基準のしきい値，後: スライダーの値）</h2>
+        <table id="metrics"></table>
+        <h2>区間ごと</h2>
+        <pre id="segments">-</pre>
+      </div>
+      <div>
+        <h2>しきい値</h2>
+        <label>
+          基準（前）:
+          <select id="baseline">
+            <option value="default">既定値（今のコード）</option>
+            <option value="recorded">記録した時の値</option>
+          </select>
+        </label>
+        <div>
+          <button id="toBaseline" type="button">スライダーを基準に戻す</button>
+        </div>
+        <div id="sliders"></div>
+        <h2>書き出し（params の JSON．src/input/params.ts の既定値に写す）</h2>
+        <button id="export" type="button">JSON をダウンロード</button>
+        <textarea id="exportText" readonly></textarea>
+      </div>
+    </div>
+    <script type="module" src="./replayPage.ts"></script>
+  </body>
+</html>

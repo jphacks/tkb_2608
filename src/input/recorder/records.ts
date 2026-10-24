@@ -66,12 +66,37 @@ export interface LabelRecord {
   readonly repeatCount: number;
 }
 
-/** 見ている人が付ける印（今は形だけ．PC の操作盤は後で作る） */
+/**
+ * 見ている人が付ける印（PC の操作盤のページから開発サーバー経由で書き込む．src/input/dev/panel.html）．
+ * t は記録している端末の performance.now() の基準に換算した時刻（ms）
+ */
 export interface MarkRecord {
   readonly type: "mark";
   readonly t: number;
+  /** 誤判定の種類（"false-walk" 等．src/input/dev/panelKeys.ts の MARK_KINDS） */
   readonly kind: string;
   readonly note?: string;
+  /** 誰が付けたか（"panel" 等） */
+  readonly source?: string;
+  /**
+   * t の換算に使った時計（"sync": 端末が開発サーバーと時刻を合わせた結果，
+   * "wall": 合わせる前で，端末と開発サーバーの壁時計が合っている前提）
+   */
+  readonly clock?: "sync" | "wall";
+}
+
+/**
+ * 開発サーバーとの時刻合わせの結果（記録の開始時に 1 回．experiment_山﨑/10「印の付け方」）．
+ * serverTime − t が「この端末の performance.now() → 開発サーバーの Date.now()」の差になる
+ */
+export interface ClockRecord {
+  readonly type: "clock";
+  /** 往復の真ん中の時刻（performance.now() の ms） */
+  readonly t: number;
+  /** その時の開発サーバーの Date.now()（ms） */
+  readonly serverTime: number;
+  /** 往復にかかった時間（ms）．小さいほど合わせた結果が確か */
+  readonly rtt: number;
 }
 
 /** タブが裏に回った・戻った（dt が飛ぶ区間を後で見分けるため．experiment_山﨑/09） */
@@ -155,6 +180,7 @@ export type InputRecord =
   | ScreenRecord
   | LabelRecord
   | MarkRecord
+  | ClockRecord
   | VisibilityRecord
   | ProtocolRecord;
 
