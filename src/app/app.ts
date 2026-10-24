@@ -3,13 +3,12 @@
 
 import * as THREE from "three";
 import { StereoEffect } from "three/examples/jsm/effects/StereoEffect.js";
-import { DragLook } from "../controls/dragLook";
 import { createEventBus } from "../core/event-bus";
 import type { AppEvent } from "../core/events";
 import type { Scene, SceneContext, SceneId, Session, Stage } from "../core/scene";
-import { IDLE_PLAYER_INPUT, type PlayerInput } from "../core/types";
-import { createHeadOrientationFeed } from "../lobby/headOrientationFeed";
-import { resolveHeadPose } from "../lobby/headPose";
+import type { CalibrationProfile } from "../core/types";
+import { parseInputKind } from "../input/inputParam";
+import { createInputSource, type InputSource } from "../input/inputSource";
 import { resolveSceneRequest } from "../lobby/homeFlow";
 import { createHomeScene } from "../lobby/homeScene";
 import { createLobbyScene } from "../lobby/lobbyScene";
@@ -18,6 +17,7 @@ import type { AcquiredDevices } from "../lobby/permissions";
 import { createStartScene } from "../lobby/startScene";
 import { resolveDebug, resolveStereo } from "./launchMode";
 import { createScenarioPlaceholder } from "./placeholderScenes";
+import { yawOnly } from "./yawOnlyCalibration";
 
 /** 左右 2 画面で描く画面（ゴーグル装着中の画面） */
 const VR_SCENES: ReadonlySet<SceneId> = new Set<SceneId>(["lobby", "scenario"]);
@@ -58,11 +58,21 @@ export function startApp(): void {
   // 開始画面で取れた機器．input/（カメラ）・audio/（AudioContext）ができたら渡す
   const devices: { current: AcquiredDevices | null } = { current: null };
 
+  // ?app だけなら実機のセンサー（device），?app&input=mock なら PC のキーボード・ドラッグ（mock）
+  const input = createInputSource({
+    kind: parseInputKind(window.location.search) ?? "device",
+    calibration: null,
+    target: renderer.domElement,
+  });
+
   const factories: Partial<Record<SceneId, () => Scene>> = {
     start: () =>
       createStartScene({
         onDevices: (acquired) => {
           devices.current = acquired;
+          // 許可は開始画面のタップの中で lobby/ が取り終えている．iOS は許可済みならタップの外でも
+          // requestPermission が granted を返すため，ここで呼んでも許可のダイアログは重ならない
+          void input.activate();
         },
       }),
     home: () => createHomeScene(),
@@ -104,23 +114,13 @@ export function startApp(): void {
     }
   };
 
-  // 頭の向きは仮実装（input/ の PlayerInput.head ができたら置き換える）．
-  // 端末の向き（deviceorientation）が届けばそれを使い，届かない PC 等ではドラッグで代用する．
-  // 入力源の選択と正面リセット（yawOffset の差し引き）は lobby/headPose.ts の純粋な関数で決める
-  const headFeed = createHeadOrientationFeed();
-  const look = new DragLook(renderer.domElement, { yaw: 0, pitch: 0 });
-  const euler = new THREE.Euler(0, 0, 0, "YXZ");
-  const headQuat = new THREE.Quaternion();
-  const readInput = (time: number): PlayerInput => {
-    euler.set(look.angles.pitch, look.angles.yaw, 0, "YXZ");
-    headQuat.setFromEuler(euler);
-    const head = resolveHeadPose({
-      latest: headFeed.latest,
-      drag: { x: headQuat.x, y: headQuat.y, z: headQuat.z, w: headQuat.w },
-      scene: current?.id ?? null,
-      calibration: session.calibration,
-    });
-    return { ...IDLE_PLAYER_INPUT, time, head };
+  // ロビーが Session.calibration を書いたら（「もう一度」で書き直した時も）入力に渡し，正面をリセットする
+  let appliedCalibration: CalibrationProfile | null = null;
+  const applyCalibration = (source: InputSource, calibration: CalibrationProfile): void => {
+    appliedCalibration = calibration;
+    // device: 正面（yawOffset）を差し替える．mock: センサーの向きが無いため今の向きを正面にする
+    if (source.tracker !== null) source.tracker.setCalibration(yawOnly(calibration));
+    else source.recenter();
   };
 
   const resize = (): void => {
@@ -141,9 +141,14 @@ export function startApp(): void {
       void switchTo(id);
     }
 
-    const input = readInput(time);
-    camera.quaternion.set(input.head.x, input.head.y, input.head.z, input.head.w);
-    if (current !== null && !switching) current.update({ dt, input });
+    if (session.calibration !== null && session.calibration !== appliedCalibration) {
+      applyCalibration(input, session.calibration);
+    }
+    // InputSource.read は performance.now() の時刻を受け取る（センサーのサンプルの時刻と同じ時計にする）
+    const frameInput = input.read(performance.now());
+    const { head } = frameInput;
+    camera.quaternion.set(head.x, head.y, head.z, head.w);
+    if (current !== null && !switching) current.update({ dt, input: frameInput });
 
     if (useStereo && current !== null && VR_SCENES.has(current.id)) {
       stereo.render(world, camera);
