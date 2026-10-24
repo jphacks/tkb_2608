@@ -30,7 +30,10 @@ __pycache__/
 .env.*
 !.env.example
 
-# -- プロジェクト立ち上げ時に有効化する（.claude/rules/git-conventions.md 参照） --
-# node_modules/
-# build/
-# dist/
+# Node.js の依存パッケージ・ビルド出力・テストのカバレッジ（Vite + Vitest．docs/02_ENV/ENV_01）
+node_modules/
+dist/
+coverage/
+
+# 開発時に実機（スマホ）から開発サーバーへ送られたログ・センサーの記録（ENV_01「実機のログの確認」）
+logs/

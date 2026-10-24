@@ -1,7 +1,6 @@
 {
   "name": "tkb_2608",
-  // アプリの技術スタックが決まるまでは Claude Code と GitHub CLI（＋フック用の Python）だけを入れた最小構成とする．
-  // 配信用サーバー等が必要になったら compose.yaml を作り dockerComposeFile 参照に切り替える
+  // アプリは静的サイト（Vite + three.js．docs/02_ENV/ENV_01）のため，サーバー用のコンテナは持たず単一コンテナで構成する
   "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
   "remoteUser": "vscode",
   "features": {
@@ -11,8 +10,14 @@
     "ghcr.io/devcontainers/features/python:1": {
       "version": "os-provided",
       "installTools": false
+    },
+    // アプリのビルド・開発サーバー用（ENV_01 で Node.js 24 LTS に決定）
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "24"
     }
   },
+  // Vite の開発サーバー．PC のブラウザからは localhost:5173 で開く（スマホからは cloudflared のトンネル経由．ENV_02）
+  "forwardPorts": [5173],
   // CLAUDE_CONFIG_DIR を指定すると ~/.claude.json もこのディレクトリ内に置かれ，
   // 認証・設定がすべて下の名前付きボリュームに収まる
   // TZ はコミット時刻・ログ・進捗記録の日時を日本時間に揃えるため

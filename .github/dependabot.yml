@@ -1,0 +1,38 @@
+# 依存パッケージの定期更新 PR（Dependabot version updates）
+# 脆弱性検出（Dependabot alerts / security updates）はリポジトリ設定で有効化済み（本ファイルとは独立に動く）
+version: 2
+updates:
+  # アプリの依存（Vite・three.js・MediaPipe 等）．package.json が置かれた時点から動き始める
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "[update]"
+    groups:
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+  # Dev Container の features（Node.js・GitHub CLI・Python）
+  - package-ecosystem: "devcontainers"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "[update]"
+    groups:
+      devcontainers:
+        patterns:
+          - "*"
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "[update]"
+    groups:
+      actions:
+        patterns:
+          - "*"

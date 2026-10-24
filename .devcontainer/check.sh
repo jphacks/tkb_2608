@@ -46,6 +46,18 @@ else
   ng "GitHub に接続できない" "gh が認証済みなら bash .devcontainer/post-create.sh を再実行する"
 fi
 
+echo "▶ アプリの開発ツール"
+if command -v node >/dev/null 2>&1 && [ "$(node -v | cut -d. -f1)" = "v24" ]; then
+  ok "Node.js $(node -v) / npm $(npm -v)"
+else
+  ng "Node.js 24 が無い（$(node -v 2>/dev/null || echo '未インストール')）" "devcontainer.json の node feature を確認して Rebuild する"
+fi
+if command -v cloudflared >/dev/null 2>&1; then
+  ok "$(cloudflared --version 2>/dev/null)"
+else
+  ng "cloudflared が無い（スマホから開発サーバーを開けない）" "bash .devcontainer/post-create.sh を再実行する"
+fi
+
 echo "▶ 名前付きボリューム（Rebuild しても消えない）"
 for dir in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" "$HOME/.config/gh" "$HOME/.local/share/claude"; do
   if mountpoint -q "$dir"; then
