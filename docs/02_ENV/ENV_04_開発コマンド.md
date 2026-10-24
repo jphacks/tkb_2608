@@ -89,7 +89,9 @@ gh variable get STAGING_AUTO_DEPLOY                # 今の状態（未設定な
 
 ### 本番に出す手順
 
-通常は Claude Code で **`/deploy-prod`** を実行する．前提の確認・バージョンの案・最終確認・タグの作成と push・配信の見届け・公開 URL での確認・[ENV_06](ENV_06_デプロイ記録.md) への記録までを行う．手で行う場合は次のとおり（記録は手で ENV_06 に追記する）．
+**本番に出せるのは管理者（リポジトリの admin）だけ**．`v*` タグの作成は Ruleset `release tags: admin のみ` で admin 以外に禁止されている（[ENV_03](ENV_03_管理者用環境構築手順.md)「本番のリリースを管理者だけにする」）．他のメンバーは，本番に出したい版が staging で確かめられたら管理者に依頼する．
+
+通常は管理者が Claude Code で **`/deploy-prod`** を実行する．前提の確認・バージョンの案・最終確認・タグの作成と push・配信の見届け・公開 URL での確認・[ENV_06](ENV_06_デプロイ記録.md) への記録までを行う．手で行う場合は次のとおり（記録は手で ENV_06 に追記する）．
 
 1. staging（`https://staging.tkb2608.pages.dev`）を iPhone で開き，出したい版が動くことを確かめる
 2. `main` を最新にして，staging で確かめたコミットに annotated タグを打って push する

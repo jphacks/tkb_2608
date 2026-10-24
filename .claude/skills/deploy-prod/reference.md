@@ -5,6 +5,9 @@
 ## 前提チェック (Pre-check)
 
 ```bash
+# 0. 実行者がリポジトリの admin（admin と出なければ止まる）
+gh api "repos/{owner}/{repo}/collaborators/$(gh api user -q .login)/permission" -q .role_name
+
 # 1. 作業ツリーがクリーン（出力が空）
 git status --porcelain
 
@@ -31,6 +34,7 @@ git diff --name-only "$prev" "$target"
 
 判定:
 
+- 0 は，`admin` のときだけ進む．`write` 等なら止まる（タグの Ruleset により push も拒否されるため，途中まで進めない）
 - 4 は，対象コミットの実行（push・手動実行 `workflow_dispatch` のどちらでもよい）のうち，`completed` / `success` で `Deploy to staging` ジョブが `success` のものが 1 つでもあれば可．`Detect changes` の結果で配信不要と判定され `Wait for further merges`・`Deploy to staging` が `skipped` の場合も可（配信物に影響しない変更だけだったことを表す）
   - **自動配信を止めている（`STAGING_AUTO_DEPLOY=false`）場合**: push の実行は `Deploy to staging` が `skipped` になる（「自動配信を止めている」の notice が出る）．これは「staging に出ていない」ことを表すので可としない．手動実行で `Deploy to staging` が `success` の実行が必要．無ければ「Run workflow で staging に出し，iPhone で確かめてから再度 `/deploy-prod`」を案内して止まる
   - 対象コミットより後に別のコミットを手動で staging に出していた場合は，今の staging は別の版になっている．最終確認で「確かめたのはどの版か」を明示して問う
@@ -122,6 +126,7 @@ echo "prod:   $(asset "https://tkb2608.pages.dev")"
 
 | 失敗箇所 | 本番の状態 | 主な原因 | 対処 |
 | --- | --- | --- | --- |
+| タグの push が拒否される | 変わっていない（配信なし） | 実行者が admin でない（Ruleset `release tags: admin のみ`） | 管理者に依頼する．Ruleset は迂回しない |
 | `Verify release tag` | 変わっていない（配信なし） | 軽量タグ・`main` 外のコミット | タグを削除して打ち直す（下記コマンド） |
 | `Check secrets` | 変わっていない（配信なし） | `CLOUDFLARE_API_TOKEN`・`CLOUDFLARE_ACCOUNT_ID` が未登録 | 人間が Secrets を登録してから `gh run rerun <id> --failed`（ENV_03「Cloudflare Pages の準備」） |
 | Lint・Typecheck・Test・Build | 変わっていない（配信なし） | 検証の失敗（フレーク・ツールの版の差等） | フレークなら `gh run rerun <id> --failed`．実際の不具合なら修正を PR で `main` に入れ，staging で確認後に新しいタグを打つ |
