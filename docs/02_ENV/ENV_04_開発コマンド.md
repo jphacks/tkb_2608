@@ -48,6 +48,8 @@ Cloudflare Pages に GitHub Actions が配信する（準備は [ENV_03](ENV_03_
 | staging | `https://staging.tkb2608.pages.dev` | `main` へのマージで自動（`deploy-staging.yml`）．無料枠の配信回数を節約するため，マージから 3 分待って続くマージをまとめてから配信する（反映まで 5 分ほど）．docs 等だけの変更では配信しない |
 | 本番 | `https://tkb2608.pages.dev` | `main` 上のコミットに `v*` の annotated タグを push したとき（`deploy-prod.yml`） |
 
+- staging を配信し直したい時（配信の失敗後・Secrets の登録直後等）は，Actions の画面の「Deploy (staging)」→ **Run workflow**（Branch は `main`）で手動実行する．`gh workflow run deploy-staging.yml --ref main` でもよい．手動実行では変更の判定と 3 分の待ちを飛ばしてすぐ配信する
+
 PR では CI（`ci.yml`: lint・型チェック・テスト・ビルド）だけが動く．PR ごとのプレビューは今は作っていない（必要になったら追加する）．
 
 ### 本番に出す手順

@@ -2,6 +2,7 @@
 #
 # main への push（PR のマージを含む）で Cloudflare Pages の staging（`staging.<プロジェクト名>.pages.dev`）に配信する．
 # 本番は deploy-prod.yml（v* タグ）でのみ配信する．手順は docs/02_ENV/ENV_04「デプロイ」．
+# 配信し直したい時は Actions の画面の「Run workflow」（または `gh workflow run deploy-staging.yml --ref main`）で手動実行できる．
 #
 # 設計方針:
 #   - 品質ゲートは PR 時の ci.yml で通っている前提とし，ここではビルド（型チェックを含む）だけ行う
@@ -16,6 +17,8 @@ on:
   push:
     branches:
       - main
+  # 手動での配信し直し（main からのみ．変更の判定と待ちを飛ばしてすぐ配信する）
+  workflow_dispatch:
 
 # 最小権限．チェックアウトと変更ファイルの参照しかしない．
 permissions:
@@ -48,6 +51,17 @@ jobs:
           AFTER: ${{ github.sha }}
         run: |
           set -uo pipefail
+
+          # 手動実行は main からのみ受け付け，変更の判定をせずに配信する
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+              echo "::error::手動実行は main からのみ（${GITHUB_REF} が指定された）．Run workflow で Branch に main を選ぶ"
+              exit 1
+            fi
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+            echo "manual run: deploy=true"
+            exit 0
+          fi
 
           # before が取れない場合（ブランチ新規作成等）と，compare API が失敗した場合は安全側に倒して配信する．
           files=""
@@ -88,6 +102,8 @@ jobs:
       cancel-in-progress: true
     steps:
       - name: Debounce
+        # 手動実行ではすぐ配信するため待たない
+        if: github.event_name != 'workflow_dispatch'
         run: sleep "$DEBOUNCE_SECONDS"
 
   deploy:
