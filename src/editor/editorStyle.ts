@@ -1,6 +1,6 @@
 // エディタの上から見た図の色と，道具箱に出すパーツの名前（データだけ）．
 // マスの色は結果画面の地図（src/debrief/mapStyle.ts）と同じ値にそろえる（SPEC_01．関数・定数は共有せず，ここに書き写す）
-import type { CellKind } from "../core/schoolPlan";
+import type { CellKind, DrillMode } from "../core/schoolPlan";
 import type { Facing, MarkerKind } from "./editorState";
 
 /** マスの種類ごとの塗りの色（void は塗らず下地のまま．教室は ROOM_COLORS で教室ごとに分ける） */
@@ -88,6 +88,16 @@ export const FACING_LABELS: Readonly<Record<Facing, string>> = {
   down: "↓ 下",
   left: "← 左",
 };
+
+/** 訓練のモードの選び方（道具箱に出す順番・名前・説明） */
+export const DRILL_MODES: readonly {
+  readonly mode: DrillMode;
+  readonly label: string;
+  readonly hint: string;
+}[] = [
+  { mode: "learn", label: "学習", hint: "床に正解経路の矢印を出す" },
+  { mode: "test", label: "テスト", hint: "正解経路を出さない" },
+];
 
 /** 道具箱に出すパーツ（教室以外）の順番と名前 */
 export const PART_TOOLS: readonly {
