@@ -35,6 +35,8 @@
 | `startYaw` | 開始時の向き（rad．0 で -Z を向き，正で左へ回る） |
 | `background` | Scene の背景色 |
 | `dispose()` | ジオメトリ・マテリアル・テクスチャを解放する |
+| `fog`（省略可） | 空間全体に効くフォグ．`src/main.ts` が `scene.fog = space.fog ?? null` で付ける（今は校舎 `school` だけが持つ） |
+| `update(frame)`（省略可） | 毎フレームの更新．`frame` は `SpaceFrame`（`seconds`: 非常ベルからの秒数，`eye`: 目のワールド座標 or `null`）．`src/main.ts` が歩行の後・描画の前に呼ぶ（今は校舎 `school` だけが持つ） |
 
 ## 空間の切り替え (Space Selection)
 
@@ -243,7 +245,7 @@
 
 ### 床の正解経路の矢印 (Route Arrows)
 
-学習モードで，正解経路（`SchoolPlan.drill.route`）のマスの床に緑の矢印を並べる（F6．Issue #95）．校舎の組み立てとは別の部品にしてあり，校舎の `root` に足すだけで使える．
+学習モードで，正解経路（`SchoolPlan.drill.route`）のマスの床に緑の矢印を並べる（F6．Issue #95）．校舎の組み立てとは別の部品にしてあり，校舎の `root` に足すだけで使える（`?scene=school` には差し込み済み．「SchoolPlan からの組み立て」）．
 
 ```ts
 const arrows = createRouteArrows(plan); // テストモード（drill.mode が "test"）では null
@@ -268,7 +270,7 @@ if (arrows) root.add(arrows.object);
 
 ### 火と煙 (Fire & Smoke)
 
-`SpreadMap`（`sim/spread.ts` の `computeSpread(plan)`）と今の時刻から，火と煙を描く（F4．Issue #96）．校舎の組み立てとは別の部品にしてあり，校舎の `root` に足して毎フレーム時刻と目の位置を渡すだけで使える．
+`SpreadMap`（`sim/spread.ts` の `computeSpread(plan)`）と今の時刻から，火と煙を描く（F4．Issue #96）．校舎の組み立てとは別の部品にしてあり，校舎の `root` に足して毎フレーム時刻と目の位置を渡すだけで使える（`?scene=school` には差し込み済み．「SchoolPlan からの組み立て」）．
 
 ```ts
 const fireSmoke = createFireSmoke(plan, computeSpread(plan));
@@ -302,10 +304,13 @@ fireSmoke.update(secondsSinceAlarm, eyePosition);
 | 防火シャッター | 並んだ `shutter` のマスの中心線に沿って 1 枚置き，両端に柱を置く（左右に並ぶものは X に沿う．上下に並ぶもの・1 つだけのものは通り抜ける向きに直交）．非常ベルの時点で閉じている扱いのため，既定で閉じて作る．長さが下限（1.28 m）に足りない時は無地の壁にする |
 | 地面 | マス目の外へ 30 m 広げた土の面（見た目だけ） |
 
-- 開始位置は訓練の開始地点（`drill.start`）のマスの中心，向きは `drill.startYaw` の符号を反転した値（`SchoolPlan` は右回り，`Space` は左回りに増えるため）
+- 開始位置は訓練の開始地点（`drill.start`）のマスの中心，向きは `planYawToSpaceYaw(drill.startYaw)`（`SchoolPlan` は右回り，`Space` は左回りに増えるため符号を反転する．SPEC_02「座標」の「向き」）
 - 歩ける床の範囲は，屋内の床の面と屋外のマスの矩形だけ（`void`・`wall` のマスとマス目の外へは出られない）．壁・柱・直方体・閉じたシャッターは通れない
 - ドアのマスは開口部として作る（引き戸の扉は置かない．SPEC_02 のとおり開け閉めはしない）．辺に置く物のドア・出口のパーツ（`createSchoolEdge` の `door`・`exit`）は下限の長さ（2.32 m・2.72 m）が 1 m のマスに入らないため使っていない
-- 教室の中身（机・黒板）は置いていない．エリアのイベント・火と煙・床の経路・複数フロアは後の Issue で扱う
+- 床の正解経路の矢印（`createRouteArrows`．学習モードのみ）と火と煙（`createFireSmoke(plan, computeSpread(plan))`）を root の直下に置く（結合の対象外．Issue #104）．`SchoolSpace` の `routeArrows`（テストモードは `null`）・`fireSmoke`・`fog`（= `fireSmoke.fog`）で引ける．`update(frame)` は `fireSmoke.update(frame.seconds, frame.eye)` を呼ぶ．`dispose` で両方も解放する
+- `?scene=school` 単独で開いた時の非常ベルの時刻は，ページを開いた時を 0 秒とし，毎フレーム `dt × speed` を足す（`src/scenes/alarmClock.ts`．`?t=<秒>` で始める時刻，`?speed=<倍率>` で進む速さ．不正な値は既定の 0 秒・1 倍）．体験の流れ（`?app`）につなぐ時は，そちらの時刻を `update` に渡す
+- 防火シャッターは閉じていて通れないため，デモの校舎では開始地点から煙の中へは歩いて行けない（くぐり戸を通れるようにするのは後の Issue）
+- 教室の中身（机・黒板）は置いていない．エリアのイベント・赤い表示・燃えているマスの当たり判定・複数フロアは後の Issue で扱う
 
 ## 歩行と当たり判定 (Walking & Collision)
 

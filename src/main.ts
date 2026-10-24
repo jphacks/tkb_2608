@@ -18,6 +18,7 @@ import { parseInputKind } from "./input/inputParam";
 import { createInputSource, type InputKind } from "./input/inputSource";
 import { InputPreview } from "./inputPreview";
 import { AVAILABLE_SPACE_IDS, createSpace, createWalkWorld } from "./scenes";
+import { advanceAlarmSeconds, parseAlarmClock } from "./scenes/alarmClock";
 import { createDevDoors, type DevDoor, findNearbyDevDoor } from "./scenes/devDoors";
 import { resolveSpaceId } from "./scenes/spaceParam";
 import type { Space } from "./scenes/types";
@@ -38,6 +39,8 @@ function startViewer(): void {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(space.background);
   scene.add(space.root);
+  // 空間全体に効くフォグ（煙等）．持たない空間はフォグなし
+  scene.fog = space.fog ?? null;
 
   const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.05, 50);
 
@@ -63,6 +66,8 @@ interface WalkSetup {
   readonly toggleNearbyDoor: () => DoorButtonTarget | null;
   /** 画面の左上に出す歩行の状態（位置・エリア・直前の出入り・近くのドア） */
   readonly statusLines: () => string[];
+  /** 非常ベルの時刻を dt（s）進め，空間の毎フレームの更新（火と煙等）を呼ぶ．camera の位置が決まった後に呼ぶ */
+  readonly updateSpace: (dt: number) => void;
 }
 
 function setupWalk(scene: THREE.Scene, camera: THREE.PerspectiveCamera, space: Space): WalkSetup {
@@ -97,6 +102,17 @@ function setupWalk(scene: THREE.Scene, camera: THREE.PerspectiveCamera, space: S
     }
   });
 
+  // 非常ベルの時刻．単独で開いた時は空間を作った時を 0 秒（?t= でずらし，?speed= で速める）
+  const alarmClock = parseAlarmClock(window.location.search);
+  const spaceFrame = { seconds: alarmClock.startSeconds, eye: new THREE.Vector3() };
+  const updateSpace = (dt: number) => {
+    if (!space.update) return;
+    spaceFrame.seconds = advanceAlarmSeconds(spaceFrame.seconds, dt, alarmClock.speed);
+    // カメラは rig の子のため，目の位置はワールド座標に直して渡す（作業用の Vector3 は使い回す）
+    camera.getWorldPosition(spaceFrame.eye);
+    space.update(spaceFrame);
+  };
+
   const statusLines = () => {
     const { x, z, eyeHeight, seat } = walker.state;
     const areas = walker.observe().areaIds;
@@ -106,13 +122,17 @@ function setupWalk(scene: THREE.Scene, camera: THREE.PerspectiveCamera, space: S
       `areas ${areas.length > 0 ? areas.join(", ") : "-"}`,
       `last ${lastEvent || "-"}`,
       door ? `door ${door.id} (${door.isOpen() ? "開" : "閉"})` : "近くにドアなし",
+      ...(space.update ? [`alarm ${spaceFrame.seconds.toFixed(1)} s (x${alarmClock.speed})`] : []),
     ];
   };
 
-  return { rig, walker, nearbyDoor, toggleNearbyDoor, statusLines };
+  return { rig, walker, nearbyDoor, toggleNearbyDoor, statusLines, updateSpace };
 }
 
-/** 1 フレーム分歩かせ，rig とカメラに反映する．頭の向き（head）は体の向きから見た値として rig の子のカメラに当てる */
+/**
+ * 1 フレーム分歩かせ，rig とカメラに反映してから空間を更新する（火と煙は目の位置を使うため，カメラの後）．
+ * 頭の向き（head）は体の向きから見た値として rig の子のカメラに当てる
+ */
 function stepAndApply(
   walk: WalkSetup,
   camera: THREE.PerspectiveCamera,
@@ -123,6 +143,7 @@ function stepAndApply(
   walk.walker.applyTo(walk.rig);
   const { head } = input;
   camera.quaternion.set(head.x, head.y, head.z, head.w);
+  walk.updateSpace(dt);
 }
 
 // 確認用の仮の入力（ドラッグ・ボタン）を SpaceWalker につなぐ
