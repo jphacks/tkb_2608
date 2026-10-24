@@ -22,7 +22,12 @@ export function createScenarioPlaceholder(): Scene {
       again.type = "button";
       again.textContent = "もう一度（ロビーへ．結果画面の代わりの確認用）";
       again.addEventListener("click", () => ctx.goTo("lobby"));
-      root.append(title, pre, again);
+      const home = document.createElement("button");
+      home.type = "button";
+      home.textContent = "ホームへ（結果画面の代わりの確認用）";
+      home.style.marginLeft = "8px";
+      home.addEventListener("click", () => ctx.goTo("home"));
+      root.append(title, pre, again, home);
       ctx.stage.overlay.appendChild(root);
     },
     update() {},

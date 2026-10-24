@@ -333,3 +333,25 @@ describe("startGateProgress", () => {
     expect(startGateProgress(s)).toBe(1);
   });
 });
+
+// lobbyScene の isPaused（縦向きの案内中）は advanceStartGate を呼ばないことで自動開始を止める．
+// 自動開始までの時間が dt の累積で数えられ，呼ばない間は進まないことを確かめる
+describe("advanceStartGate（止めている間）", () => {
+  it("止めている間は自動開始までの残り時間が減らず，再開すると続きから数える", () => {
+    const auto = DEFAULT_START_GATE_CONFIG.autoStartSeconds;
+    let s = INITIAL_START_GATE;
+    // 半分まで進める
+    const half = Math.round(auto / 2 / 0.125);
+    for (let i = 0; i < half; i++) s = advanceStartGate(s, frame());
+    const remaining = autoStartRemainingSeconds(s);
+    // ここで自動開始の時間より長く止めたとする（lobbyScene は advanceStartGate を呼ばない）
+    expect(s.startedBy).toBeNull();
+    expect(autoStartRemainingSeconds(s)).toBe(remaining);
+    // 再開すると残りの時間で自動開始する
+    const rest = Math.ceil((remaining ?? 0) / 0.125);
+    for (let i = 0; i < rest - 1; i++) s = advanceStartGate(s, frame());
+    expect(s.startedBy).toBeNull();
+    s = advanceStartGate(s, frame());
+    expect(s.startedBy).toBe("auto");
+  });
+});

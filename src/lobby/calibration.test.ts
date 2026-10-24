@@ -603,3 +603,36 @@ describe("accelerationMagnitude", () => {
     expect(accelerationMagnitude({ t: 0, x: 0, y: 0, z: -9.8 })).toBeCloseTo(9.8);
   });
 });
+
+// lobbyScene の isPaused（縦向きの案内中）は advanceCalibration を呼ばないことで時間を止める．
+// 制限時間が dt の累積で数えられ，呼ばない間は進まないことを確かめる
+describe("advanceCalibration（止めている間）", () => {
+  const frame = (dt: number) => ({ dt, motion: [], orientation: [] });
+  /** paused[i] が true のフレームは lobbyScene と同じく advance を呼ばない */
+  function runWithPause(paused: readonly boolean[], dt: number): CalibrationState {
+    let s = startCalibration(null);
+    for (const p of paused) {
+      if (!p) s = advanceCalibration(s, frame(dt));
+    }
+    return s;
+  }
+
+  it("止めている間のフレームは見え方の調整の残り時間を減らさない", () => {
+    const dt = 0.5;
+    const pausedHalf = Array.from({ length: 40 }, (_, i) => i % 2 === 0);
+    const s = runWithPause(pausedHalf, dt);
+    // 進んだのは 20 フレーム分（10 秒）だけ
+    expect(s.phase).toBe("align");
+    expect(remainingAlignSeconds(s)).toBeCloseTo(DEFAULT_CALIBRATION_CONFIG.alignSeconds - 10);
+  });
+
+  it("止めている間ずっと進まず，再開すると続きから数える（やり直さない）", () => {
+    const dt = 0.25;
+    const before = Array.from({ length: 8 }, () => false); // 2 秒進める
+    const pausedLong = Array.from({ length: 400 }, () => true); // 100 秒止める
+    const after = Array.from({ length: 4 }, () => false); // 1 秒進める
+    const s = runWithPause([...before, ...pausedLong, ...after], dt);
+    expect(s.phase).toBe("align");
+    expect(remainingAlignSeconds(s)).toBeCloseTo(DEFAULT_CALIBRATION_CONFIG.alignSeconds - 3);
+  });
+});

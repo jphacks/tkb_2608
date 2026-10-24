@@ -25,12 +25,14 @@ import {
   createLobbyRoom,
   createStartButton,
   LOBBY_EYE_HEIGHT,
+  LOBBY_PANEL_CENTER,
   type LobbyPanel,
   type StartButtonView,
 } from "./lobbyRoom";
 import { describeCalibration, describeStartGate, type LobbyInstruction } from "./lobbyScript";
 import { narrate, stopNarration } from "./narrator";
 import { angleDifference, yawOfQuat } from "./orientation";
+import { approachHighlight, isGazingAtPanel } from "./panelGaze";
 import { createSensorFeed, type SensorFeed } from "./sensorFeed";
 import {
   advanceStartGate,
@@ -53,10 +55,15 @@ export interface LobbySceneOptions {
    * Enter / Space による開始ボタン・手順の飛ばしを使える（本実装の開始は input/ の PlayerInput.hands の手だけ）
    */
   readonly debug?: boolean;
+  /**
+   * true の間は時間を止める（開始ボタンの自動開始・各手順の制限時間を数えず，センサーの値も捨てる）．
+   * 縦向きの案内を出している間はゴーグルに入っておらず，指示も見えないため（app/ が orientationGuide の状態を渡す）
+   */
+  readonly isPaused?: () => boolean;
 }
 
-/** 指示の板が頭の向きに追いつく速さ（1/秒） */
-const PANEL_FOLLOW_RATE = 2;
+/** 指示の板が頭の向きに追いつく速さ（1/秒）．見回した時に一瞬遅れて追いつく様子が分かるよう緩めにする */
+const PANEL_FOLLOW_RATE = 1.2;
 
 /** enter で作り，exit で片付けるもの */
 interface Active {
@@ -71,6 +78,8 @@ interface Active {
   /** 最後に届いた向きのサンプル（端末が水平かの判定用．センサーが無ければ null） */
   lastOrientation: OrientationSample | null;
   lastNarrationKey: string;
+  /** 指示の板の枠の明るさ（0〜1） */
+  highlight: number;
   skipRequested: boolean;
   done: boolean;
 }
@@ -103,6 +112,10 @@ export function createLobbyScene(options: LobbySceneOptions = {}): Scene {
     const current = a.panel.object.rotation.y;
     const rate = Math.min(1, frame.dt * PANEL_FOLLOW_RATE);
     a.panel.object.rotation.y = current + angleDifference(current, target) * rate;
+    // 板を正面に捉えている時だけ枠を明るくする（視線に反応していることが分かる控えめな演出）
+    const gazing = isGazingAtPanel(frame.input.head, a.panel.object.rotation.y, LOBBY_PANEL_CENTER);
+    a.highlight = approachHighlight(a.highlight, gazing, frame.dt);
+    a.panel.setHighlight(a.highlight);
   };
 
   /** 開始ボタンを待つ．開始したら true */
@@ -175,6 +188,7 @@ export function createLobbyScene(options: LobbySceneOptions = {}): Scene {
         state: startCalibration(ctx.session.calibration),
         lastOrientation: null,
         lastNarrationKey: "",
+        highlight: 0,
         skipRequested: false,
         done: false,
         dispose: () => {
@@ -195,6 +209,8 @@ export function createLobbyScene(options: LobbySceneOptions = {}): Scene {
       if (a === null || a.done) return;
       const samples = a.feed.drain();
       followHead(a, frame);
+      // 止めている間に届いたサンプルは，ゴーグルに入っていない時の値なので基準に混ぜない
+      if (options.isPaused?.() === true) return;
       // 開始ボタンが押されるまでキャリブレーションを始めない（制限時間も数えない．サンプルは捨てる）
       if (a.gate.startedBy === null) {
         updateGate(a, frame, samples.orientation);
