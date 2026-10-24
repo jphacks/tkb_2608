@@ -61,6 +61,13 @@ export const EDITOR_COLORS = {
   start: "#1d4fd8",
   /** 集合場所の枠と旗 */
   assembly: "#18a34a",
+  /**
+   * 延焼のプレビューで火が着いているマスに重ねる色（結果画面の火元のマス（src/debrief/mapStyle.ts の fireOrigin）と同じ赤．
+   * 下のマスの種類が透けるよう半透明）
+   */
+  spreadFire: "rgba(229, 57, 53, 0.55)",
+  /** 延焼のプレビューで煙だけが着いているマスに重ねる色（結果画面の煙の帯（smokeStanding）と同じ灰色） */
+  spreadSmoke: "rgba(70, 76, 90, 0.55)",
 } as const;
 
 /** 道具箱に出す訓練条件の道具の順番・名前・色見本 */

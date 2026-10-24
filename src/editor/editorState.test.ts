@@ -25,6 +25,7 @@ import {
   facingOfYaw,
   HISTORY_LIMIT,
   isMarkerTool,
+  isValidSeconds,
   MARKER_REASONS,
   MAX_GRID_SIZE,
   type MarkerKind,
@@ -35,9 +36,12 @@ import {
   redo,
   renameRoom,
   resizeGrid,
+  type SpreadSecondsKey,
   selectTool,
   setDrillMode,
+  setSpreadSeconds,
   setStartFacing,
+  setTimeLimit,
   startBlank,
   toggleAssembly,
   toggleFireOrigin,
@@ -1516,5 +1520,191 @@ describe("setDrillMode", () => {
     expect(undoneOnce.plan.drill.mode).toBe("learn");
     expect(cellAt(undoneOnce, 0, 2)[0]).toBe("corridor");
     expect(undo(undoneOnce).plan).toBe(before);
+  });
+});
+
+// 延焼の速さ・制限時間（E4．SPEC_02 の SpreadSettings・DrillSetup.timeLimitSeconds．Issue #132: 値が変わらなければ履歴に積まない）
+
+/** 受け付けない秒数（0 以下・数でない・無限） */
+const INVALID_SECONDS: readonly number[] = [
+  0,
+  -0,
+  -1,
+  -0.001,
+  Number.NaN,
+  Number.POSITIVE_INFINITY,
+  Number.NEGATIVE_INFINITY,
+];
+
+describe("isValidSeconds", () => {
+  it.each([0.001, 0.5, 1, 2, 6, 150, 1e6])("0 より大きい有限の数（%s）は受け付ける", (v) => {
+    expect(isValidSeconds(v)).toBe(true);
+  });
+
+  it.each(INVALID_SECONDS)("0 以下・NaN・無限（%s）は受け付けない", (v) => {
+    expect(isValidSeconds(v)).toBe(false);
+  });
+
+  it("受け付けた値を入れた校舎は validatePlan の誤りが無く，受け付けない値は誤りになる（同じ条件）", () => {
+    for (const v of [0.5, 6, 150]) {
+      const p = drillState({ timeLimitSeconds: v }).plan;
+      expect(validatePlan(p)).toEqual([]);
+    }
+    for (const v of INVALID_SECONDS) {
+      const p = drillState({ timeLimitSeconds: v }).plan;
+      expect(validatePlan(p).length).toBeGreaterThan(0);
+    }
+  });
+});
+
+const SPREAD_KEYS: readonly SpreadSecondsKey[] = ["fireSecondsPerCell", "smokeSecondsPerCell"];
+const OTHER_KEY: Record<SpreadSecondsKey, SpreadSecondsKey> = {
+  fireSecondsPerCell: "smokeSecondsPerCell",
+  smokeSecondsPerCell: "fireSecondsPerCell",
+};
+
+describe("setSpreadSeconds", () => {
+  const EXTRA = [{ cell: ref(0, 0), atSeconds: 30 }];
+  const spreadState = () =>
+    drillState({
+      spread: { fireSecondsPerCell: 6, smokeSecondsPerCell: 2, extraFires: EXTRA },
+    });
+
+  it.each(SPREAD_KEYS)(
+    "%s を変えると 1 回分の履歴になり，もう一方の秒数・手で足した延焼箇所・ほかの訓練条件・マス目は変えない",
+    (key) => {
+      const s = spreadState();
+      const next = setSpreadSeconds(s, key, 3.5);
+      expect(next.plan.drill.spread[key]).toBe(3.5);
+      expect(next.plan.drill.spread[OTHER_KEY[key]]).toBe(s.plan.drill.spread[OTHER_KEY[key]]);
+      expect(next.plan.drill.spread.extraFires).toEqual(EXTRA);
+      expect(next.past).toEqual([s.plan]);
+      expect(next.future).toEqual([]);
+      expectDrillOthersKept(s.plan, next.plan, ["spread"]);
+      expect(validatePlan(next.plan)).toEqual([]);
+    },
+  );
+
+  it.each(SPREAD_KEYS)("%s が今と同じ値なら同じ状態を返し，履歴に積まない", (key) => {
+    const s = spreadState();
+    const next = setSpreadSeconds(s, key, s.plan.drill.spread[key]);
+    expect(next.plan).toBe(s.plan);
+    expect(next.past).toEqual([]);
+    expect(canUndo(next)).toBe(false);
+  });
+
+  it.each(SPREAD_KEYS.flatMap((key) => INVALID_SECONDS.map((v) => [key, v] as const)))(
+    "%s に受け付けない値（%s）を渡すと何もしない（校舎は同じ参照・履歴に積まない）",
+    (key, v) => {
+      const s = spreadState();
+      const next = setSpreadSeconds(s, key, v);
+      expect(next.plan).toBe(s.plan);
+      expect(next.past).toEqual([]);
+      expect(next.future).toEqual([]);
+    },
+  );
+
+  it("煙の秒数を火より長くしても受け付ける（誤りにせず，注意は spreadWarnings が出す）", () => {
+    const s = spreadState();
+    const next = setSpreadSeconds(s, "smokeSecondsPerCell", 10);
+    expect(next.plan.drill.spread.smokeSecondsPerCell).toBe(10);
+    expect(validatePlan(next.plan)).toEqual([]);
+  });
+
+  it("元に戻す・やり直すで前後の秒数（同じ参照の校舎）に戻る", () => {
+    const s = spreadState();
+    const changed = setSpreadSeconds(s, "fireSecondsPerCell", 2);
+    const undone = undo(changed);
+    expect(undone.plan).toBe(s.plan);
+    expect(undone.plan.drill.spread.fireSecondsPerCell).toBe(6);
+    const redone = redo(undone);
+    expect(redone.plan).toBe(changed.plan);
+    expect(redone.plan.drill.spread.fireSecondsPerCell).toBe(2);
+  });
+
+  it("続けて 2 回変えると 2 回分の履歴になり，1 回ずつ戻る", () => {
+    const s = spreadState();
+    const a = setSpreadSeconds(s, "fireSecondsPerCell", 4);
+    const b = setSpreadSeconds(a, "smokeSecondsPerCell", 1);
+    expect(b.past).toEqual([s.plan, a.plan]);
+    expect(undo(b).plan).toBe(a.plan);
+    expect(undo(undo(b)).plan).toBe(s.plan);
+  });
+
+  it("秒数を変えると，やり直しの履歴は消える．同じ値なら消えない", () => {
+    const undone = undo(setStartFacing(spreadState(), "left"));
+    expect(canRedo(undone)).toBe(true);
+    expect(canRedo(setSpreadSeconds(undone, "fireSecondsPerCell", 6))).toBe(true);
+    expect(canRedo(setSpreadSeconds(undone, "fireSecondsPerCell", 7))).toBe(false);
+  });
+
+  it("ドラッグの途中で変えると，塗りを 1 回分の履歴にしてから秒数を変える", () => {
+    let s = selectTool(spreadState(), { kind: "corridor" });
+    const before = s.plan;
+    s = beginStroke(s, at(0, 2));
+    const next = setSpreadSeconds(s, "fireSecondsPerCell", 3);
+    expect(next.stroke).toBeNull();
+    expect(next.plan.drill.spread.fireSecondsPerCell).toBe(3);
+    expect(next.past).toHaveLength(2);
+    expect(next.past[0]).toBe(before);
+    const undoneOnce = undo(next);
+    expect(undoneOnce.plan.drill.spread.fireSecondsPerCell).toBe(6);
+    expect(cellAt(undoneOnce, 0, 2)[0]).toBe("corridor");
+    expect(undo(undoneOnce).plan).toBe(before);
+  });
+
+  it("ドラッグの途中に同じ値・受け付けない値を渡しても，塗りは確定する（秒数の履歴は積まない）", () => {
+    let s = selectTool(spreadState(), { kind: "corridor" });
+    const before = s.plan;
+    s = beginStroke(s, at(0, 2));
+    for (const v of [6, Number.NaN]) {
+      const next = setSpreadSeconds(s, "fireSecondsPerCell", v);
+      expect(next.stroke).toBeNull();
+      expect(next.past).toEqual([before]);
+      expect(next.plan.drill.spread.fireSecondsPerCell).toBe(6);
+    }
+  });
+});
+
+describe("setTimeLimit", () => {
+  it("制限時間を変えると 1 回分の履歴になり，ほかの訓練条件・マス目は変えない", () => {
+    const s = drillState({ timeLimitSeconds: 150 });
+    const next = setTimeLimit(s, 90);
+    expect(next.plan.drill.timeLimitSeconds).toBe(90);
+    expect(next.past).toEqual([s.plan]);
+    expectDrillOthersKept(s.plan, next.plan, ["timeLimitSeconds"]);
+    expect(validatePlan(next.plan)).toEqual([]);
+  });
+
+  it("今と同じ値なら同じ状態を返し，履歴に積まない", () => {
+    const s = drillState({ timeLimitSeconds: 150 });
+    const next = setTimeLimit(s, 150);
+    expect(next.plan).toBe(s.plan);
+    expect(canUndo(next)).toBe(false);
+  });
+
+  it.each(INVALID_SECONDS)("受け付けない値（%s）を渡すと何もしない", (v) => {
+    const s = drillState({ timeLimitSeconds: 150 });
+    const next = setTimeLimit(s, v);
+    expect(next.plan).toBe(s.plan);
+    expect(next.past).toEqual([]);
+  });
+
+  it("元に戻す・やり直すで前後の制限時間に戻る", () => {
+    const s = drillState({ timeLimitSeconds: 150 });
+    const changed = setTimeLimit(s, 60);
+    expect(undo(changed).plan).toBe(s.plan);
+    expect(redo(undo(changed)).plan).toBe(changed.plan);
+  });
+
+  it("ドラッグの途中で変えると，塗りを 1 回分の履歴にしてから制限時間を変える", () => {
+    let s = selectTool(drillState({ timeLimitSeconds: 150 }), { kind: "corridor" });
+    const before = s.plan;
+    s = beginStroke(s, at(0, 2));
+    const next = setTimeLimit(s, 60);
+    expect(next.stroke).toBeNull();
+    expect(next.past).toHaveLength(2);
+    expect(next.past[0]).toBe(before);
+    expect(undo(next).plan.drill.timeLimitSeconds).toBe(150);
   });
 });
