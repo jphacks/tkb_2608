@@ -1,7 +1,8 @@
 // 火と煙の見た目（F4）の組み立て．濃さは fireSmokeLayout.ts の純粋な関数で求める．
-// - 煙: 階ごとに校舎全体を覆う SMOKE_LAYER_COUNT 枚の水平な板（全階で 1 つのメッシュ）．各マスの濃さを 1 マス 1 テクセルの
-//   DataTexture に書き，なめらかに補間して読む（マスの境目を見せない）．4 段の billow ノイズを時刻でうねらせ，黒〜濃い灰色の
-//   もくもくした塊にする．天井の膜（smokeShadeAtHeight）で，着いたばかりの煙が天井を這い，時間とともに下へ厚くなる様子を出す
+// - 煙: 目から奥へ並べた視線に垂直な SMOKE_VOLUME.sliceCount 枚の板（1 つのメッシュ）で，視線に沿って煙を読む立体の塊として描く．
+//   各マスの濃さを 1 マス 1 テクセルの DataTexture に書き，なめらかに補間して読む（マスの境目を見せない）．3 段の billow ノイズを
+//   時刻でうねらせ，黒〜濃い灰色のもくもくした塊にし，下の端も塊ごとに上下させる．天井の膜（smokeShadeAtHeight）で，
+//   着いたばかりの煙が天井を這い，時間とともに下へ厚くなる様子を出す
 // - 炎: 決まった数の粒（1 つの InstancedBufferGeometry．描画 1 回）を燃えているマスの中から立ち上らせる．動きはシェーダーで時刻から求める．
 //   炎は根元が白〜黄，先が橙〜赤の縦長のしずく形で，昇りながらマスの中心へ寄って細く消える（ほぼ加算で光る）．
 //   一部の粒（isEmberParticle）は炎の後に火の粉になって舞い上がる（粒の数・描画の回数は増やさない）
@@ -14,6 +15,7 @@ import type { SchoolPlan } from "../../core/schoolPlan";
 import type { SpreadMap } from "../../sim/spread";
 import { disposeObjectTree } from "../common/meshHelpers";
 import {
+  CELL_ATLAS_BORDER,
   type CellAtlas,
   cellTexelCoord,
   chooseParticleSpawn,
@@ -33,12 +35,14 @@ import {
   particleCycle,
   SMOKE_CEILING_HEIGHT,
   SMOKE_FOG,
-  SMOKE_LAYER_COUNT,
   SMOKE_LOOK,
   SMOKE_SHEET,
+  SMOKE_VOLUME,
+  type SmokeSliceRange,
+  smokeBounds,
   smokeFogDensity,
-  smokeLayerHeight,
-  smokeLayerSpacing,
+  smokeSliceRange,
+  smokeSlices,
   sortByIgnition,
   writeCellTexels,
 } from "./fireSmokeLayout";
@@ -62,12 +66,14 @@ export const SMOKE_LAYER_COLOR = SMOKE_FOG.color;
  * 煙の層の見た目の値（仮の値．デモの校舎で見て決め直す）
  */
 export const SMOKE_SHADE = {
-  /** 煙の濃さ 1 で厚み 1 m を通した時の光の弱まり方（1/m）．層 1 枚の不透明度は 1 - exp(-値 × 濃さ × 厚み) */
+  /** 煙の濃さ 1 で 1 m を通した時の光の弱まり方（1/m）．板 1 枚の不透明度は 1 - exp(-値 × 濃さ × 区間の中で煙を通る長さ) */
   extinction: 0.9,
-  /** 1 枚の層の不透明度の上限（0〜1） */
+  /** 板 1 枚の不透明度の上限（0〜1） */
   maxOpacity: 0.92,
-  /** 層を斜めに見た時の厚みの上限（真上から見た厚みの倍率）．真横から見て不透明になりすぎないようにする */
-  maxSlant: 5,
+  /** 煙の下の端を塊ごとに上下させる幅（m）．下の端が水平な線に見えないようにする */
+  bottomWobble: 0.45,
+  /** SMOKE_VOLUME.bottom から上で煙を 0 から立ち上げる幅（m）．描く範囲の下の端で切れて見えないようにする */
+  bottomFade: 0.3,
   /** 濃い部分の色（火に近いほど・塊の間の筋・下面ほどこの色に寄る．火災の煙は黒い） */
   darkColor: 0x0c0b0a,
   /** 明るい部分の色（塊の盛り上がった所） */
@@ -78,6 +84,8 @@ export const SMOKE_SHADE = {
   warpCells: 0.7,
   /** 煙のノイズの細かさ（1/m）．塊 1 つがおよそ 1 / 値 m */
   noiseScale: 0.45,
+  /** 高さが 1 m 変わった時に模様をずらす量（ノイズの座標の単位）．大きいほど上下で模様が速く変わり，粒が目立つ */
+  heightNoiseScale: 0.8,
   /** 煙が流れる速さ（m/s 相当．ノイズの位置を動かす） */
   flowSpeed: 0.12,
   /** 最も下の層で塊がまばらになる度合い（0〜1）．下面をもくもくさせ，天井の側は一様に近くする */
@@ -200,18 +208,19 @@ float fsNoise(vec2 p) {
 `;
 
 /**
- * billow ノイズ（|2n - 1| を 4 段重ねる）．0 に近い所が塊の間の筋，大きい所が盛り上がった塊になり，もくもくした煙に見える
+ * billow ノイズ（|2n - 1| を 3 段重ねる）．0 に近い所が塊の間の筋，大きい所が盛り上がった塊になり，もくもくした煙に見える．
+ * 1 画素で板の枚数だけ読むので，段の数を抑える
  */
 const BILLOW_GLSL = /* glsl */ `
 float fsBillow(vec2 p) {
   float v = 0.0;
   float a = 0.5;
-  for (int k = 0; k < 4; k++) {
+  for (int k = 0; k < 3; k++) {
     v += a * abs(fsNoise(p) * 2.0 - 1.0);
     p = p * 2.07 + vec2(17.1, 9.2);
     a *= 0.5;
   }
-  return v / 0.9375;
+  return v / 0.875;
 }
 `;
 
@@ -231,7 +240,7 @@ vec4 sampleCells(vec2 texel) {
 }
 `;
 
-/** 煙の層・床の照り返しの頂点シェーダー（板の頂点はワールド座標．aGrid はテクセルの座標，aHeight は床からの高さ） */
+/** 床の照り返しの頂点シェーダー（板の頂点はワールド座標．aGrid はテクセルの座標，aHeight は床からの高さ） */
 const CELL_PLANE_VERTEX_SHADER = /* glsl */ `
 attribute vec2 aGrid;
 attribute float aHeight;
@@ -250,16 +259,44 @@ void main() {
 }
 `;
 
+/** 煙の板が視線を覆う広さ（奥行き 1 m あたりの半分の幅，m）．画面の外は描かれないので，広い視野でも欠けないよう大きめにする */
+const SMOKE_SLICE_SPREAD = 4;
+
+/**
+ * 煙の板の頂点シェーダー．板は目の座標系に置く（描く直前に modelMatrix をカメラの matrixWorld にする）．
+ * position.xy は ±1 の角，aSlice は板の位置・区間の始まり・終わり（0〜1．smokeSliceDepth と同じ式で奥行きにする）
+ */
+const SMOKE_VERTEX_SHADER = /* glsl */ `
+uniform vec2 uSliceRange;
+attribute vec3 aSlice;
+varying vec3 vWorld;
+varying vec3 vDepths;
+#include <fog_pars_vertex>
+float sliceDepth(float t) {
+  return uSliceRange.x * pow(uSliceRange.y / uSliceRange.x, t);
+}
+void main() {
+  float z = sliceDepth(aSlice.x);
+  vDepths = vec3(z, sliceDepth(aSlice.y), sliceDepth(aSlice.z));
+  vec4 local = vec4(position.xy * (z * ${glslFloat(SMOKE_SLICE_SPREAD)}), -z, 1.0);
+  vWorld = (modelMatrix * local).xyz;
+  vec4 mvPosition = modelViewMatrix * local;
+  gl_Position = projectionMatrix * mvPosition;
+  #include <fog_vertex>
+}
+`;
+
+/** 煙の板のフラグメントシェーダー．FLOOR_COUNT は階の数（define で埋め込む） */
 const SMOKE_FRAGMENT_SHADER = /* glsl */ `
 uniform float uTime;
-uniform float uSpacing;
+uniform float uCellSize;
+uniform vec4 uFloors[FLOOR_COUNT];
 uniform vec3 uColor;
 uniform vec3 uDarkColor;
 uniform vec3 uLightColor;
 uniform vec3 uGlowColor;
-varying vec2 vGrid;
-varying float vHeight;
 varying vec3 vWorld;
+varying vec3 vDepths;
 ${NOISE_GLSL}
 ${BILLOW_GLSL}
 ${SAMPLE_CELLS_GLSL}
@@ -286,33 +323,66 @@ float smokeShadeAtHeight(float d, float h) {
   float sheet = ${glslFloat(SMOKE_SHEET.strength)} * pow(d, ${glslFloat(SMOKE_SHEET.exponent)}) * inside;
   return max(smokeAtHeight(d, h), sheet);
 }
+// 画素ごとに決まる 0〜1 のばらつき（interleaved gradient noise）．隣り合う画素で値が大きく変わり，粒が目立ちにくい
+float fsDither(vec2 fragCoord) {
+  return fract(52.9829189 * fract(dot(fragCoord, vec2(0.06711056, 0.00583715))));
+}
 void main() {
+  // 奥行き 1 m あたりの視線の進み（ワールド座標）．板の区間 vDepths.y〜z のうち，煙の入る高さ（階ごと）にある部分を求める
+  vec3 ray = (vWorld - cameraPosition) / vDepths.x;
+  float bestA = 0.0;
+  float bestB = 0.0;
+  vec4 floorInfo = vec4(0.0);
+  for (int i = 0; i < FLOOR_COUNT; i++) {
+    float lo = uFloors[i].x + ${glslFloat(SMOKE_VOLUME.bottom)};
+    float hi = uFloors[i].x + ${glslFloat(SMOKE_VOLUME.top)};
+    float a = vDepths.y;
+    float b = vDepths.z;
+    if (abs(ray.y) < 1e-5) {
+      if (cameraPosition.y < lo || cameraPosition.y > hi) continue;
+    } else {
+      float za = (lo - cameraPosition.y) / ray.y;
+      float zb = (hi - cameraPosition.y) / ray.y;
+      a = max(a, min(za, zb));
+      b = min(b, max(za, zb));
+    }
+    if (b - a > bestB - bestA) {
+      bestA = a;
+      bestB = b;
+      floorInfo = uFloors[i];
+    }
+  }
+  if (bestB - bestA < 1e-3) discard;
+  // 区間の中の 1 点を画素ごとにばらして読む（隣の板と模様がつながり，板の境目が見えない）
+  vec3 p = cameraPosition + ray * mix(bestA, bestB, fsDither(gl_FragCoord.xy));
+  if (p.x < 0.0 || p.z < 0.0 || p.x > floorInfo.z || p.z > floorInfo.w) discard;
+  float h = p.y - floorInfo.x;
+  vec2 grid = vec2(p.x / uCellSize + ${glslFloat(CELL_ATLAS_BORDER)}, floorInfo.y + p.z / uCellSize);
   float t = uTime * ${glslFloat(SMOKE_SHADE.flowSpeed)};
-  // 層ごとに模様と流れる向きをずらし，重なった層が同じ模様に見えないようにする
-  vec2 drift = vec2(0.8, 0.5 + 0.3 * sin(vHeight * 2.0)) * t;
-  vec2 np = vWorld.xz * ${glslFloat(SMOKE_SHADE.noiseScale)} + vec2(vHeight * 3.7, vHeight * 1.3);
+  // 高さとともに模様と流れる向きをなめらかに変え，上下で同じ模様に見えないようにする
+  vec2 drift = vec2(0.8, 0.5 + 0.3 * sin(h * 2.0)) * t;
+  vec2 np = p.xz * ${glslFloat(SMOKE_SHADE.noiseScale)} + vec2(h, h * 0.4) * ${glslFloat(SMOKE_SHADE.heightNoiseScale)};
   // うねり: 流れと別の向き・速さで動くずらしで，模様が平行に流れるだけでなく形を変えながら渦を巻くようにする
   vec2 warp = vec2(
     fsNoise(np * 0.5 + drift + vec2(3.1, t * 0.7)),
     fsNoise(np * 0.5 - drift.yx + vec2(7.7 - t * 0.6, 1.9))
   ) - 0.5;
-  vec4 cell = sampleCells(vGrid + warp * ${glslFloat(SMOKE_SHADE.warpCells)});
+  vec4 cell = sampleCells(grid + warp * ${glslFloat(SMOKE_SHADE.warpCells)});
   float d = cell.r;
   if (d < 0.004) discard;
   float puff = smoothstep(0.08, 0.62, fsBillow(np + warp * 2.2 + drift * 1.5));
-  float low = clamp((${glslFloat(SMOKE_CEILING_HEIGHT)} - vHeight) / ${glslFloat(SMOKE_CEILING_HEIGHT - SMOKE_LOOK.fullBottom)}, 0.0, 1.0);
-  // 下の層ほど塊がまばら（下から見上げると煙の下面がもくもくして見える）
+  // 下の端を塊ごとに上下させる（盛り上がった塊ほど下へ垂れる）
+  float hb = h + (puff - 0.5) * ${glslFloat(SMOKE_SHADE.bottomWobble)};
+  float low = clamp((${glslFloat(SMOKE_CEILING_HEIGHT)} - hb) / ${glslFloat(SMOKE_CEILING_HEIGHT - SMOKE_LOOK.fullBottom)}, 0.0, 1.0);
+  // 低い所ほど塊がまばら（下から見上げると煙の下面がもくもくして見える）
   float sparse = ${glslFloat(SMOKE_SHADE.lowSparseness)} * low;
   float cover = smoothstep(sparse - 0.15, sparse + 0.3, puff);
   // 先端（濃さが小さい所）をノイズで削り，丸い塊が這い出すように見せる
   float front = smoothstep(0.0, ${glslFloat(SMOKE_SHADE.frontSoftness)}, d - (1.0 - puff) * ${glslFloat(SMOKE_SHADE.frontDepth)});
-  float s = smokeShadeAtHeight(d, vHeight) * cover * front * mix(0.55, 1.35, puff);
-  // 斜めに見るほど層の中を長く通るので濃くする（立体の煙を板で近づける）
-  vec3 toEye = cameraPosition - vWorld;
-  float slant = min(length(toEye) / max(abs(toEye.y), 1e-4), ${glslFloat(SMOKE_SHADE.maxSlant)});
-  float alpha = 1.0 - exp(-${glslFloat(SMOKE_SHADE.extinction)} * s * uSpacing * slant);
-  // 目の高さとほぼ同じ層は真横から見て線になるので消す（目の位置の煙はフォグで表す）
-  alpha *= smoothstep(0.02, 0.25, abs(toEye.y));
+  float s = smokeShadeAtHeight(d, hb) * cover * front * mix(0.55, 1.35, puff);
+  s *= smoothstep(${glslFloat(SMOKE_VOLUME.bottom)}, ${glslFloat(SMOKE_VOLUME.bottom + SMOKE_SHADE.bottomFade)}, hb);
+  // 区間の中で煙を通る長さだけ光が弱まる
+  float alpha = 1.0 - exp(-${glslFloat(SMOKE_SHADE.extinction)} * s * (bestB - bestA) * length(ray));
   alpha = min(alpha, ${glslFloat(SMOKE_SHADE.maxOpacity)});
   if (alpha < 0.004) discard;
   // 盛り上がった塊は明るく，塊の間の筋と下面（光が届かない）は黒に近くする
@@ -320,7 +390,7 @@ void main() {
   color *= 1.0 - 0.35 * low;
   color = mix(color, uColor, 0.2);
   color = mix(color, uDarkColor, clamp(cell.g * 0.8, 0.0, 1.0));
-  // 下の層ほど火の照り返しを受ける（塊の盛り上がった所ほど強く）
+  // 低い所ほど火の照り返しを受ける（塊の盛り上がった所ほど強く）
   color += uGlowColor * cell.b * (0.3 + 0.5 * low) * (0.4 + 0.6 * puff);
   gl_FragColor = vec4(color, alpha);
   #include <colorspace_fragment>
@@ -530,7 +600,7 @@ function pushPlane(
 }
 
 /**
- * 全ての階の水平な板をまとめた形を作る．layers は床からの高さの並び（煙の層は天井の側から，照り返しは 1 枚）
+ * 全ての階の水平な板をまとめた形を作る（床の照り返し）．layers は床からの高さの並び
  */
 function createCellPlanesGeometry(
   plan: SchoolPlan,
@@ -563,6 +633,31 @@ function createCellPlanesGeometry(
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
   geometry.setAttribute("aGrid", new THREE.Float32BufferAttribute(grids, 2));
   geometry.setAttribute("aHeight", new THREE.Float32BufferAttribute(heights, 1));
+  geometry.setIndex(indices);
+  return geometry;
+}
+
+/** 煙の板の形（smokeSlices の順に，奥の板から並べる．角は ±1，aSlice は板の位置・区間の始まり・終わり） */
+function createSmokeSlicesGeometry(): THREE.BufferGeometry {
+  const positions: number[] = [];
+  const slices: number[] = [];
+  const indices: number[] = [];
+  for (const slice of smokeSlices()) {
+    const base = positions.length / 3;
+    for (const [x, y] of [
+      [-1, -1],
+      [1, -1],
+      [1, 1],
+      [-1, 1],
+    ] as const) {
+      positions.push(x, y, 0);
+      slices.push(slice.center, slice.start, slice.end);
+    }
+    indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("aSlice", new THREE.Float32BufferAttribute(slices, 3));
   geometry.setIndex(indices);
   return geometry;
 }
@@ -662,33 +757,61 @@ export function createFireSmoke(plan: SchoolPlan, spread: SpreadMap): FireSmoke 
     group.add(mesh);
   }
 
-  // ---- 煙の層: 階ごとに SMOKE_LAYER_COUNT 枚（全階で 1 つのメッシュ）．天井の側から順に描く ----
+  // ---- 煙: 目から奥へ並べた SMOKE_VOLUME.sliceCount 枚の板（1 つのメッシュ）．奥の板から順に描く ----
   if (cells.smoke.length > 0) {
-    const layers = Array.from({ length: SMOKE_LAYER_COUNT }, (_, i) => smokeLayerHeight(i));
+    const bounds = smokeBounds(plan);
+    // 階ごとの床の高さ（m）・z = 0 のマスの行（テクセル）・幅・奥行き（m）
+    const floors = plan.floors.map(
+      (floor, f) =>
+        new THREE.Vector4(
+          floorBaseY(floor.level),
+          atlas.floorRows[f],
+          floor.width * plan.cellSize,
+          floor.depth * plan.cellSize,
+        ),
+    );
+    const sliceRange: SmokeSliceRange = {
+      near: SMOKE_VOLUME.nearest,
+      far: SMOKE_VOLUME.nearest + SMOKE_VOLUME.reach,
+    };
+    const sliceRangeUniform = {
+      value: new THREE.Vector2(sliceRange.near, sliceRange.far),
+    };
     const material = new THREE.ShaderMaterial({
       name: SMOKE_MESH_NAME,
+      defines: { FLOOR_COUNT: plan.floors.length },
       uniforms: {
         ...THREE.UniformsUtils.clone(THREE.UniformsLib.fog),
         uTime: timeUniform,
         uCells: cellsUniform,
         uCellsSize: cellsSizeUniform,
-        uSpacing: { value: smokeLayerSpacing() },
+        uCellSize: { value: plan.cellSize },
+        uFloors: { value: floors },
+        uSliceRange: sliceRangeUniform,
         uColor: { value: new THREE.Color(SMOKE_LAYER_COLOR) },
         uDarkColor: { value: new THREE.Color(SMOKE_SHADE.darkColor) },
         uLightColor: { value: new THREE.Color(SMOKE_SHADE.lightColor) },
         uGlowColor: { value: new THREE.Color(SMOKE_SHADE.glowColor) },
       },
-      vertexShader: CELL_PLANE_VERTEX_SHADER,
+      vertexShader: SMOKE_VERTEX_SHADER,
       fragmentShader: SMOKE_FRAGMENT_SHADER,
       transparent: true,
       depthWrite: false,
-      side: THREE.DoubleSide,
       fog: true,
     });
-    const mesh = new THREE.Mesh(createCellPlanesGeometry(plan, atlas, layers), material);
+    const mesh = new THREE.Mesh(createSmokeSlicesGeometry(), material);
     mesh.name = SMOKE_MESH_NAME;
     mesh.frustumCulled = false;
+    mesh.matrixAutoUpdate = false;
     mesh.renderOrder = 1;
+    // 板は描くカメラの前に置く（2 画面表示ではカメラごとに呼ばれる）．目が校舎の外なら校舎全体が板に収まるよう奥行きを広げる
+    const eyeScratch = new THREE.Vector3();
+    mesh.onBeforeRender = (_renderer, _scene, camera) => {
+      mesh.matrixWorld.copy(camera.matrixWorld);
+      eyeScratch.setFromMatrixPosition(camera.matrixWorld);
+      smokeSliceRange(bounds, eyeScratch.x, eyeScratch.y, eyeScratch.z, sliceRange);
+      sliceRangeUniform.value.set(sliceRange.near, sliceRange.far);
+    };
     group.add(mesh);
   }
 

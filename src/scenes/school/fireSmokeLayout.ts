@@ -59,19 +59,123 @@ export const SMOKE_FOG = {
 } as const;
 
 /**
- * 煙の半透明の層の数（校舎全体を覆う水平な板の枚数．階ごと）．
- * スマホで半透明の重なりが重くならないよう少なくし，層の間は濃さのテクスチャとノイズで埋めて見せる
+ * 煙を描く値．煙は，目から奥へ並べた視線に垂直な薄い板（スライス）で描く．板 1 枚は視線に沿った奥行きの区間を受け持ち，
+ * 区間のうち煙の入る高さの部分を画素ごとに 1 点読む（簡易なレイマーチング）．板は常に目の方を向くので，床に平行な面に見えない．
+ * 壁は板ごとに奥行きで隠すので，壁の奥の煙は見えない．板の数がそのまま 1 画素で煙を読む回数になるため，スマホに合わせて少なくする
  */
-export const SMOKE_LAYER_COUNT = 4;
+export const SMOKE_VOLUME = {
+  /** 板の枚数（1 つのメッシュ．描画 1 回） */
+  sliceCount: 6,
+  /** 最も手前の区間の始まり（m．目からの奥行き）．カメラの near より奥に置く */
+  nearest: 0.3,
+  /** 最も奥の区間の終わり（m．最も手前の区間の始まりから）．それより奥はフォグで見えにくいので描かない */
+  reach: 30,
+  /**
+   * 煙を描く最も低い高さ（m．床から）．しゃがんだ目（0.9 m）より上・最も濃い煙の下の端（SMOKE_LOOK.fullBottom）より下に置き，
+   * しゃがんで前を見ると煙の外に出る（視界が晴れる）ようにする
+   */
+  bottom: 0.95,
+  /** 煙を描く最も高い高さ（m．床から．天井） */
+  top: SMOKE_CEILING_HEIGHT,
+} as const;
 
-/** 層の中で最も上のものを天井から下げる高さ（m）．天井の面と重なってちらつかないようにする */
-export const SMOKE_LAYER_CEILING_GAP = 0.1;
+/** 板が受け持つ区間（0〜1 の位置．0 が最も手前，1 が最も奥．奥行きは smokeSliceDepth で求める） */
+export interface SmokeSlice {
+  /** 区間の始まり */
+  readonly start: number;
+  /** 板を置く位置（区間の真ん中） */
+  readonly center: number;
+  /** 区間の終わり */
+  readonly end: number;
+}
 
 /**
- * 最も下の層の高さ（m．床から）．最も濃い煙の下の端（SMOKE_LOOK.fullBottom）の少し上に置き，
- * しゃがんだ目（0.9 m）からは層を下から見上げ，立った目（1.6 m）では層の中にいる（フォグで表す）ようにする
+ * 板の区間の並び（奥から手前の順．半透明を奥から重ねて描くため）．0〜1 を count 等分する．
+ * 奥行きは smokeSliceDepth で手前ほど細かく割るので，近くの煙ほど細かく読む
  */
-export const SMOKE_LOWEST_LAYER = 1.35;
+export function smokeSlices(count: number = SMOKE_VOLUME.sliceCount): SmokeSlice[] {
+  const n = Number.isFinite(count) ? Math.max(1, Math.floor(count)) : 1;
+  return Array.from({ length: n }, (_, k) => {
+    const i = n - 1 - k;
+    return { start: i / n, center: (i + 0.5) / n, end: (i + 1) / n };
+  });
+}
+
+/** 板の描く奥行きの範囲（m．目からの奥行き）．smokeSliceRange が書き換える */
+export interface SmokeSliceRange {
+  near: number;
+  far: number;
+}
+
+/**
+ * 区間の位置 t（0〜1）の奥行き（m）．near〜far を等比に割る（手前ほど細かい）．シェーダーにも同じ式がある
+ */
+export function smokeSliceDepth(t: number, range: Readonly<SmokeSliceRange>): number {
+  return range.near * (range.far / range.near) ** t;
+}
+
+/** 校舎の煙が入りうる範囲（ワールド座標，m） */
+export interface SmokeBounds {
+  readonly minX: number;
+  readonly minY: number;
+  readonly minZ: number;
+  readonly maxX: number;
+  readonly maxY: number;
+  readonly maxZ: number;
+}
+
+/** 校舎の煙が入りうる範囲を求める（全ての階の床から天井まで．作る時に 1 回だけ呼ぶ） */
+export function smokeBounds(plan: Pick<SchoolPlan, "floors" | "cellSize">): SmokeBounds {
+  let maxX = 0;
+  let maxZ = 0;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+  for (const floor of plan.floors) {
+    maxX = Math.max(maxX, floor.width * plan.cellSize);
+    maxZ = Math.max(maxZ, floor.depth * plan.cellSize);
+    const base = floorBaseY(floor.level);
+    minY = Math.min(minY, base + SMOKE_VOLUME.bottom);
+    maxY = Math.max(maxY, base + SMOKE_VOLUME.top);
+  }
+  if (plan.floors.length === 0) {
+    minY = 0;
+    maxY = 0;
+  }
+  return { minX: 0, minY, minZ: 0, maxX, maxY, maxZ };
+}
+
+/**
+ * 目の位置（ワールド座標，m）から，板を並べる奥行きの範囲を求めて out に書く（毎フレーム呼ぶので新しい値を作らない）．
+ * - 目が校舎の中: 最も手前（SMOKE_VOLUME.nearest）から reach 先まで．校舎の最も遠い角より奥には置かない
+ * - 目が校舎の外（見下ろす視点等）: 校舎の最も近い所から reach 先まで（最も遠い角より奥には置かない）
+ * 目の位置が NaN・無限の時は，目が校舎の中にいる時と同じ既定の範囲にする
+ */
+export function smokeSliceRange(
+  bounds: SmokeBounds,
+  eyeX: number,
+  eyeY: number,
+  eyeZ: number,
+  out: SmokeSliceRange,
+): SmokeSliceRange {
+  const { nearest, reach } = SMOKE_VOLUME;
+  if (!Number.isFinite(eyeX) || !Number.isFinite(eyeY) || !Number.isFinite(eyeZ)) {
+    out.near = nearest;
+    out.far = nearest + reach;
+    return out;
+  }
+  const nx = Math.max(bounds.minX - eyeX, 0, eyeX - bounds.maxX);
+  const ny = Math.max(bounds.minY - eyeY, 0, eyeY - bounds.maxY);
+  const nz = Math.max(bounds.minZ - eyeZ, 0, eyeZ - bounds.maxZ);
+  const fx = Math.max(Math.abs(eyeX - bounds.minX), Math.abs(eyeX - bounds.maxX));
+  const fy = Math.max(Math.abs(eyeY - bounds.minY), Math.abs(eyeY - bounds.maxY));
+  const fz = Math.max(Math.abs(eyeZ - bounds.minZ), Math.abs(eyeZ - bounds.maxZ));
+  const near = Math.max(nearest, Math.hypot(nx, ny, nz));
+  const far = Math.min(Math.hypot(fx, fy, fz), near + reach);
+  out.near = near;
+  // 校舎がとても小さい・遠い時も区間が潰れないよう，奥を手前の 2 倍以上にする
+  out.far = Math.max(far, near * 2);
+  return out;
+}
 
 /** 目の位置（ワールド座標，m）．THREE.Vector3 もそのまま渡せる */
 export interface EyePosition {
@@ -178,16 +282,6 @@ export function smokeAtHeight(density: number, heightAboveFloor: number): number
 }
 
 /**
- * 煙の層の index 番目（0 が天井の側）の高さ（m．床から）．天井の少し下から SMOKE_LOWEST_LAYER までを等間隔に分ける．
- * 層の高さは時刻で動かさず，煙が下りてくる様子は各層の濃さ（smokeAtHeight をシェーダーで求める）で表す
- */
-export function smokeLayerHeight(index: number, count = SMOKE_LAYER_COUNT): number {
-  const top = SMOKE_CEILING_HEIGHT - SMOKE_LAYER_CEILING_GAP;
-  if (count <= 1) return top;
-  return top - ((top - SMOKE_LOWEST_LAYER) * index) / (count - 1);
-}
-
-/**
  * 煙の層の見た目のための値（濃さの計算 smokeAtHeight・eyeSmokeDensity には使わない．描画の濃淡だけに使う）．
  * 煙は天井に当たって薄い膜のように這って広がり，時間とともに下へ厚くなる．smokeAtHeight は着いたばかりの薄い煙を
  * ほとんど見せないため，層の下の端より上では「天井の膜」の濃さを下限として見せ，先端が天井を這う様子を出す
@@ -215,12 +309,6 @@ export function smokeShadeAtHeight(density: number, heightAboveFloor: number): n
   const inside = smoothstep01((heightAboveFloor - (bottom - softEdge)) / softEdge);
   const sheet = SMOKE_SHEET.strength * d ** SMOKE_SHEET.exponent * inside;
   return Math.max(base, sheet);
-}
-
-/** 層と層の間の高さ（m）．1 枚の層が受け持つ煙の厚みとして，不透明度の計算に使う */
-export function smokeLayerSpacing(count = SMOKE_LAYER_COUNT): number {
-  const top = SMOKE_CEILING_HEIGHT - SMOKE_LAYER_CEILING_GAP;
-  return count <= 1 ? top - SMOKE_LOWEST_LAYER : (top - SMOKE_LOWEST_LAYER) / (count - 1);
 }
 
 /** 階の床の高さ（m）．SPEC_02「座標」 */

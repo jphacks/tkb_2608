@@ -21,10 +21,10 @@ import {
   FIRE_PARTICLES,
   isEmberParticle,
   listFireSmokeCells,
-  SMOKE_CEILING_HEIGHT,
-  SMOKE_LAYER_COUNT,
+  SMOKE_VOLUME,
   smokeAtHeight,
-  smokeLayerHeight,
+  smokeBounds,
+  smokeSliceRange,
 } from "./fireSmokeLayout";
 
 const at = (x: number, z: number, floor = 0): CellRef => ({ floor, x, z });
@@ -112,30 +112,68 @@ describe("createFireSmoke（デモの校舎の構造）", () => {
     fs.dispose();
   });
 
-  it("煙の層は 1 階 × 4 枚 × 4 頂点で，高さは床からの層の高さ（天井 3 m より下）", () => {
+  it("煙は視線に垂直な SMOKE_VOLUME.sliceCount 枚の板（4 頂点ずつ）で，奥の板から順に並ぶ", () => {
     const fs = build();
     const geometry = meshByName(fs, SMOKE_MESH_NAME).geometry;
     const position = geometry.getAttribute("position");
-    expect(SMOKE_LAYER_COUNT).toBe(4);
-    expect(position.count).toBe(DEMO_SCHOOL.floors.length * SMOKE_LAYER_COUNT * 4);
-    const ys = new Set<number>();
-    for (let i = 0; i < position.count; i++) ys.add(Math.round(position.getY(i) * 1000) / 1000);
-    const expected = [0, 1, 2, 3].map((i) => Math.round(smokeLayerHeight(i) * 1000) / 1000);
-    expect([...ys].sort()).toEqual([...expected].sort());
-    for (const y of ys) expect(y).toBeLessThan(SMOKE_CEILING_HEIGHT);
+    const slice = geometry.getAttribute("aSlice");
+    expect(position.count).toBe(SMOKE_VOLUME.sliceCount * 4);
+    // 板は目の座標系の z = 0 に置く角（±1）で，奥行きはシェーダーで aSlice から求める
+    for (let i = 0; i < position.count; i++) {
+      expect(Math.abs(position.getX(i))).toBe(1);
+      expect(Math.abs(position.getY(i))).toBe(1);
+      expect(position.getZ(i)).toBe(0);
+    }
+    const centers: number[] = [];
+    for (let i = 0; i < slice.count; i += 4) {
+      expect(slice.getY(i)).toBeLessThan(slice.getX(i));
+      expect(slice.getX(i)).toBeLessThan(slice.getZ(i));
+      centers.push(slice.getX(i));
+    }
+    for (let i = 1; i < centers.length; i++) expect(centers[i]).toBeLessThan(centers[i - 1]);
     fs.dispose();
   });
 
-  it("煙の層は校舎のマス目全体（幅 19 m × 奥行き 13 m）を覆う", () => {
+  it("煙のシェーダーには階ごとの床の高さ・行・幅・奥行き（19 m × 13 m）を渡す", () => {
     const fs = build();
-    const geometry = meshByName(fs, SMOKE_MESH_NAME).geometry;
-    geometry.computeBoundingBox();
-    const box = geometry.boundingBox;
-    if (box === null) throw new Error("bounding box が無い");
-    expect(box.min.x).toBeCloseTo(0, 10);
-    expect(box.min.z).toBeCloseTo(0, 10);
-    expect(box.max.x).toBeCloseTo(19, 10);
-    expect(box.max.z).toBeCloseTo(13, 10);
+    const material = shaderOf(meshByName(fs, SMOKE_MESH_NAME));
+    expect(material.defines.FLOOR_COUNT).toBe(1);
+    const floors = material.uniforms.uFloors.value as THREE.Vector4[];
+    expect(floors).toHaveLength(1);
+    expect(floors[0].x).toBe(0);
+    expect(floors[0].y).toBe(1);
+    expect(floors[0].z).toBeCloseTo(19, 10);
+    expect(floors[0].w).toBeCloseTo(13, 10);
+    fs.dispose();
+  });
+
+  it("煙の板は描く直前にカメラの前に置かれ，奥行きの範囲は smokeSliceRange と同じ", () => {
+    const fs = build();
+    const mesh = meshByName(fs, SMOKE_MESH_NAME);
+    const camera = new THREE.PerspectiveCamera(70, 1, 0.05, 50);
+    camera.position.set(standingEye.x, standingEye.y, standingEye.z);
+    camera.rotation.set(0.3, 1.2, 0);
+    camera.updateMatrixWorld();
+    mesh.onBeforeRender(
+      {} as THREE.WebGLRenderer,
+      new THREE.Scene(),
+      camera,
+      mesh.geometry,
+      mesh.material as THREE.Material,
+      {} as THREE.Group,
+    );
+    expect(mesh.matrixWorld.equals(camera.matrixWorld)).toBe(true);
+    const expected = smokeSliceRange(
+      smokeBounds(DEMO_SCHOOL),
+      standingEye.x,
+      standingEye.y,
+      standingEye.z,
+      { near: 0, far: 0 },
+    );
+    const range = shaderOf(mesh).uniforms.uSliceRange.value as THREE.Vector2;
+    expect(range.x).toBeCloseTo(expected.near, 10);
+    expect(range.y).toBeCloseTo(expected.far, 10);
+    expect(range.x).toBe(SMOKE_VOLUME.nearest);
     fs.dispose();
   });
 
@@ -176,17 +214,19 @@ describe("createFireSmoke（デモの校舎の構造）", () => {
 });
 
 describe("createFireSmoke（2 階建て）", () => {
-  it("煙の層の頂点は 階の数 × 4 枚 × 4 頂点で，2 階の層は 3.5 m 上", () => {
+  it("煙のシェーダーには 2 つの階を渡し，2 階の床は 3.5 m 上", () => {
     const plan = makePlan([["hhh", "hhh"], ["hhh"]], [at(1, 0, 0), at(1, 0, 1)]);
     const fs = build(plan);
-    const position = meshByName(fs, SMOKE_MESH_NAME).geometry.getAttribute("position");
-    expect(position.count).toBe(2 * SMOKE_LAYER_COUNT * 4);
-    const ys = new Set<number>();
-    for (let i = 0; i < position.count; i++) ys.add(Math.round(position.getY(i) * 1000) / 1000);
-    for (let i = 0; i < SMOKE_LAYER_COUNT; i++) {
-      expect(ys.has(Math.round(smokeLayerHeight(i) * 1000) / 1000)).toBe(true);
-      expect(ys.has(Math.round((3.5 + smokeLayerHeight(i)) * 1000) / 1000)).toBe(true);
-    }
+    const material = shaderOf(meshByName(fs, SMOKE_MESH_NAME));
+    expect(material.defines.FLOOR_COUNT).toBe(2);
+    const floors = material.uniforms.uFloors.value as THREE.Vector4[];
+    expect(floors.map((f) => f.x)).toEqual([0, 3.5]);
+    // 各階の z = 0 の行は縁（1 テクセル）の内側から積む（1 階の奥行き 2 + 縁 2 の次）
+    expect(floors.map((f) => f.y)).toEqual([1, 5]);
+    expect(floors.map((f) => [f.z, f.w])).toEqual([
+      [3, 2],
+      [3, 1],
+    ]);
     expect(meshByName(fs, GLOW_MESH_NAME).geometry.getAttribute("position").count).toBe(8);
     fs.dispose();
   });

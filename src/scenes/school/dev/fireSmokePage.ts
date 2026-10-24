@@ -16,7 +16,7 @@ import {
   FIRE_PARTICLES,
   isEmberParticle,
   SMOKE_CEILING_HEIGHT,
-  SMOKE_LAYER_COUNT,
+  SMOKE_VOLUME,
 } from "../fireSmokeLayout";
 
 /** マスの種類ごとの板の色（routeArrowsPage.ts と同じ） */
@@ -331,7 +331,7 @@ renderer.setAnimationLoop(() => {
   timeLabel.textContent = `${seconds.toFixed(1)} / ${maxSeconds} 秒`;
   info.textContent = [
     `${plan.name}（${floor.width} × ${floor.depth} マス．火の対象 ${fireSmoke.cells.fire.length}・煙の対象 ${fireSmoke.cells.smoke.length}）`,
-    `炎の粒: ${FIRE_PARTICLES.count} 個（うち火の粉 ${emberCount}）・煙の層: 階ごとに ${SMOKE_LAYER_COUNT} 枚（描画はそれぞれ 1 回）`,
+    `炎の粒: ${FIRE_PARTICLES.count} 個（うち火の粉 ${emberCount}）・煙: 視線に垂直な板 ${SMOKE_VOLUME.sliceCount} 枚（描画はそれぞれ 1 回）`,
     `fps: ${fps.toFixed(0)}・update: 平均 ${updateAvg.toFixed(3)} ms／最大 ${updatePeak.toFixed(3)} ms・描画: ${drawCalls} 回（簡易な校舎の 3 回を含む）`,
     `時刻: ${seconds.toFixed(1)} 秒・燃えているマス: ${s.burningCells}・煙のあるマス: ${s.smokyCells}`,
     firstPerson
