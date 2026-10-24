@@ -1,7 +1,8 @@
-// 入力の入口（SPEC_01「input/」）．本物のセンサー（device）とキーボード・マウスのモック（mock）を同じ形で返す．
+// 入力の入口（SPEC_01「input/」）．本物のセンサー（device）とキーボード・マウスのモック（mock），
+// 記録の再生（replay．開発時だけ）を同じ形で返す．
 // app/（今は src/main.ts）は read(now) を描画の直前に呼び，PlayerInput を受け取るだけにする．
 // ハンドトラッキングはまだ無いため，hands は常に UNTRACKED_HAND
-import type { CalibrationProfile, PlayerInput } from "../core/types";
+import { type CalibrationProfile, IDLE_PLAYER_INPUT, type PlayerInput } from "../core/types";
 import { DeviceTracker } from "./deviceTracker";
 import { MockInput } from "./mock/mockInput";
 import {
@@ -17,7 +18,21 @@ import {
 } from "./sensors/sensorSource";
 import type { MotionSample, OrientationSample, ScreenSample } from "./sensors/types";
 
-export type InputKind = "device" | "mock";
+export type InputKind = "device" | "mock" | "replay";
+
+/**
+ * replay: 再生する記録の指定．省いた項目は URL パラメータ（?log=・?from=・?loop=．replay/replayLog.ts の parseReplaySearch）から読む
+ */
+export interface ReplayOptions {
+  /** 記録の中身（JSONL）．あれば log より優先する */
+  readonly text?: string;
+  /** logs/input/ の記録のファイル名．null なら開発サーバーの最も新しい記録 */
+  readonly log?: string | null;
+  /** 記録の最初の motion から何秒の所から流すか */
+  readonly fromSec?: number;
+  /** 最後まで流したら最初に戻るか（既定は戻る） */
+  readonly loop?: boolean;
+}
 
 /** センサーの許可の結果（mock は常に not-required） */
 export interface InputActivation {
@@ -45,6 +60,8 @@ export interface InputSourceOptions {
   readonly target?: HTMLElement;
   /** device: 判定の途中の値を見る（dev ページ用） */
   readonly observer?: InputObserver;
+  /** replay: 再生する記録 */
+  readonly replay?: ReplayOptions;
 }
 
 export interface InputSource {
@@ -58,7 +75,7 @@ export interface InputSource {
   activate(): Promise<InputActivation>;
   /** 今の向きを正面にする */
   recenter(): void;
-  /** device の判定の中身（dev ページ用）．mock では null */
+  /** device・replay の判定の中身（dev ページ用）．mock・replay の読み込み前では null */
   readonly tracker: DeviceTracker | null;
   dispose(): void;
 }
@@ -119,7 +136,39 @@ function createMockSource(options: InputSourceOptions): InputSource {
   };
 }
 
+/**
+ * 記録の再生（replay）．再生の本体（replay/replaySource.ts）は開発時だけ動的に読み込み，本番のビルドに含めない
+ * （import.meta.env.DEV が false の分岐ごと消える）．本番で指定された時は止まって立ったままの入力にする
+ */
+function createReplaySourceLazy(options: InputSourceOptions): InputSource {
+  let inner: InputSource | null = null;
+  let disposed = false;
+  if (import.meta.env.DEV) {
+    void import("./replay/replaySource").then(
+      (m) => {
+        if (!disposed) inner = m.createReplaySource(options);
+      },
+      () => undefined,
+    );
+  }
+  return {
+    kind: "replay",
+    get tracker() {
+      return inner?.tracker ?? null;
+    },
+    read: (now) => inner?.read(now) ?? { ...IDLE_PLAYER_INPUT, time: now },
+    activate: () => Promise.resolve({ motion: "not-required", orientation: "not-required" }),
+    recenter: () => inner?.recenter(),
+    dispose: () => {
+      disposed = true;
+      inner?.dispose();
+    },
+  };
+}
+
 /** 入力を作る */
 export function createInputSource(options: InputSourceOptions): InputSource {
-  return options.kind === "device" ? createDeviceSource(options) : createMockSource(options);
+  if (options.kind === "device") return createDeviceSource(options);
+  if (options.kind === "replay") return createReplaySourceLazy(options);
+  return createMockSource(options);
 }

@@ -52,7 +52,7 @@
 | --- | --- |
 | （なし）／`?scene=<空間の id>` | PC 確認用の空間ビューア（ドラッグで視点を回す） |
 | `?app` | 体験の流れ（開始画面 → ホーム → ロビー → シナリオ）を起動する．入力は実機のセンサー（`createInputSource({ kind: "device" })`）で，頭の向き・足踏み・しゃがみが流れに届く．ロビーのキャリブレーションが終わると `Session.calibration` を入力に渡し，正面を `yawOffset` にリセットする（しきい値は lobby/ と input/ で意味がそろうまで渡さず，入力の既定値を使う．Issue #58）．シナリオは今は仮表示（`Session.calibration` の JSON・`PlayerInput` の中身・「もう一度」「ホームへ」） |
-| `?app&input=mock`／`?app&input=device` | 体験の流れの入力を切り替える（`?input=` の解釈は `src/input/inputParam.ts`．指定なしは `device`）．`mock` は PC 用で，キーボードとドラッグで同じ流れを通す（キャリブレーションの後は今の向きを正面にする） |
+| `?app&input=mock`／`?app&input=device` | 体験の流れの入力を切り替える（`?input=` の解釈は `src/input/inputParam.ts`．指定なしは `device`）．`mock` は PC 用で，キーボードとドラッグで同じ流れを通す（キャリブレーションの後は今の向きを正面にする）．`?app&input=replay` は開発サーバーでだけ，記録した実機の動き（`logs/input/`）を流す（[ENV_04](../02_ENV/ENV_04_開発コマンド.md)） |
 | `?stereo=1`／`?stereo=0` | 左右 2 画面の表示を強制する．付けなければスマホ（`(pointer: coarse)` の端末）だけ 2 画面 |
 | `?debug` | デバッグ用．ロビーで開始ボタンを 3 秒見つめて始める（横向きで端末がほぼ水平の時だけ数える），Enter／Space で今の段階を飛ばす．本番の経路では使わない |
 

@@ -99,4 +99,38 @@ describe("createInputSource", () => {
     expect(() => src.recenter()).not.toThrow();
     src.dispose();
   });
+
+  it("replay: 許可は要らず，記録を読み込むまでは止まって立ち，読み込むと判定の中身（tracker）が出る", async () => {
+    const motion = (t: number) =>
+      JSON.stringify({
+        type: "motion",
+        t,
+        acc: [0, 0, 0],
+        accG: [0, 9.81, 0],
+        rot: [0, 0, 0],
+        interval: 16,
+      });
+    const src = createInputSource({
+      kind: "replay",
+      params: TEST_PARAMS,
+      replay: { text: `${motion(0)}\n${motion(16)}\n`, loop: false },
+    });
+    expect(src.kind).toBe("replay");
+    await expect(src.activate()).resolves.toEqual({
+      motion: "not-required",
+      orientation: "not-required",
+    });
+    expect(src.read(5)).toMatchObject({
+      time: 5,
+      posture: "standing",
+      walking: false,
+      walkSpeed: 0,
+    });
+    await vi.waitFor(() => expect(src.tracker).not.toBeNull());
+    const input = src.read(100);
+    expect(input).toMatchObject({ time: 100, posture: "standing", walking: false });
+    expect(input.hands).toEqual({ left: UNTRACKED_HAND, right: UNTRACKED_HAND });
+    expect(() => src.recenter()).not.toThrow();
+    src.dispose();
+  });
 });

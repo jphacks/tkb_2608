@@ -20,6 +20,16 @@ export const DEV_PAGES = [
     title: "ゴーグルでの確認",
     note: "左右 2 画面の空間で歩く・しゃがむ・見回す（判定の状態を視界に表示）",
   },
+  {
+    file: "replay.html",
+    title: "再生と調整（PC）",
+    note: "記録を判定し直し，しきい値の前後を図と指標で比べる・params の書き出し・切り出し",
+  },
+  {
+    file: "panel.html",
+    title: "操作盤（PC）",
+    note: "キーで誤判定の印を記録に書き込む・スマホの判定の状態を見る",
+  },
 ] as const;
 
 export type DevPageFile = (typeof DEV_PAGES)[number]["file"];

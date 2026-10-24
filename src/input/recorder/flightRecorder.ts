@@ -1,9 +1,11 @@
 // フライトレコーダーの殻．記録をバッファにため，2 秒ごとに開発サーバーへ JSONL で送る（experiment_山﨑/10）．
 // 開発時だけ読み込む（dev ページ，または import.meta.env.DEV の時の動的 import から使う．src/main.ts から静的に import しない）
+import { type ClockEstimate, type ClockPing, pickClockEstimate } from "./clockSync";
 import {
   classifySendStatus,
   createSessionId,
   INPUT_LOG_ENDPOINT,
+  INPUT_LOG_ROUTES,
   isValidSessionId,
   type SendOutcome,
 } from "./logProtocol";
@@ -190,6 +192,23 @@ export class FlightRecorder {
     }
   }
 
+  /**
+   * 開発サーバーと時刻を合わせ，clock レコードを記録する（操作盤の印を同じ時刻の基準で書き込むため）．
+   * 開発サーバーにつながらなければ何もしない（印は壁時計で換算される）
+   */
+  async syncClock(): Promise<ClockEstimate | null> {
+    const estimate = await measureServerClock(this.endpoint);
+    if (estimate !== null) {
+      this.record({
+        type: "clock",
+        t: estimate.t,
+        serverTime: estimate.serverTime,
+        rtt: estimate.rtt,
+      });
+    }
+    return estimate;
+  }
+
   /** 残している記録の全体（JSONL）．送信済みの分も上限までは含む */
   toJsonl(): string {
     return this.buffer.toJsonl();
@@ -217,4 +236,32 @@ export class FlightRecorder {
     const s = this.status();
     for (const l of this.listeners) l(s);
   }
+}
+
+/**
+ * 開発サーバーの時計を count 回問い合わせ，最も速く返ってきた往復で時刻を合わせる（操作盤のページも使う）．
+ * 1 回も成功しなければ null
+ */
+export async function measureServerClock(
+  endpoint: string = INPUT_LOG_ENDPOINT,
+  count = 5,
+): Promise<ClockEstimate | null> {
+  const pings: ClockPing[] = [];
+  for (let i = 0; i < count; i++) {
+    try {
+      const sendT = performance.now();
+      const res = await fetch(`${endpoint}${INPUT_LOG_ROUTES.time}`, { cache: "no-store" });
+      const recvT = performance.now();
+      if (!res.ok) continue;
+      const body: unknown = await res.json();
+      const serverTime =
+        typeof body === "object" && body !== null && "serverTime" in body
+          ? Number(body.serverTime)
+          : Number.NaN;
+      pings.push({ sendT, recvT, serverTime });
+    } catch {
+      // つながらない時は次の往復を試す
+    }
+  }
+  return pickClockEstimate(pings);
 }

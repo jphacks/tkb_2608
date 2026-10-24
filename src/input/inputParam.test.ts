@@ -12,16 +12,26 @@ describe("parseInputKind", () => {
     ["?input=%20mock%20", "mock"],
     ["?scene=train&input=mock", "mock"],
     ["input=device", "device"],
+    ["?input=replay", "replay"],
+    ["?input=REPLAY", "replay"],
+    ["?scene=train&input=replay&log=20261024-143537_o0qich1i.jsonl&from=30", "replay"],
+    ["?app&input=replay", "replay"],
   ])("%s → %s", (search, kind) => {
     expect(parseInputKind(search)).toBe(kind);
   });
 
-  it.each(["", "?", "?input=", "?input=hands", "?input=mocks", "?scene=train", "?Input=mock"])(
-    "%s → null（今までどおりの操作）",
-    (search) => {
-      expect(parseInputKind(search)).toBeNull();
-    },
-  );
+  it.each([
+    "",
+    "?",
+    "?input=",
+    "?input=hands",
+    "?input=mocks",
+    "?input=replays",
+    "?scene=train",
+    "?Input=mock",
+  ])("%s → null（今までどおりの操作）", (search) => {
+    expect(parseInputKind(search)).toBeNull();
+  });
 });
 
 describe("formatPlayerInput", () => {

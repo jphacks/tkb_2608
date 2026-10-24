@@ -4,6 +4,8 @@ import {
   checkJsonlBody,
   findLogFileForSession,
   formatLogTimestamp,
+  isLogFileName,
+  sortLogFileNames,
 } from "./logFileName";
 
 // ローカル時刻で作る（formatLogTimestamp はその環境のローカル時刻で書く）
@@ -128,5 +130,73 @@ describe("checkJsonlBody", () => {
     const r = checkJsonlBody(body);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toEqual(expect.any(String));
+  });
+});
+
+describe("isLogFileName", () => {
+  it.each([
+    "20261024-143537_o0qich1i.jsonl",
+    "20261024-143537_a.jsonl",
+    `20261024-143537_${"a".repeat(64)}.jsonl`,
+    "20261024-143537_A-b-9.jsonl",
+  ])("%s は記録のファイル名", (name) => {
+    expect(isLogFileName(name)).toBe(true);
+  });
+
+  it.each([
+    "",
+    "../20261024-143537_abc.jsonl",
+    "./20261024-143537_abc.jsonl",
+    "logs/input/20261024-143537_abc.jsonl",
+    "/20261024-143537_abc.jsonl",
+    "20261024-143537_abc.jsonl/../../package.json",
+    "20261024-143537_../x.jsonl",
+    "20261024-143537_a.b.jsonl",
+    "20261024-143537_a\\b.jsonl",
+    "20261024-143537_.jsonl",
+    `20261024-143537_${"a".repeat(65)}.jsonl`,
+    "20261024-143537_abc.json",
+    "20261024-143537_abc.jsonl\n",
+    "20261024-143537_abc.jsonl\u0000",
+    "2026102-143537_abc.jsonl",
+    "20261024_143537_abc.jsonl",
+    "package.json",
+    "..",
+  ])("%j は記録のファイル名でない（ほかのファイルを読ませない）", (name) => {
+    expect(isLogFileName(name)).toBe(false);
+  });
+
+  it.each([null, undefined, 123, {}, ["20261024-143537_abc.jsonl"]])(
+    "文字列でない（%j）なら false",
+    (v) => {
+      expect(isLogFileName(v)).toBe(false);
+    },
+  );
+});
+
+describe("sortLogFileNames", () => {
+  it("記録のファイル名だけを残し，新しい順に並べる", () => {
+    expect(
+      sortLogFileNames([
+        "20261024-100000_b.jsonl",
+        "notes.txt",
+        "20261025-090000_a.jsonl",
+        ".gitkeep",
+        "20261024-100000_a.jsonl",
+        "20261023-235959_z.jsonl",
+      ]),
+    ).toEqual([
+      "20261025-090000_a.jsonl",
+      "20261024-100000_b.jsonl",
+      "20261024-100000_a.jsonl",
+      "20261023-235959_z.jsonl",
+    ]);
+  });
+
+  it("元の配列は変えず，空なら空", () => {
+    const names = ["20261023-000000_a.jsonl", "20261024-000000_a.jsonl"];
+    sortLogFileNames(names);
+    expect(names).toEqual(["20261023-000000_a.jsonl", "20261024-000000_a.jsonl"]);
+    expect(sortLogFileNames([])).toEqual([]);
   });
 });

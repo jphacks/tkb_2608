@@ -1,12 +1,15 @@
-// ?input=mock|device の解釈と，入力の確認用の表示の文字列（DOM に依存しない純粋な関数）
+// ?input=mock|device|replay の解釈と，入力の確認用の表示の文字列（DOM に依存しない純粋な関数）
 import type { PlayerInput } from "../core/types";
 import { pitchOfQuat, yawOfQuat } from "./head/quat";
 import type { InputKind } from "./inputSource";
 
-/** ?input= の値 → 入力の種類．指定なし・不正な値は null（今までどおりの操作のまま）．大文字小文字は区別しない */
+/**
+ * ?input= の値 → 入力の種類．指定なし・不正な値は null（今までどおりの操作のまま）．大文字小文字は区別しない．
+ * replay（記録の再生）は開発サーバーでだけ動く（本番では止まって立ったままの入力になる）
+ */
 export function parseInputKind(search: string): InputKind | null {
   const v = new URLSearchParams(search).get("input")?.trim().toLowerCase();
-  return v === "mock" || v === "device" ? v : null;
+  return v === "mock" || v === "device" || v === "replay" ? v : null;
 }
 
 function deg(rad: number): string {

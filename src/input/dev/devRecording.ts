@@ -53,6 +53,8 @@ export async function startDevRecording(
   };
   document.addEventListener("visibilitychange", onVisibility);
   recorder.start();
+  // 操作盤（PC）の印を同じ時刻の基準で書き込めるよう，開発サーバーと時刻を合わせる（待たない）
+  void recorder.syncClock();
   return {
     recorder,
     permission,

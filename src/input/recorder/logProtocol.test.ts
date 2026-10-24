@@ -3,7 +3,10 @@ import {
   classifySendStatus,
   createSessionId,
   INPUT_LOG_ENDPOINT,
+  INPUT_LOG_ROUTES,
   isValidSessionId,
+  MARK_KIND_PATTERN,
+  MAX_MARK_NOTE_LENGTH,
   MAX_REQUEST_BYTES,
 } from "./logProtocol";
 
@@ -12,6 +15,33 @@ describe("約束事の定数", () => {
     expect(INPUT_LOG_ENDPOINT).toBe("/__input-log");
     expect(MAX_REQUEST_BYTES).toBe(1024 * 1024);
   });
+
+  it("記録の口の下に time・sessions・mark・list・file の口を置く", () => {
+    expect(INPUT_LOG_ROUTES).toEqual({
+      time: "/time",
+      sessions: "/sessions",
+      mark: "/mark",
+      list: "/list",
+      file: "/file",
+    });
+  });
+
+  it("印の説明は 200 文字まで", () => {
+    expect(MAX_MARK_NOTE_LENGTH).toBe(200);
+  });
+});
+
+describe("MARK_KIND_PATTERN", () => {
+  it.each(["false-walk", "other", "a", "0", "a".repeat(32)])("%s は印の種類として使える", (k) => {
+    expect(MARK_KIND_PATTERN.test(k)).toBe(true);
+  });
+
+  it.each(["", "A", "a_b", "a b", "a/b", "../x", "a\nb", "あ", "a".repeat(33)])(
+    "%j は使えない",
+    (k) => {
+      expect(MARK_KIND_PATTERN.test(k)).toBe(false);
+    },
+  );
 });
 
 describe("isValidSessionId", () => {
