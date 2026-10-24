@@ -8,10 +8,10 @@ import type {
   DrillTrack,
 } from "../core/drill";
 import type { CellRef, SchoolPlan } from "../core/schoolPlan";
-import { worldToCell } from "./grid";
+import { errorBehaviorsAt, isInSmoke, positionCell } from "./errorBehavior";
 import { OFF_ROUTE_CELLS, SMOKE_CROUCH_GOOD_RATIO, TRACK_MAX_SAMPLE_GAP_SECONDS } from "./params";
 import { proposeRoute } from "./route";
-import { isNearFire, type SpreadMap } from "./spread";
+import type { SpreadMap } from "./spread";
 
 /** 評価の条件 */
 export interface EvaluateOptions {
@@ -59,7 +59,7 @@ export function evaluateDrill(
 ): DrillEvaluation {
   const { samples } = track;
   const timeLimitSeconds = plan.drill.timeLimitSeconds;
-  const cells = samples.map((s) => sampleCell(plan, s));
+  const cells = samples.map((s) => positionCell(plan, s.floor, s.x, s.z));
 
   const assembly = new Set(plan.drill.assembly.map(cellKey));
   let arrivalIndex = -1;
@@ -80,15 +80,18 @@ export function evaluateDrill(
     cells.map((c, i) => inWindow[i] && route.size > 0 && !isNearRoute(route, c)),
   );
 
+  // 火に近い・煙の中で立っているは，体験中の赤い表示と同じ判定（errorBehaviorsAt）で決める
+  const errors = samples.map((s, i) => errorBehaviorsAt(spread, cells[i], s.t, s.posture));
+
   const nearFire: DrillMoment[] = [];
   let wasNear = false;
   samples.forEach((s, i) => {
-    const near = inWindow[i] && isNearFire(spread, cells[i], s.t);
+    const near = inWindow[i] && errors[i].nearFire;
     if (near && !wasNear) nearFire.push({ index: i, t: s.t, floor: s.floor, x: s.x, z: s.z });
     wasNear = near;
   });
 
-  const inSmoke = cells.map((c, i) => inWindow[i] && spread.smokeAt(c) <= samples[i].t);
+  const inSmoke = cells.map((c, i) => inWindow[i] && isInSmoke(spread, c, samples[i].t));
   let smokeSeconds = 0;
   let crouchSeconds = 0;
   samples.forEach((s, i) => {
@@ -105,7 +108,7 @@ export function evaluateDrill(
   const smokeCrouchRatio = smokeSeconds > 0 ? crouchSeconds / smokeSeconds : null;
   const smokeStanding = toIntervals(
     samples,
-    samples.map((s, i) => inSmoke[i] && s.posture === "standing"),
+    errors.map((e, i) => inWindow[i] && e.smokeStanding),
   );
 
   return {
@@ -120,11 +123,6 @@ export function evaluateDrill(
     timeLimitSeconds,
     lateEscape: arrivalIndex < 0,
   };
-}
-
-function sampleCell(plan: SchoolPlan, sample: DrillSample): CellRef {
-  const { x, z } = worldToCell(plan.cellSize, sample.x, sample.z);
-  return { floor: sample.floor, x, z };
 }
 
 function cellKey(cell: CellRef): string {
