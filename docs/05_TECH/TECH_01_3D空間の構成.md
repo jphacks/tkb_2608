@@ -1,7 +1,7 @@
 # 3D 空間の構成 (Scene Structure)
 
 体験の舞台となる 3D 空間（部屋・電車・エレベーター）のコードの構成と，空間を追加する手順をまとめる．
-部屋（リビング）・電車（通勤電車の車内）・エレベーター（乗用エレベーターのかご内）の 3 つを実装済み（Issue #22）．
+部屋（リビング）・電車（通勤電車の車内）・エレベーター（乗用エレベーターのかご内）の 3 つを実装済み（Issue #22）．校舎は，パーツ（教室・廊下・壁・ドア・出口・防火シャッター）と，それを並べて見る確認用の空間 `school-parts` まで実装済み（Issue #73）．マス目データ（`SchoolPlan`）からの組み立ては後の Issue で作る．
 画面の種類（`src/core/scene.ts` の `SceneId`: start / lobby / scenario / debrief）と区別するため，空間の型・関数は「Space」の名前で呼ぶ．
 
 ## ファイル構成 (Files)
@@ -17,6 +17,7 @@
 | `src/scenes/room/` | 部屋（リビング・シナリオ H1）．`roomLayout.ts` に寸法・配置・エリアと userData の型（three 非依存），`room.ts` に組み立て（部屋の殻・窓ガラス・ドア・廊下），`roomFurniture.ts` に家具の Group（テーブルの脚・コンロのつまみと火・ブレーカーのスイッチを含む），`roomMaterials.ts` に見た目 |
 | `src/scenes/train/` | 電車（通勤電車 1 両のうちドア 2 か所分）．`trainLayout.ts` に寸法・配置と userData の型（three 非依存），`train.ts` に組み立て，`trainFixtures.ts` に座席・手すり・つり革・ドア等の Group，`trainMaterials.ts`・`trainTextures.ts` に見た目 |
 | `src/scenes/elevator/` | エレベーター（かご内と扉の外の乗り場）．`elevatorLayout.ts` に寸法・配置と userData の型（three 非依存），`elevator.ts` に組み立て，`elevatorFixtures.ts` に操作盤・ボタン・手すり・扉・階の表示・照明の Group，`elevatorMaterials.ts`・`elevatorTextures.ts` に見た目 |
+| `src/scenes/school/` | 校舎のパーツと確認用の空間（`?scene=school-parts`）．`schoolLayout.ts` に床の面・辺の物・柱の寸法と当たり判定の範囲，`classroomLayout.ts` に教室の中身の並び，`schoolPartsPreviewLayout.ts` に確認用の空間に並べる一覧（いずれも three 非依存），`schoolParts.ts`・`classroom.ts` に組み立て，`schoolMerge.ts` に動かない Mesh の結合，`schoolPartsCollision.ts` に当たり判定の取り出し，`schoolMaterials.ts`・`schoolTextures.ts` に見た目．詳細は「校舎のパーツの構成」 |
 | `src/scenes/walk/` | 歩行と当たり判定（three 非依存の純粋関数）．`collision.ts` に当たり判定，`areas.ts` にエリアの判定，`obstacles.ts`・`furnitureObstacles.ts` に障害物の生成，`locomotion.ts` に 1 フレーム分の移動（`stepWalk`），`walker.ts` に `ScenarioWorld` の実装（`SpaceWalker`） |
 | `src/scenes/<id>/<id>Walk.ts` | 各空間の `WalkWorld`（床の範囲・障害物・ドア・エリア・座席）．`createWalkWorld(space)`（`index.ts`）で作る |
 | `src/scenes/devDoors.ts` | 確認用: 近くのドアを開閉する（本物のドア開閉が入るまでのデバッグ用） |
@@ -28,7 +29,7 @@
 
 | プロパティ | 内容 |
 | --- | --- |
-| `id` | `"room"` / `"train"` / `"elevator"` |
+| `id` | `"room"` / `"train"` / `"elevator"` / `"school-parts"` |
 | `root` | 空間全体の `Group`（照明を含む） |
 | `startPosition` | 開始時の目の位置（ワールド座標，m） |
 | `startYaw` | 開始時の向き（rad．0 で -Z を向き，正で左へ回る） |
@@ -171,6 +172,74 @@
 - 照明の消灯は光源の `intensity` を 0 にする（`visible` の切り替えはシェーダーの作り直しで重い）．非常灯は既定で `intensity` 0
 - 状態の欄（`pressed`・`lit`・`grabbed`・`open`・`openAmount`・`locked`・`on`）は今は初期値だけで，変える処理（押す・開閉・明滅・階の移動）は後の Issue で作る
 
+## 校舎のパーツの構成 (School Parts)
+
+校舎は「床の面」「辺に置く物」「柱」の 3 種のパーツを並べて作る（Issue #73）．どのパーツも大きさ（面は幅と奥行き，辺の物は辺の長さ，どちらも天井の高さ）を引数で受け取り，定数に直接依存しない．マス目データから並べる処理は後の Issue で作るため，今は確認用の空間 `?scene=school-parts` でだけ使う．
+
+### 大きさの約束 (Dimensions)
+
+- 既定値は `DEFAULT_CELL_SIZE`（マスの一辺 4 m）・`DEFAULT_CEILING_HEIGHT`（天井 3 m）．どちらも仮の値で，#67 で決める（8 × 8 m の教室が 2 × 2 マス）
+- 壁の厚さ `WALL_THICKNESS` は 0.12 m．柱（`POST_SIZE`）は壁の厚さの角柱で，壁が交わる点・つながる点に 1 本置いて角・T 字の隙間を防ぐ
+- ドア・窓・出口等の開口部は実寸のまま固定し，残りの壁が伸び縮みする．下限を下回ると `RangeError` にする（比較は浮動小数の誤差 `LENGTH_EPSILON` を許す）
+
+| 対象 | 下限 |
+| --- | --- |
+| 天井の高さ | 2.5 m |
+| 床の面の幅・奥行き | 0.5 m |
+| 壁・窓付きの壁の辺 | 0.22 m（窓が 1 つ以上入るのは 2.12 m から） |
+| ドアの辺 | 2.32 m（開口部 1.0 m と，開いた扉が収まる壁） |
+| 出口の辺 | 2.72 m（開口部 2.4 m） |
+| 防火シャッターの辺 | 1.28 m（くぐり戸 0.8 m とガイドレール） |
+| 教室に中身を置ける大きさ | 幅 2.52 m・奥行き 3.42 m |
+
+### 原点と向き (Origin & Orientation)
+
+- 床の面: 原点は面の中心の床の上．幅がローカル X，奥行きがローカル Z．教室の黒板は -Z の側
+- 辺の物: 原点は辺の中心の床の上．辺はローカル X に沿う．引き戸は +Z の側に付き，出口の外は -Z の側
+- 2 点の間に辺の物を置く位置と向きは `edgePlacementBetween(a, b)` で求める（a から b へ進む向きの右手が +Z）
+
+### パーツの一覧 (Parts)
+
+| パーツ | 作る関数 | userData の kind | 内容 |
+| --- | --- | --- | --- |
+| 教室 | `createClassroom(ctx, { interior })` | `schoolFloor` | 床・天井・照明＋中身．`interior: "furnished"` は黒板・教卓・机と椅子を置く（開始地点の教室用）．`"shell"` は中身と照明を作らない |
+| 廊下 | `createFloorSurface()` | `schoolFloor` | 床（タイル）・天井（吸音板）・照明 |
+| 壁・窓付きの壁 | `createSchoolEdge()` | `schoolEdge` | 窓は幅 1.6 m．辺の長さから数を決める．`glass: "frosted"` ですりガラス |
+| ドア | 同上 | `schoolEdge`（`edgeKind: "door"`） | 引き戸 1 枚（開口部 1.0 × 2.0 m）．`open`・`openAmount`・`locked`．開閉は `setSchoolDoorOpen()` |
+| 出口 | 同上 | `schoolEdge`（`edgeKind: "exit"`） | 開け放しの開口部（2.4 × 2.2 m）・外のポーチ・庇・誘導灯 |
+| 防火シャッター | 同上 | `schoolEdge`（`edgeKind: "fireShutter"`） | 天井の収納箱・幕・ガイドレール・くぐり戸．`closed`．開閉は `setFireShutterClosed()` |
+| 柱 | `createSchoolPost()` | `schoolPost` | 壁の交わる点に置く角柱 |
+
+- 外側だけの教室（`shell`）の廊下側は，すりガラスの窓と開かないドア（`locked: true`）にする．開かないドアは当たり判定でも通れない
+- 机の並びは，幅から列数，奥行きから行数を自動で決める．机と椅子は材質ごとに `InstancedMesh` 1 つにまとめる
+- マテリアルと単位立方体は `SchoolPartContext`（`createSchoolPartContext()`）で全パーツが共有し，`disposeSchoolPartContext()` でまとめて解放する
+
+### 結合と動く物 (Merging)
+
+- パーツを並べ終えた後に `mergeStaticMeshes()` を 1 回呼び，動かない Mesh をマテリアルごとに 1 つのジオメトリへ結合する．パーツの Group と userData は残すため，当たり判定はそのまま取り出せる
+- 開閉で動く物（扉の板 `schoolDoorLeaf`・シャッターの幕 `fireShutterCurtain`・座板 `fireShutterOpenBar`）は結合しない．開閉以外で動かす物を足す時は `schoolParts.ts` の `DYNAMIC_KINDS` に足す
+
+### 当たり判定 (School Collision)
+
+`collectSchoolCollision(root)` がパーツの Group の userData から `WalkWorld` の材料（障害物・ドア・床の範囲・エリア）を取り出す．範囲の計算は `schoolLayout.ts`・`classroomLayout.ts` の純粋な関数で行う．
+
+- 壁・窓付きの壁（窓の下の腰壁を含む）・柱・教室の中身は通れない
+- ドアは閉じている間だけふさぐ．`locked` のドアは開けられない（`setSchoolDoorOpen()` が何もせず false を返す）ので，常にふさぐ
+- 閉じた防火シャッターは全面をふさぐ（しゃがんでもくぐれない）．くぐり戸の範囲を空ける関数（`fireShutterCurtainObstacles(…, true)`）はあるが，まだ使っていない
+- 出口は，外のポーチと敷居（`exitSillRect()`）を床の範囲に足すため，内から外へ出られる．外のポーチはエリア `<出口の id>-outside` にする
+
+### 確認用の空間 (School Parts Preview)
+
+`?scene=school-parts` で表示する．大きさの違う 2 棟を並べ，同じパーツを 2 種類以上の大きさで見比べられるようにしてある（`schoolPartsPreviewLayout.ts` の `PREVIEW_BLOCKS`）．
+
+| 棟 | 天井 | 廊下の幅 | 正方形の教室 | 長方形の教室 | 防火シャッター |
+| --- | --- | --- | --- | --- | --- |
+| A | 3 m | 3 m | 8 × 8 m・中身あり | 7 × 9 m・外側だけ | 閉 |
+| B | 2.6 m | 2.4 m | 6 × 6 m・外側だけ | 5 × 7 m・中身あり | 開 |
+
+- 開始位置は 2 棟の間の外（北（-Z）を向く）．出口から廊下へ入り，ドア・シャッター・教室を見て回れる．外の地面（`PREVIEW_GROUND`）も歩ける
+- E キー（`?input=mock`）で近くのドアとシャッターを開閉できる（`devDoors.ts`）
+
 ## 歩行と当たり判定 (Walking & Collision)
 
 `SpaceWalker`（`src/scenes/walk/walker.ts`）が `ScenarioWorld` を実装する．毎フレーム `update(frame)` で `FrameInfo.input`（`PlayerInput`）からプレイヤーを動かし，`applyTo(rig)` でカメラの親（rig）の位置・目の高さ・体の向きを合わせる．頭の向きは rig の子のカメラに入れる（Issue #31）．
@@ -203,6 +272,7 @@
 | 部屋 | `ROOM_AREAS`（上記「エリア」） |
 | 電車 | 各ドアの前（`door-left-1-front`・`emergency-door-front` 等）・`platform`（ホーム）・`emergency-door-gangway`・`gangway-door-rear-gangway`（貫通扉の向こうの通路） |
 | エレベーター | `cabin`・`door-front`・`hall`（乗り場） |
+| 校舎のパーツ | 床の面の id（教室・廊下）・`<出口の id>-outside`（出口の外のポーチ） |
 
 - 電車・エレベーターのエリアの id は Issue #31 で仮に決めたもの．シナリオ定義を書くときに合わせる
 - エレベーターの `locked` は見ていない（扉が閉じているかどうかだけで通れるかを決める）
@@ -223,4 +293,5 @@
 - テクスチャは画像ファイルを使わず canvas で手続き生成する（シード固定で毎回同じ見た目）
 - 部屋の Mesh 数（描画数）はおよそ 155（部屋の殻 36・家具 112・廊下 5・窓の外 1．本 17 冊が最も多い）．重い場合は本を `InstancedMesh` にするのが次の候補．ガラスの破片は 1 Mesh にまとめ，火は口ごとに 1 Mesh（光源は付けない）．光源は環境光・日光とペンダントの `PointLight` の 3 つ
 - 電車の Mesh 数（描画数）はおよそ 150．動かない部品（枠・支え・照明・広告・案内表示・窓ガラス）は材質ごとに `InstancedMesh`，壁は開口部を空けた片を 1 つのジオメトリに結合，形が同じ部品（扉の枠・座席・網棚）は結合したジオメトリを共有する．つり革（1 本 2 Mesh）が最も多いため，重い場合はまず本数を減らす
+- 校舎のパーツの確認用の空間の Mesh 数（描画数）は，結合の後でおよそ 44（三角形はおよそ 11,700）．動かない Mesh はマテリアルごとに結合し，机と椅子は `InstancedMesh`．iPhone で 30 fps を保てるかは未確認
 - エレベーターの Mesh 数（描画数）はおよそ 60（かご 55・乗り場 5）．ボタン（1 つ 2 Mesh × 16）が最も多い．ボタンのジオメトリ（ラベルごとの面・台座の円柱）とマテリアルは両方の操作盤で共有する．光源は環境光 1 つとかごの `PointLight` 2 つ（照明・非常灯）

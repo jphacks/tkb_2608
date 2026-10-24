@@ -1,6 +1,6 @@
 // URL パラメータ（?scene=room 等）から表示する空間を決める（DOM に依存しない純粋な関数）
 
-export const SPACE_IDS = ["room", "train", "elevator"] as const;
+export const SPACE_IDS = ["room", "train", "elevator", "school-parts"] as const;
 export type SpaceId = (typeof SPACE_IDS)[number];
 
 export const DEFAULT_SPACE_ID: SpaceId = "room";

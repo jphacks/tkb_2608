@@ -1,10 +1,11 @@
-// 空間の切り替え（?scene=）．room・train・elevator の 3 空間を選べ，未知の値・指定なしは room にフォールバックする．
+// 空間の切り替え（?scene=）．room・train・elevator・school-parts の 4 空間を選べ，未知の値・指定なしは room にフォールバックする．
 // 各空間は canvas でテクスチャを描くため，document を何もしない canvas に差し替えて組み立てだけを確かめる
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { createElevatorScene } from "./elevator/elevator";
 import { AVAILABLE_SPACE_IDS, createSpace } from "./index";
 import { createRoomScene } from "./room/room";
+import { createSchoolPartsScene } from "./school/schoolPartsPreview";
 import { resolveSpaceId } from "./spaceParam";
 import { createTrainScene } from "./train/train";
 
@@ -20,6 +21,10 @@ vi.mock("./train/train", async (importOriginal) => {
 vi.mock("./elevator/elevator", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./elevator/elevator")>();
   return { ...actual, createElevatorScene: vi.fn(actual.createElevatorScene) };
+});
+vi.mock("./school/schoolPartsPreview", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./school/schoolPartsPreview")>();
+  return { ...actual, createSchoolPartsScene: vi.fn(actual.createSchoolPartsScene) };
 });
 
 /** 何もしない 2D コンテキスト（メソッドは空の関数，グラデーション等は空のオブジェクト） */
@@ -53,11 +58,12 @@ afterEach(() => {
   vi.mocked(createRoomScene).mockClear();
   vi.mocked(createTrainScene).mockClear();
   vi.mocked(createElevatorScene).mockClear();
+  vi.mocked(createSchoolPartsScene).mockClear();
 });
 
 describe("空間の切り替え（?scene=）", () => {
-  it("room・train・elevator が実装済み", () => {
-    expect([...AVAILABLE_SPACE_IDS].sort()).toEqual(["elevator", "room", "train"]);
+  it("room・train・elevator・school-parts が実装済み", () => {
+    expect([...AVAILABLE_SPACE_IDS].sort()).toEqual(["elevator", "room", "school-parts", "train"]);
   });
 
   it.each([
@@ -65,6 +71,7 @@ describe("空間の切り替え（?scene=）", () => {
     ["?scene=train", "train"],
     ["?scene=elevator", "elevator"],
     ["?scene=ELEVATOR", "elevator"],
+    ["?scene=school-parts", "school-parts"],
   ])("%s は %s", (search, expected) => {
     expect(resolveSpaceId(search, AVAILABLE_SPACE_IDS)).toBe(expected);
   });
@@ -76,20 +83,24 @@ describe("空間の切り替え（?scene=）", () => {
     },
   );
 
-  it.each(["room", "train", "elevator"] as const)("createSpace(%j) で作れる", (id) => {
-    const space = createSpace(id, { maxAnisotropy: 1 });
-    expect(space.id).toBe(id);
-    expect(space.root.children.length).toBeGreaterThan(0);
-    space.dispose();
-  });
+  it.each(["room", "train", "elevator", "school-parts"] as const)(
+    "createSpace(%j) で作れる",
+    (id) => {
+      const space = createSpace(id, { maxAnisotropy: 1 });
+      expect(space.id).toBe(id);
+      expect(space.root.children.length).toBeGreaterThan(0);
+      space.dispose();
+    },
+  );
 
   it("createSpace は選んだ空間の factory だけを呼ぶ", () => {
     const factories = {
       room: vi.mocked(createRoomScene),
       train: vi.mocked(createTrainScene),
       elevator: vi.mocked(createElevatorScene),
+      "school-parts": vi.mocked(createSchoolPartsScene),
     };
-    for (const id of ["elevator", "train", "room"] as const) {
+    for (const id of ["elevator", "train", "room", "school-parts"] as const) {
       for (const f of Object.values(factories)) f.mockClear();
       createSpace(id, { maxAnisotropy: 1 }).dispose();
       for (const [key, f] of Object.entries(factories)) {
