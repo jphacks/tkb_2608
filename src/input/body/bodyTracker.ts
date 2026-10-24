@@ -20,9 +20,17 @@ import {
   onPostureStep,
   type PostureState,
   resetPostureMotion,
+  resetSlowCrouch,
   shouldSuppressSteps,
   updatePosture,
 } from "./posture";
+import {
+  createRotationCompState,
+  type DeviceVec,
+  type RotationCompState,
+  resetRotationComp,
+  updateRotationComp,
+} from "./rotationCompensation";
 import {
   createStepDetectorState,
   effectiveThresholdsInto,
@@ -43,6 +51,10 @@ import {
 
 export interface BodyState {
   vertical: VerticalState;
+  /** 頭の回転による加速度の見積もり（params.headRotCompensation が 1 の時だけ使う） */
+  rotComp: RotationCompState;
+  /** 最後のサンプルで見積もった回転による加速度（m/s^2．端末の座標．使わない時は 0） */
+  rotAcc: DeviceVec;
   /** 帯域通過（高域通過 → 低域通過） */
   highpass: Biquad;
   lowpass: Biquad;
@@ -70,12 +82,19 @@ export interface BodyState {
   resetCount: number;
 }
 
+/** 回転の中心からスマホまでの位置の作業用（サンプルごとに new しない） */
+const lever: DeviceVec = { x: 0, y: 0, z: 0 };
+
+/** 歩いている間に T_high を下げる下限（姿勢ごとの T_high に対する割合） */
+const WALK_MIN_HIGH_RATIO = 0.5;
 /** 静止時のノイズ（足踏みのしきい値用）の見積もりの時定数（秒） */
 const STEP_NOISE_TAU_SEC = 3;
 
 export function createBodyState(params: InputParams, posture: Posture = "standing"): BodyState {
   return {
     vertical: createVerticalState(),
+    rotComp: createRotationCompState(),
+    rotAcc: { x: 0, y: 0, z: 0 },
     highpass: createBiquad("highpass", params.stepBandLowHz),
     lowpass: createBiquad("lowpass", params.stepBandHighHz),
     dtEstSec: 0,
@@ -99,6 +118,8 @@ export function cloneBodyState(s: BodyState): BodyState {
   return {
     ...s,
     vertical: { ...s.vertical },
+    rotComp: { ...s.rotComp },
+    rotAcc: { ...s.rotAcc },
     highpass: { ...s.highpass },
     lowpass: { ...s.lowpass },
     step: { ...s.step },
@@ -111,12 +132,17 @@ export function cloneBodyState(s: BodyState): BodyState {
 /** フィルタ・歩き・動作の途中を初期化する．姿勢は保つ（experiment_山﨑/09「姿勢は保つ」） */
 export function resetBody(s: BodyState): void {
   resetVertical(s.vertical);
+  resetRotationComp(s.rotComp);
+  s.rotAcc.x = 0;
+  s.rotAcc.y = 0;
+  s.rotAcc.z = 0;
   resetBiquad(s.highpass);
   resetBiquad(s.lowpass);
   s.dtEstSec = 0;
   resetStepDetector(s.step);
   resetLocomotion(s.locomotion);
   resetPostureMotion(s.posture);
+  resetSlowCrouch(s.posture);
   s.lastT = Number.NaN;
   s.av = Number.NaN;
   s.bp = Number.NaN;
@@ -133,6 +159,24 @@ function postureThresholds(s: BodyState, params: InputParams): void {
     crouching ? params.stepLowCrouching : params.stepLowStanding,
     params.stepNoiseFactor,
   );
+}
+
+/**
+ * 歩いている間は，T_high を直近の歩の山の平均の stepWalkPeakRatio 倍まで下げる（T_high の WALK_MIN_HIGH_RATIO 倍が下限）．
+ * 1 人の足踏みの山の大きさはほぼそろっているため，歩き出した後は，その人の山の半分ほどの山も歩とみなせる．
+ * 足踏みの弱い人が，歩いている途中の弱い 1 歩（0.65〜0.84 m/s^2）で途切れた（20261024-183237_curfcrp9）．
+ * 歩き出し（止まっている時）は下げない（見回し・頷きの誤検出を増やさない）
+ */
+function walkingThresholds(s: BodyState, params: InputParams): void {
+  if (s.locomotion.mode !== "walking" || !(params.stepWalkPeakRatio > 0)) return;
+  const th = s.thresholds;
+  const high = Math.max(
+    th.high * WALK_MIN_HIGH_RATIO,
+    Math.min(th.high, params.stepWalkPeakRatio * s.step.stepPeakMean),
+  );
+  if (!(high > 0) || !(th.high > 0)) return;
+  th.low *= high / th.high;
+  th.high = high;
 }
 
 /**
@@ -164,7 +208,20 @@ export function updateBody(s: BodyState, sample: MotionSample, params: InputPara
   if (!Number.isFinite(v.gx) || !Number.isFinite(v.gy) || !Number.isFinite(v.gz)) {
     resetVertical(v);
   }
-  const av = updateVertical(v, sample, dtSec, params.gravityCutoffHz);
+  let correction: DeviceVec | null = null;
+  if (params.headRotCompensation >= 0.5) {
+    lever.x = params.headLeverXM;
+    lever.y = params.headLeverYM;
+    lever.z = params.headLeverZM;
+    if (updateRotationComp(s.rotComp, sample.rot, dtSec, lever, s.rotAcc)) correction = s.rotAcc;
+  } else if (s.rotComp.ready) {
+    // 途中で OFF にした時，次に ON にした時の角加速度が古い角速度との差にならないようにする
+    resetRotationComp(s.rotComp);
+    s.rotAcc.x = 0;
+    s.rotAcc.y = 0;
+    s.rotAcc.z = 0;
+  }
+  const av = updateVertical(v, sample, dtSec, params.gravityCutoffHz, correction);
   const gyro = gyroMagnitude(sample);
   s.av = av;
   s.gyro = gyro;
@@ -184,11 +241,15 @@ export function updateBody(s: BodyState, sample: MotionSample, params: InputPara
   );
   s.bp = bp;
 
+  // ゆっくりしたしゃがみ（漏れ付きの長い積分）は，歩いている間は使わない．足踏みの上下の揺れは上下で釣り合わず，
+  // 長い積分が -0.1 m ほどずれたまま，強い 1 歩で基準を超えた（20261024-143537_o0qich1i．正解の無い記録）
+  if (s.locomotion.mode !== "stopped") resetSlowCrouch(s.posture, false);
   // しゃがみ・立ち上がり（歩いている間も止めない）
   updatePosture(s.posture, t, dtSec, av, gyro, params);
 
   // 足踏みの山（姿勢ごとのしきい値）
   postureThresholds(s, params);
+  walkingThresholds(s, params);
   const result = updateStepDetector(
     s.step,
     t,
@@ -210,8 +271,14 @@ export function updateBody(s: BodyState, sample: MotionSample, params: InputPara
     onPostureStep(s.posture, t, s.step.lastStepPeak, standingHigh, params);
   }
   updateLocomotion(s.locomotion, t, dtSec, params);
-  if (s.locomotion.mode === "stopped") {
-    updateStepNoise(s.step, bp, s.thresholds.high, dtSec, STEP_NOISE_TAU_SEC);
+  // 静止時のノイズは，止まっていて頭も回っていない時の，基準のしきい値未満の値だけで見積もる．
+  // 以前は「今のしきい値」未満の値をすべて入れていたため，頷き（帯域通過後 2〜4 m/s^2）の間にノイズが育ち，
+  // T_high が 4 m/s^2 を超えたまま次の足踏み（山 1〜1.5 m/s^2）を数えなかった
+  // （20261024-175827_3uehweky: 頷きの直後の step_in_place で 30 歩中 2 歩）
+  if (s.locomotion.mode === "stopped" && (!Number.isFinite(gyro) || gyro < params.zuptGyroDps)) {
+    const baseHigh =
+      s.posture.posture === "crouching" ? params.stepHighCrouching : params.stepHighStanding;
+    updateStepNoise(s.step, bp, baseHigh, dtSec, STEP_NOISE_TAU_SEC);
   }
 
   // 値が壊れていたら（NaN が混じった等）姿勢以外を初期化する
