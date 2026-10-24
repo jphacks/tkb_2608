@@ -63,14 +63,33 @@ Cloudflare Pages に GitHub Actions が配信する（準備は [ENV_03](ENV_03_
 
 | 環境 | URL | 配信されるタイミング |
 | --- | --- | --- |
-| staging | `https://staging.tkb2608.pages.dev` | `main` へのマージで自動（`deploy-staging.yml`）．無料枠の配信回数を節約するため，マージから 3 分待って続くマージをまとめてから配信する（反映まで 5 分ほど）．docs 等だけの変更では配信しない |
+| staging | `https://staging.tkb2608.pages.dev` | `main` へのマージで自動（`deploy-staging.yml`．下記の切り替えで手動だけにもできる）．無料枠の配信回数を節約するため，マージから 3 分待って続くマージをまとめてから配信する（反映まで 5 分ほど）．docs 等だけの変更では配信しない |
 | 本番 | `https://tkb2608.pages.dev` | `main` 上のコミットに `v*` の annotated タグを push したとき（`deploy-prod.yml`） |
-
-- staging を配信し直したい時（配信の失敗後・Secrets の登録直後等）は，Actions の画面の「Deploy (staging)」→ **Run workflow**（Branch は `main`）で手動実行する．`gh workflow run deploy-staging.yml --ref main` でもよい．手動実行では変更の判定と 3 分の待ちを飛ばしてすぐ配信する
 
 PR では CI（`ci.yml`: lint・型チェック・テスト・ビルド）だけが動く．PR ごとのプレビューは今は作っていない（必要になったら追加する）．
 
+### staging の手動実行と自動配信の切り替え
+
+staging への自動配信（`main` へのマージのたび）は，リポジトリの変数 `STAGING_AUTO_DEPLOY` で止められる．
+
+| モード | 設定 | 使う時期 |
+| --- | --- | --- |
+| 自動（既定） | 変数なし，または `true` | 作業する人が少ない時．マージのたびに staging が最新になる |
+| 手動 | `false` | 同時並行でマージが続く時（ハッカソン中等）．staging が勝手に置き換わらないので，確かめたい版を落ち着いて確かめられる．無料枠の配信回数も節約できる |
+
+```bash
+gh variable set STAGING_AUTO_DEPLOY --body false   # 手動にする
+gh variable set STAGING_AUTO_DEPLOY --body true    # 自動に戻す
+gh variable get STAGING_AUTO_DEPLOY                # 今の状態（未設定なら自動）
+```
+
+- リポジトリの設定の変更なので，管理者（人間）が行う（GitHub の Settings → Secrets and variables → Actions → Variables でもよい）．切り替えたらチームに伝える
+- 手動モードでは，staging に出したい時に下記の手動実行を行う．`/deploy-prod` も，手動実行で staging に出た版だけを本番に出す
+- staging に出したい時・配信し直したい時（配信の失敗後・Secrets の登録直後等）は，Actions の画面の「Deploy (staging)」→ **Run workflow**（Branch は `main`）で手動実行する．`gh workflow run deploy-staging.yml --ref main` でもよい．手動実行では変更の判定と 3 分の待ちを飛ばしてすぐ配信する
+
 ### 本番に出す手順
+
+通常は Claude Code で **`/deploy-prod`** を実行する．前提の確認・バージョンの案・最終確認・タグの作成と push・配信の見届け・公開 URL での確認・[ENV_06](ENV_06_デプロイ記録.md) への記録までを行う．手で行う場合は次のとおり（記録は手で ENV_06 に追記する）．
 
 1. staging（`https://staging.tkb2608.pages.dev`）を iPhone で開き，出したい版が動くことを確かめる
 2. `main` を最新にして，staging で確かめたコミットに annotated タグを打って push する
