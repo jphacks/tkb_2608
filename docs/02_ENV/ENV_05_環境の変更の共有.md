@@ -34,10 +34,12 @@ Issue では `@` を使わず，GitHub の通知は飛ばさない．同じ会�
 
 ## 環境を変える人の手順 (For the Author)
 
-1. `.devcontainer/` を変更し，自分で Rebuild して動作を確かめる
-2. `/commit push`（または `/commit merge`）で PR を作る．Claude が環境更新 Issue を作り，PR にリンクをコメントする
-3. マージしたら，メンバーに Rebuild と `/env-check <Issue番号>` の実行を声かけする
-4. 作者自身も，マージ後に `/env-check <Issue番号>` で自分の分のチェックを付ける
+1. `.devcontainer/` を変更してコミットし，そのブランチのまま Rebuild する
+2. `/env-check`（引数無し）を実行し，確認を通す．確認済みとして記録される
+3. `/commit push`（または `/commit merge`）で PR を作る．Claude が環境更新 Issue を作り，PR にリンクをコメントする
+   - 2 の確認が済んでいないと，Claude は Issue を作らずに止まる（作者の環境で通らない変更を全員に配らないため）．その場合は 1〜2 を行ってから `/env-notify <PR番号>` を実行する
+4. マージしたら，メンバーに Rebuild と `/env-check <Issue番号>` の実行を声かけする
+5. 作者自身も，マージ後に `/env-check <Issue番号>` を実行して自分の分のチェックを付ける（Rebuild し直す必要は無い）
 
 ## 各メンバーの手順 (For Members)
 

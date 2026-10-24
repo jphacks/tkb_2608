@@ -17,7 +17,9 @@ gh の操作は数回で済むため，ops-runner に委譲せず自分で行う
 
 ## ステップ 2: 前提の確認 (Pre-check)
 
-Issue ごとに本文から PR 番号を読み取り，以下を確かめる．満たさない場合はその Issue の確認を止め，理由と対処をユーザーに伝える（コメントやチェックはしない）．
+Issue ごとに本文から PR 番号を読み取り，以下を確かめる．満たさない場合はその Issue への報告（ステップ 5）を行わず，理由と対処をユーザーに伝える．
+
+- ステップ 3〜4（確認と記録）は Issue と関係なく行う．PR の作者がマージ前に PR のブランチで Rebuild して確認する場合（`/env-notify` はこの記録が無いと Issue を作らない）も，ここで確認と記録ができる
 
 1. PR がマージ済みか: `gh pr view <PR番号> --json state,mergeCommit`．未マージなら「PR #<PR番号> のマージ後に Rebuild してから実行してください」
 2. 手元にその変更が入っているか: `git fetch --quiet origin` の後，`git merge-base --is-ancestor <mergeCommit の oid> HEAD`．入っていなければ「`main` を最新にしてから Rebuild し直してください」

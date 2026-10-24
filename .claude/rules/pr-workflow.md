@@ -23,5 +23,6 @@ PR を作成・マージした後に，変更の内容に応じて Claude が自
 | `.devcontainer/` 配下 | `/env-notify <PR番号>` を実行する（全員に Rebuild を依頼する Issue を作る） | Rebuild しないと手元の環境が古いまま残り，気付かずに作業してしまう |
 | `package.json`・`package-lock.json` のみ | 何もしない | 各自のセッション開始時に `[env-sync]` の警告で `npm ci` を促すため，Issue にするほどではない |
 
+- `/env-notify` が「作者の Rebuild の確認が済んでいない」で止まった場合は失敗ではない．「PR のブランチのまま Rebuild し，`/env-check` を実行してから `/env-notify <PR番号>` を実行する」を次の手順としてユーザーに伝える
 - 複数に当てはまる場合はすべて行う．当てはまらなければ何もしない（「追加作業なし」とも言わなくてよい）
 - 運用の全体像（警告の仕組み・`/env-check`）は `docs/02_ENV/ENV_05_環境の変更の共有.md` を参照する
