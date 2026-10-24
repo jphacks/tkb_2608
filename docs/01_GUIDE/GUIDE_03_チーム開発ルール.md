@@ -80,7 +80,7 @@ Issue を立てる場合の標準フロー（小さい変更や探索的作業�
 
 次を全て満たせば，作者がセルフマージしてよい．
 
-- CI で全テストが緑である．
+- CI で全テストが緑である（`.github/workflows/ci.yml`．`main: CI 必須` の Ruleset で GitHub が強制する）．
 - 作者自身が Phase 1 の動作確認（実機・ブラウザ等，AI にできない確認）を済ませている（GUIDE_02）．
 - `/implement` のパイプラインをスキップせず完走している．
 - 対応 Issue がある場合は完了条件を満たしている（Issue 無しの PR は不要）．
@@ -97,18 +97,20 @@ Issue を立てる場合の標準フロー（小さい変更や探索的作業�
 
 ### main ブランチの保護 (Branch Protection)
 
-`main` には 2 つの Ruleset を設定し，Claude の誤操作でも人の誤操作でも `main` が壊れないようにする．
+`main` には 3 つの Ruleset を設定し，Claude の誤操作でも人の誤操作でも `main` が壊れないようにする．
 
 | Ruleset | ルール | 例外（bypass） |
 | --- | --- | --- |
 | `main: 履歴の保護` | `main` の削除禁止・force push 禁止 | なし（admin も不可） |
 | `main: PR 必須と共有設定のレビュー` | 直接 push 禁止（PR 必須．必要な Approve 数は 0）・CODEOWNERS 対象（`.claude/`・`CLAUDE.md`・`.github/CODEOWNERS`）を変える PR はコードオーナー 1 名の Approve 必須 | リポジトリ admin のみ，PR のマージ時に限る（直接 push はできない） |
+| `main: CI 必須` | CI（`Lint / typecheck / test / build`）の合格が必須．「マージ前にブランチを最新にする」は付けない（細かくマージするため．代わりに Claude が PR の作成・マージの前に最新の `main` を取り込む．`.claude/rules/pr-workflow.md`） | なし（admin も不可） |
 
 - 機能 PR は Approve 不要のため，条件付きセルフマージで今までどおり自分でマージできる．
 - マージ方法は merge commit のみ（squash・rebase は無効）．マージ後のブランチは GitHub が自動で削除する．
 - **admin の例外を使ってよいのは 2 つの場合だけ**: 管理者（rintoHasegawa）自身による共有設定の変更（開発環境の整備等．緊急時に限らずいつでも使ってよい）と，`main` が壊れて Approve を待てない本当の緊急時．例外は人間が PR の画面で「要件を待たずにマージ」を選んで使う（`/commit push` で PR を作り，マージは画面で行う）．
 - **Claude は例外を使わない**．`gh pr merge --admin` 等で保護を迂回せず，Approve が無いためにマージが拒否されたら停止して人間に報告する．
 - 緊急時の修正も PR を作ってからマージする（例外で外すのは Approve 待ちのみ）．
+- **CI の合格は admin の例外でも飛ばせない**（`main: CI 必須` を別の Ruleset にして例外を設定していないため）．GitHub Actions の障害等で CI が動かず，どうしてもマージが必要な場合だけ，管理者が `main: CI 必須` を一時的に無効にし，マージ後すぐ有効に戻す（手順は `docs/02_ENV/ENV_03_管理者用環境構築手順.md`）．
 - **秘密情報の流出を防ぐ**: `.env` 等は `.gitignore` で除外し（雛形 `.env.example` のみ追跡），GitHub の Push Protection（secret scanning）で API キー等を含む push を受け付け前に止める．
 - **秘密情報・個人情報を push してしまった場合**: リポジトリは public のため，push した時点で漏れた前提で動く．
   1. API キー・パスワード等はすぐに失効させて作り直す（履歴から消しても漏れは取り消せないため，これが最優先）．
@@ -118,18 +120,10 @@ Issue を立てる場合の標準フロー（小さい変更や探索的作業�
 
 Dependabot が作成する依存更新 PR（security updates / version updates）は，人間が書いた PR ではないため上記の「`/implement` 完走」「Phase 1 動作確認」を満たせない．代わりに `/deps-update` のゲートを品質ゲートとする（`.claude/skills/deps-update/SKILL.md`）．
 
-- **`/deps-update` がマージしてよいもの**: メジャー更新でなく，競合が無く，CI 緑（CI 未構築ならローカル検証緑）の PR．`gh pr merge --merge` で取り込む．これは「AI が `main` へマージする」唯一の例外である（GUIDE_02「コミットルール」）．
+- **`/deps-update` がマージしてよいもの**: メジャー更新でなく，競合が無く，CI 緑の PR．`gh pr merge --merge` で取り込む．これは「AI が `main` へマージする」唯一の例外である（GUIDE_02「コミットルール」）．
 - **人間が判断するもの**: メジャー更新（`0.x` のマイナー更新を含む），CI 赤，修正版の無い alert，Dependabot が PR を作れなかった alert．`/deps-update` が影響分析と推奨（そのままマージ／`/implement` で追従／`@dependabot ignore` で見送り）を PR コメントと完了報告に出すので，それを見て決める．
 - 依存更新 PR は共有設定（`CLAUDE.md`・`.claude/`）を変更しないため，他メンバーの Approve は不要．`main` にブランチ保護（必須レビュー）を設定している場合は `/deps-update` はマージできないので，マージ可と判定した一覧を提示するにとどまり，人間がマージする．
 - `/deps-update` を実行するのは原則 1 名（管理者またはその週の担当）とし，マージ後はチームに周知して全員が `git pull` する（他メンバーの作業ブランチは PR 作成前の `main` の取り込みで追従する）．
-
-### CI 構築までの暫定ゲート (Interim Gate)
-
-CI が未構築の間は「CI 緑」を以下で代替する．CI 構築後はこの節を削除する．
-
-- `/implement` を完走している．
-- ローカルで全テストが緑である．
-- 作者自身が Phase 1 の動作確認を済ませている．
 
 ## 共有設定の扱い (Shared Configuration)
 
@@ -182,6 +176,4 @@ CI が未構築の間は「CI 緑」を以下で代替する．CI 構築後は�
   - ボードをやめる場合は `.claude/project-board` を削除する（以後 `/task-*` は Projects に触れない）．
 - Issue テンプレートの用意（「やること」「完了条件」欄）．
 - 共有設定変更 PR に他メンバー Approve を求める運用の周知と，`main` のブランチ保護設定（設定済み．内容は「main ブランチの保護」）．
-- CI の構築（全テストを実行し，緑をマージ条件にできる状態にする）．
-
-※ 完了するまでは本ガイドの「CI 構築までの暫定ゲート」を適用する．
+- CI の構築（全テストを実行し，緑をマージ条件にできる状態にする）．構築済み（`.github/workflows/ci.yml` と Ruleset `main: CI 必須`．2026-10-24）．
