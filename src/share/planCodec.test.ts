@@ -4,9 +4,21 @@
 // （1 フロア 60×30 マスの想定の校舎で URL 全体 1,500 文字まで）・「方針」（読めない版は新しい版で開くよう案内する）と Issue #84
 // （壊れた文字列・未知の version は理由つきの失敗として返し，例外で落とさない）．
 // CompressionStream は Node の同じ API を使う
-import { describe, expect, it } from "vitest";
-import type { CellKind, CellRef, SchoolPlan } from "../core/schoolPlan";
-import { type DecodePlanResult, decodePlan, encodePlan } from "./planCodec";
+import { describe, expect, expectTypeOf, it } from "vitest";
+import type { Session } from "../core/scene";
+import type {
+  CellKind,
+  CellRef,
+  PlanLoadError,
+  PlanLoadFailureKind,
+  SchoolPlan,
+} from "../core/schoolPlan";
+import {
+  type DecodePlanFailureKind,
+  type DecodePlanResult,
+  decodePlan,
+  encodePlan,
+} from "./planCodec";
 import { DEMO_SCHOOL } from "./samples/demoSchool";
 import { validatePlan } from "./validatePlan";
 
@@ -551,4 +563,53 @@ describe("decodePlan（知らない項目）", () => {
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
     if (result.ok) expect(result.plan).not.toHaveProperty("polluted");
   });
+});
+
+// decodePlan の結果を Session に書けること（SPEC_01「受け渡すデータ」の Session.plan・Issue #86 の
+// 「読み込みに失敗した時は失敗の理由を Session に残す」）．app/ が書く口だけを取り出して確かめる
+type SessionPlanSlot = Pick<Session, "plan" | "planLoadError">;
+
+/** decodePlan の結果を Session の plan・planLoadError に書く（app/ がする受け渡しをテストの中で書き写したもの） */
+const toSessionSlot = (result: DecodePlanResult): SessionPlanSlot => {
+  if (result.ok) return { plan: result.plan, planLoadError: null };
+  const { ok: _ok, ...error } = result;
+  return { plan: null, planLoadError: error };
+};
+
+describe("decodePlan の結果と Session", () => {
+  it("失敗の型は core の PlanLoadError と同じもので，Session.planLoadError にそのまま入れられる", () => {
+    expectTypeOf<DecodePlanFailureKind>().toEqualTypeOf<PlanLoadFailureKind>();
+    expectTypeOf<Extract<DecodePlanResult, { ok: false }>>().toExtend<PlanLoadError>();
+    expectTypeOf<Session["plan"]>().toEqualTypeOf<SchoolPlan | null>();
+    expectTypeOf<Session["planLoadError"]>().toEqualTypeOf<PlanLoadError | null>();
+  });
+
+  it("読み込めた時は plan に校舎が入り，planLoadError は null", async () => {
+    const slot = toSessionSlot(await decodePlan(await encodePlan(DEMO_SCHOOL)));
+    expect(slot.plan).toEqual(DEMO_SCHOOL);
+    expect(slot.planLoadError).toBeNull();
+  });
+
+  it.each<[PlanLoadFailureKind, () => Promise<string>]>([
+    ["corrupted", async () => (await encodePlan(DEMO_SCHOOL)).slice(0, 10)],
+    [
+      "unsupportedVersion",
+      async () => {
+        const json = await demoJson();
+        json.version = 2;
+        return embedJson(json);
+      },
+    ],
+    ["invalidPlan", () => encodePlan({ ...DEMO_SCHOOL, cellSize: 0 })],
+  ])(
+    "%s の失敗は kind・reason を保ったまま planLoadError に入り，plan は null",
+    async (kind, make) => {
+      const result = await decodePlan(await make());
+      expectFailure(result, kind);
+      if (result.ok) return;
+      const slot = toSessionSlot(result);
+      expect(slot.plan).toBeNull();
+      expect(slot.planLoadError).toEqual({ kind, reason: result.reason });
+    },
+  );
 });

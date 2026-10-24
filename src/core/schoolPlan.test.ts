@@ -7,6 +7,8 @@ import type {
   DrillMode,
   DrillSetup,
   Floor,
+  PlanLoadError,
+  PlanLoadFailureKind,
   SchoolPlan,
   SpreadSettings,
 } from "./schoolPlan";
@@ -107,5 +109,24 @@ describe("SchoolPlan", () => {
     expectTypeOf<{ readonly cell: CellRef }>().not.toExtend<SpreadSettings["extraFires"][number]>();
     expectTypeOf<SchoolPlan>().toHaveProperty("name").toEqualTypeOf<string>();
     expectTypeOf<DrillMode>().toEqualTypeOf<"learn" | "test">();
+  });
+});
+
+// 読み込みの失敗の型（SPEC_02「URL と QR への埋め込み」の kind の表・Issue #86）
+describe("PlanLoadError", () => {
+  it("失敗の種類は仕様の 3 種類（corrupted・unsupportedVersion・invalidPlan）と完全に一致する", () => {
+    expectTypeOf<PlanLoadFailureKind>().toEqualTypeOf<
+      "corrupted" | "unsupportedVersion" | "invalidPlan"
+    >();
+    expectTypeOf<"unknown">().not.toExtend<PlanLoadFailureKind>();
+  });
+
+  it("kind と reason（画面に出す理由の文字列）だけを持つ", () => {
+    expectTypeOf<PlanLoadError>().toEqualTypeOf<{
+      readonly kind: PlanLoadFailureKind;
+      readonly reason: string;
+    }>();
+    const error: PlanLoadError = { kind: "corrupted", reason: "データが壊れています" };
+    expect(error).toEqual({ kind: "corrupted", reason: "データが壊れています" });
   });
 });

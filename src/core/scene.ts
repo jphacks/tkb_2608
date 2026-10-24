@@ -5,6 +5,7 @@ import type { Object3D, Scene as ThreeScene } from "three";
 import type { EventBus } from "./event-bus";
 import type { AppEvent } from "./events";
 import type { ScenarioResult } from "./result";
+import type { PlanLoadError, SchoolPlan } from "./schoolPlan";
 import type { CalibrationProfile, PlayerInput } from "./types";
 
 /** 画面の種類．流れは start → home → lobby → scenario → debrief（docs/04_SPEC/SPEC_01） */
@@ -28,6 +29,10 @@ export interface Session {
   result: ScenarioResult | null;
   /** recording/ が書く（体験の録画．端末のメモリ上だけに持つ） */
   recording: Blob | null;
+  /** app/ が URL（`#p=`）から読んで書く．読み込む前と読み込めなかった時は null */
+  plan: SchoolPlan | null;
+  /** app/ が書く（校舎データを読み込めなかった理由．開始画面（lobby/）が読んで案内を出す）．読み込めた時と URL に無い時は null */
+  planLoadError: PlanLoadError | null;
 }
 
 export interface SceneContext {
