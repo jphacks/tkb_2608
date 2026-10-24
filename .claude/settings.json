@@ -12,6 +12,11 @@
             "type": "command",
             "command": "bash .claude/hooks/check_sync.sh",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/run_python.sh .claude/hooks/check_env_sync.py",
+            "timeout": 10
           }
         ]
       }
