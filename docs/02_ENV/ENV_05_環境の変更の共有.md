@@ -51,6 +51,7 @@ Issue では `@` を使わず，GitHub の通知は飛ばさない．同じ会�
 
 2. VS Code のコマンドパレットで `Dev Containers: Rebuild Container` を実行する
 3. Claude Code で `/env-check <Issue番号>` を実行する．Claude が以下を行う
+   - Rebuild の直後で post-create（ツールのインストール）がまだ裏で動いていれば，終わるまで待つ（回線が遅いと数分かかる）
    - `bash .devcontainer/check.sh` と，Issue の確認コマンドを実行する
    - 結果を Issue にコメントし，すべて成功なら自分のチェック欄に印を付ける
    - 全員のチェックが揃ったら Issue を閉じる

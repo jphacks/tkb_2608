@@ -9,6 +9,25 @@ argument-hint: "<Issue番号（省略時は未完了の env-sync Issue すべて
 
 gh の操作は数回で済むため，ops-runner に委譲せず自分で行う．
 
+## ステップ 0: post-create の完了待ち (Wait for post-create)
+
+Rebuild の直後は，Claude のセッションが先に立ち上がり，`.devcontainer/post-create.sh`（ツールのダウンロード・インストール）が裏でまだ動いていることがある．そのまま確認すると，入る途中のツールを「無い」と誤判定する（会場の回線が遅く，cloudflared のダウンロードに数分かかった実例がある）．Git のユーザー設定も，post-create の後に VS Code がコピーする．
+
+1. post-create が動いているかを見る（パターンの `[p]` と `grep -v shell-snapshots` は，この確認コマンドと Claude 自身のシェルに一致させないため．このコマンドは他のコマンドとつなげずに単独で実行する）:
+
+   ```bash
+   pgrep -fa '[p]ost-create.sh' | grep -v shell-snapshots
+   ```
+
+2. 何か表示されたら，「post-create が実行中のため，終わるまで待ちます」とユーザーに伝え，次のコマンドを**バックグラウンドで実行して完了の通知を待つ**（最大 15 分．フォアグラウンドで `sleep` しない）:
+
+   ```bash
+   timeout 900 bash -c "while pgrep -fa '[p]ost-create.sh' | grep -qv shell-snapshots; do sleep 5; done"
+   ```
+
+   - 15 分たっても終わらなければ（終了コード 124），ダウンロードが止まっている可能性がある．確認には進まず，回線を確かめて Rebuild するか，`bash .devcontainer/post-create.sh` を再実行するようユーザーに伝えて終了する
+3. 終わったら（または最初から動いていなければ）ステップ 1 に進む
+
 ## ステップ 1: 対象の Issue (Target)
 
 - 引数があればその Issue を対象にする（ラベル `env-sync` が付いていなければ，対象違いの可能性を伝えて確認する）
