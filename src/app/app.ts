@@ -77,8 +77,9 @@ export function startApp(): void {
   const homeMemory = createHomeMemory();
 
   // ?app だけなら実機のセンサー（device），?app&input=mock なら PC のキーボード・ドラッグ（mock）
+  const inputKind = parseInputKind(window.location.search) ?? "device";
   const input = createInputSource({
-    kind: parseInputKind(window.location.search) ?? "device",
+    kind: inputKind,
     calibration: null,
     target: renderer.domElement,
   });
@@ -87,12 +88,16 @@ export function startApp(): void {
     start: () =>
       createStartScene({
         onStartTap: () => wakeLock.request(),
+        // ロビーは手で開始ボタンに触れて始めるため，手をカメラから作る device ではカメラが使えないと先へ進めない．
+        // mock（マウスが右手）・replay（記録の手）はカメラを使わない
+        requireCamera: inputKind === "device",
         onDevices: (acquired) => {
           devices.current = acquired;
           // 許可は開始画面のタップの中で lobby/ が取り終えている．iOS は許可済みならタップの外でも
           // requestPermission が granted を返すため，ここで呼んでも許可のダイアログは重ならない
           void input.activate();
-          // 開始画面で取った背面カメラを手の認識に渡す（取れなかった時は null で，手なしで進む）
+          // 開始画面で取った背面カメラを手の認識に渡す（device では取れないと開始画面で止まるため，ここに来る時は取れている．
+          // mock・replay では null のことがあり，その時は何もしない）
           input.attachCamera(acquired.cameraStream);
         },
       }),
@@ -103,7 +108,7 @@ export function startApp(): void {
         wakeLock,
       }),
     lobby: () => createLobbyScene({ debug, isPaused: () => orientationGuide.visible }),
-    scenario: () => createScenarioPlaceholder(),
+    scenario: () => createScenarioPlaceholder({ debug, isPaused: () => orientationGuide.visible }),
     debrief: () =>
       createDebriefScene({
         theme: { backgroundCss: TRAINING_BACKGROUND_CSS, boxCss: TRAINING_BOX_CSS },
