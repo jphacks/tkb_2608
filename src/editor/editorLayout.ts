@@ -1,6 +1,6 @@
 // エディタの上から見た図の配置の計算（マスの大きさ・画面の位置とマスの変換・壁の線・教室の名前の位置）．
 // Canvas に描く殻（editorCanvas.ts）とマウスの操作の殻（editor.ts）から使う純粋な関数
-import type { Floor, Room } from "../core/schoolPlan";
+import type { CellRef, DrillSetup, Floor, Room } from "../core/schoolPlan";
 import type { CellXZ } from "../sim/grid";
 import { wallBetween } from "../sim/walls";
 
@@ -114,4 +114,33 @@ export function roomLabels(floor: Floor, rooms: readonly Room[]): RoomLabel[] {
     labels.push({ room, name: r.name, x: sumX[room] / count[room], z: sumZ[room] / count[room] });
   });
   return labels;
+}
+
+/** マス目の上に重ねる訓練条件の印（描く階のマス目の中にある物だけ） */
+export interface DrillMarkers {
+  readonly fireOrigins: readonly CellXZ[];
+  /** 開始地点．この階に無い・マス目の外なら null */
+  readonly start: CellXZ | null;
+  readonly assembly: readonly CellXZ[];
+}
+
+/**
+ * 訓練条件のうち，floorIndex 階（SchoolPlan.floors の添字）のマス目の中にある印．
+ * マス目の外に出た物（大きさを変えた時等）は描かない（validatePlan の誤りとして見える）
+ */
+export function drillMarkers(drill: DrillSetup, floorIndex: number, floor: Floor): DrillMarkers {
+  const onFloor = (ref: CellRef): boolean =>
+    ref.floor === floorIndex &&
+    Number.isInteger(ref.x) &&
+    Number.isInteger(ref.z) &&
+    ref.x >= 0 &&
+    ref.x < floor.width &&
+    ref.z >= 0 &&
+    ref.z < floor.depth;
+  const toXZ = (ref: CellRef): CellXZ => ({ x: ref.x, z: ref.z });
+  return {
+    fireOrigins: drill.fireOrigins.filter(onFloor).map(toXZ),
+    start: onFloor(drill.start) ? toXZ(drill.start) : null,
+    assembly: drill.assembly.filter(onFloor).map(toXZ),
+  };
 }

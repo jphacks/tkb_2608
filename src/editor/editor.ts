@@ -5,7 +5,7 @@ import { DEMO_SCHOOL } from "../share/samples/demoSchool";
 import { validatePlan } from "../share/validatePlan";
 import type { CellXZ } from "../sim/grid";
 import { drawEditorGrid } from "./editorCanvas";
-import { canvasToCell, computeGridLayout, type GridLayout } from "./editorLayout";
+import { canvasToCell, computeGridLayout, drillMarkers, type GridLayout } from "./editorLayout";
 import {
   addRoom,
   beginStroke,
@@ -13,22 +13,40 @@ import {
   canUndo,
   continueStroke,
   createEditorState,
+  EDIT_FLOOR,
   type EditorState,
+  type EditorTool,
   editingFloor,
   endStroke,
+  FACINGS,
+  facingOfYaw,
+  isMarkerTool,
   MAX_GRID_SIZE,
-  type PaintTool,
+  type MarkerKind,
+  placeMarker,
   redo,
   renameRoom,
   resizeGrid,
   selectTool,
+  setStartFacing,
   startBlank,
   undo,
 } from "./editorState";
-import { CELL_COLORS, CELL_KIND_LABELS, PART_TOOLS, roomColor } from "./editorStyle";
+import {
+  CELL_COLORS,
+  CELL_KIND_LABELS,
+  FACING_LABELS,
+  MARKER_LABELS,
+  MARKER_TOOLS,
+  PART_TOOLS,
+  roomColor,
+} from "./editorStyle";
 
 /** 画面の隅に並べる校舎の誤りの件数（残りは件数だけ出す） */
 const SHOWN_ERRORS = 5;
+
+/** 置けないマスを選んだ時の案内を出しておく時間（ms） */
+const NOTICE_MS = 3000;
 
 const STYLE = `
 .editor {
@@ -76,6 +94,14 @@ const STYLE = `
   background: rgba(60, 20, 20, 0.88); border: 1px solid #a94442; font-size: 12px; pointer-events: none;
 }
 .editor__errors[hidden] { display: none; }
+.editor__notice {
+  position: absolute; left: 50%; top: 8px; transform: translateX(-50%); padding: 6px 14px; border-radius: 6px;
+  background: rgba(120, 60, 10, 0.92); border: 1px solid #e0a040; font-size: 13px; pointer-events: none;
+}
+.editor__notice[hidden] { display: none; }
+.editor__facings { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-top: 6px; }
+.editor__facings .editor__button { padding: 4px 0; }
+.editor__facings .editor__button[aria-pressed="true"] { border-color: #5b9bff; background: #4a6390; }
 .editor__errors ul { margin: 4px 0 0; padding-left: 18px; }
 `;
 
@@ -135,6 +161,30 @@ export function startEditor(initialPlan: SchoolPlan = DEMO_SCHOOL): void {
     if (e.key === "Enter") renameInput.blur();
   });
 
+  side.append(heading("訓練条件"));
+  const markerList = el("div", "editor__tools");
+  const markerButtons = MARKER_TOOLS.map((marker) => {
+    const b = toolButton(marker.label, marker.color);
+    b.addEventListener("click", () => update(selectTool(state, { kind: marker.kind })));
+    markerList.appendChild(b);
+    return { kind: marker.kind, button: b };
+  });
+  side.appendChild(markerList);
+  const facingRow = el("div", "editor__facings");
+  facingRow.setAttribute("role", "group");
+  facingRow.setAttribute("aria-label", "開始時の向き");
+  const facingButtons = FACINGS.map((facing) => {
+    const b = button(FACING_LABELS[facing]);
+    b.setAttribute("aria-pressed", "false");
+    b.addEventListener("click", () => update(setStartFacing(state, facing)));
+    facingRow.appendChild(b);
+    return { facing, button: b };
+  });
+  const markerHint = el("p", "editor__hint");
+  markerHint.textContent =
+    "クリックで置く．火元・集合場所はもう一度クリックで外す．開始地点は 1 つだけで，置き直すと移る．開始時の向きは上のボタンで選ぶ";
+  side.append(heading("開始時の向き"), facingRow, markerHint);
+
   side.append(heading("元に戻す"));
   const historyRow = el("div", "editor__row");
   const undoButton = button("元に戻す");
@@ -171,8 +221,22 @@ export function startEditor(initialPlan: SchoolPlan = DEMO_SCHOOL): void {
   const canvas = el("canvas", "editor__canvas");
   const hoverBox = el("div", "editor__hover");
   const errorBox = el("div", "editor__errors");
-  main.append(canvas, hoverBox, errorBox);
+  const noticeBox = el("div", "editor__notice");
+  noticeBox.hidden = true;
+  noticeBox.setAttribute("role", "status");
+  main.append(canvas, hoverBox, errorBox, noticeBox);
   const ctx = canvas.getContext("2d");
+  let noticeTimer: number | undefined;
+
+  /** 置けなかった理由を数秒だけ出す */
+  const showNotice = (message: string): void => {
+    noticeBox.textContent = message;
+    noticeBox.hidden = false;
+    window.clearTimeout(noticeTimer);
+    noticeTimer = window.setTimeout(() => {
+      noticeBox.hidden = true;
+    }, NOTICE_MS);
+  };
 
   const cellAt = (e: PointerEvent): CellXZ | null => {
     const rect = canvas.getBoundingClientRect();
@@ -182,6 +246,13 @@ export function startEditor(initialPlan: SchoolPlan = DEMO_SCHOOL): void {
     if (e.button !== 0) return;
     const cell = cellAt(e);
     if (cell === null) return;
+    // 訓練条件はクリックで 1 マスずつ置く・外す（ドラッグで続けると，足す・外すが混ざって分かりにくいため）
+    if (isMarkerTool(state.tool)) {
+      const result = placeMarker(state, cell);
+      update(result.state);
+      if (result.reason !== null) showNotice(result.reason);
+      return;
+    }
     canvas.setPointerCapture(e.pointerId);
     update(beginStroke(state, cell));
   });
@@ -258,6 +329,13 @@ export function startEditor(initialPlan: SchoolPlan = DEMO_SCHOOL): void {
     for (const { kind, button: b } of partButtons) {
       b.setAttribute("aria-pressed", String(state.tool.kind === kind));
     }
+    for (const { kind, button: b } of markerButtons) {
+      b.setAttribute("aria-pressed", String(state.tool.kind === kind));
+    }
+    const facing = facingOfYaw(state.plan.drill.startYaw);
+    for (const { facing: f, button: b } of facingButtons) {
+      b.setAttribute("aria-pressed", String(f === facing));
+    }
     undoButton.disabled = !canUndo(state);
     redoButton.disabled = !canRedo(state);
     // 入力中の値は書き換えない
@@ -275,7 +353,17 @@ export function startEditor(initialPlan: SchoolPlan = DEMO_SCHOOL): void {
     layout = computeGridLayout(floor, w, h);
     if (ctx !== null) {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      drawEditorGrid(ctx, floor, state.plan.rooms, layout, w, h, hover);
+      drawEditorGrid(
+        ctx,
+        floor,
+        state.plan.rooms,
+        layout,
+        w,
+        h,
+        hover,
+        drillMarkers(state.plan.drill, EDIT_FLOOR, floor),
+        state.plan.drill.startYaw,
+      );
     }
 
     if (hover === null) {
@@ -285,7 +373,8 @@ export function startEditor(initialPlan: SchoolPlan = DEMO_SCHOOL): void {
       const kind = floor.cells[i];
       const roomName = kind === "classroom" ? state.plan.rooms[floor.roomOf[i]]?.name : undefined;
       hoverBox.hidden = false;
-      hoverBox.textContent = `(${hover.x}, ${hover.z}) ${roomName ?? CELL_KIND_LABELS[kind]}`;
+      const marks = markersAt(state, hover).map((m) => `・${MARKER_LABELS[m]}`);
+      hoverBox.textContent = `(${hover.x}, ${hover.z}) ${roomName ?? CELL_KIND_LABELS[kind]}${marks.join("")}`;
     }
 
     // 塗っている途中は検査しない（ドラッグ中に毎回検査すると重く，途中の誤りが出入りしてちらつくため）
@@ -315,7 +404,19 @@ export function startEditor(initialPlan: SchoolPlan = DEMO_SCHOOL): void {
   render();
 }
 
-function isSameTool(a: PaintTool, b: PaintTool): boolean {
+/** そのマス（編集中の階）に置いてある訓練条件の印 */
+function markersAt(state: EditorState, cell: CellXZ): MarkerKind[] {
+  const { fireOrigins, start, assembly } = state.plan.drill;
+  const at = (ref: { readonly floor: number; readonly x: number; readonly z: number }): boolean =>
+    ref.floor === EDIT_FLOOR && ref.x === cell.x && ref.z === cell.z;
+  const marks: MarkerKind[] = [];
+  if (fireOrigins.some(at)) marks.push("fireOrigin");
+  if (at(start)) marks.push("start");
+  if (assembly.some(at)) marks.push("assembly");
+  return marks;
+}
+
+function isSameTool(a: EditorTool, b: EditorTool): boolean {
   if (a.kind === "classroom" && b.kind === "classroom") return a.room === b.room;
   return a.kind === b.kind;
 }

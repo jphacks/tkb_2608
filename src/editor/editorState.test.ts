@@ -2,9 +2,10 @@
 // 基準は docs/04_SPEC/SPEC_01_画面遷移とモジュール構成.md（src/editor/: 「今の状態 → 操作 → 次の状態」の純粋な関数・「元に戻す」），
 // docs/04_SPEC/SPEC_02_校舎データの形式.md（型・座標・添字 z * width + x・教室以外の roomOf は -1），Issue #108
 import { describe, expect, it } from "vitest";
-import type { CellKind, Floor, Room, SchoolPlan } from "../core/schoolPlan";
+import type { CellKind, CellRef, DrillSetup, Floor, Room, SchoolPlan } from "../core/schoolPlan";
 import { DEMO_SCHOOL } from "../share/samples/demoSchool";
 import { createFloorFromRows } from "../share/samples/floorFromRows";
+import { validatePlan } from "../share/validatePlan";
 import type { CellXZ } from "../sim/grid";
 import {
   addRoom,
@@ -13,18 +14,34 @@ import {
   canUndo,
   continueStroke,
   createEditorState,
+  EDIT_FLOOR,
   type EditorState,
+  type EditorTool,
   editingFloor,
   endStroke,
+  FACING_YAW,
+  FACINGS,
+  type Facing,
+  facingOfYaw,
   HISTORY_LIMIT,
+  isMarkerTool,
+  MARKER_REASONS,
   MAX_GRID_SIZE,
+  type MarkerKind,
+  markerRejection,
   paintCell,
+  placeMarker,
+  placeStart,
   redo,
   renameRoom,
   resizeGrid,
   selectTool,
+  setStartFacing,
   startBlank,
+  toggleAssembly,
+  toggleFireOrigin,
   undo,
+  yawToGridDirection,
 } from "./editorState";
 
 /** 入れ子のオブジェクト・配列をすべて凍らせる（書き換えようとすると strict mode で例外になる） */
@@ -828,4 +845,610 @@ describe("一連の編集", () => {
     while (canUndo(s)) s = undo(s);
     expect(s.plan).toBe(DEMO_SCHOOL);
   });
+});
+
+// ---- 訓練条件（火元・開始地点・向き・集合場所）を置く操作（Issue #116・PLAN_04 E3・SPEC_02 の DrillSetup） ----
+// 既定のマス目（4 × 3）:
+//   z=0: 教室0 教室0 廊下 廊下
+//   z=1: 教室0 教室1 廊下 廊下
+//   z=2: 屋外  屋外  屋外 屋外
+
+const ref = (x: number, z: number, floor = 0): CellRef => ({ floor, x, z });
+
+/** テスト用の訓練条件（既定のマス目で validatePlan が誤りを出さない） */
+const TEST_DRILL: DrillSetup = {
+  mode: "learn",
+  fireOrigins: [ref(3, 0)],
+  start: ref(1, 1),
+  startYaw: 0,
+  assembly: [ref(3, 2)],
+  route: [ref(1, 1), ref(2, 1), ref(3, 1), ref(3, 2)],
+  spread: DEMO_SCHOOL.drill.spread,
+  timeLimitSeconds: DEMO_SCHOOL.drill.timeLimitSeconds,
+};
+
+/** 訓練条件の一部だけを上書きした校舎で状態を作る（凍らせてある） */
+function drillState(
+  drill: Partial<DrillSetup> = {},
+  options: Omit<NonNullable<Parameters<typeof plan>[0]>, "overrides"> = {},
+): EditorState {
+  return createEditorState(plan({ ...options, overrides: { drill: { ...TEST_DRILL, ...drill } } }));
+}
+
+/** 置けない位置（マス目の外・整数でない・数でない） */
+const OUTSIDE_CELLS: readonly CellXZ[] = [
+  at(-1, 0),
+  at(0, -1),
+  at(4, 0),
+  at(0, 3),
+  at(4, 3),
+  at(0.5, 0),
+  at(0, 1.5),
+  at(Number.NaN, 0),
+  at(0, Number.NaN),
+  at(Number.POSITIVE_INFINITY, 0),
+  at(0, Number.NEGATIVE_INFINITY),
+];
+
+/** 置けなかった時: 理由が返り，校舎は同じ参照・履歴は変わらない */
+function expectRejected(
+  before: EditorState,
+  result: { state: EditorState; reason: string | null },
+  reason: string,
+): void {
+  expect(result.reason).toBe(reason);
+  expect(result.state.plan).toBe(before.plan);
+  expect(result.state.past).toEqual(before.past);
+  expect(result.state.future).toEqual(before.future);
+}
+
+/** drill のうち，指定した項目以外が変わっていない（同じ値） */
+function expectDrillOthersKept(
+  before: SchoolPlan,
+  after: SchoolPlan,
+  changed: readonly (keyof DrillSetup)[],
+): void {
+  const keys: (keyof DrillSetup)[] = [
+    "mode",
+    "fireOrigins",
+    "start",
+    "startYaw",
+    "assembly",
+    "route",
+    "spread",
+    "timeLimitSeconds",
+  ];
+  for (const key of keys) {
+    if (changed.includes(key)) continue;
+    expect(after.drill[key]).toEqual(before.drill[key]);
+  }
+  // 訓練条件以外（マス目・教室・名前）も変えない
+  expect(after.floors).toBe(before.floors);
+  expect(after.rooms).toBe(before.rooms);
+  expect(after.name).toBe(before.name);
+  expect(after.cellSize).toBe(before.cellSize);
+}
+
+describe("訓練条件のテスト用データ", () => {
+  it("既定の訓練条件は validatePlan の誤りが無い（以降のテストの前提）", () => {
+    expect(validatePlan(drillState().plan)).toEqual([]);
+  });
+
+  it("EDIT_FLOOR は 1 フロア目（0）", () => {
+    expect(EDIT_FLOOR).toBe(0);
+  });
+});
+
+describe("isMarkerTool", () => {
+  it.each<MarkerKind>(["fireOrigin", "start", "assembly"])("%s は置く道具", (kind) => {
+    expect(isMarkerTool({ kind })).toBe(true);
+  });
+
+  it.each<EditorTool>([
+    { kind: "corridor" },
+    { kind: "outdoor" },
+    { kind: "void" },
+    { kind: "classroom", room: 0 },
+  ])("塗る道具 %o は置く道具ではない", (tool) => {
+    expect(isMarkerTool(tool)).toBe(false);
+  });
+});
+
+describe("selectTool（置く道具）", () => {
+  it.each<MarkerKind>(["fireOrigin", "start", "assembly"])(
+    "%s を選べる．校舎と履歴は変わらない",
+    (kind) => {
+      const s = drillState();
+      const next = selectTool(s, { kind });
+      expect(next.tool).toEqual({ kind });
+      expect(next.plan).toBe(s.plan);
+      expect(next.past).toEqual([]);
+    },
+  );
+});
+
+describe("markerRejection", () => {
+  it.each<[MarkerKind, CellXZ, string | null]>([
+    ["fireOrigin", at(0, 0), null],
+    ["fireOrigin", at(2, 0), null],
+    ["fireOrigin", at(0, 2), null],
+    ["start", at(0, 0), null],
+    ["start", at(1, 1), null],
+    ["start", at(2, 0), MARKER_REASONS.startNotClassroom],
+    ["start", at(0, 2), MARKER_REASONS.startNotClassroom],
+    ["assembly", at(0, 2), null],
+    ["assembly", at(3, 2), null],
+    ["assembly", at(0, 0), MARKER_REASONS.assemblyNotOutdoor],
+    ["assembly", at(2, 1), MARKER_REASONS.assemblyNotOutdoor],
+  ])("%s を %o に置く → %s", (kind, cell, reason) => {
+    expect(markerRejection(drillState(), kind, cell)).toBe(reason);
+  });
+
+  it.each(["door", "exit", "shutter", "wall", "void"] as const)(
+    "開始地点は教室以外（%s）に置けず，集合場所も屋外以外に置けない",
+    (kind) => {
+      const ch = { door: "d", exit: "e", shutter: "s", wall: "#", void: "." }[kind];
+      const s = drillState({}, { rows: ["00hh", `01h${ch}`, "oooo"] });
+      expect(editingFloor(s).cells[1 * 4 + 3]).toBe(kind);
+      expect(markerRejection(s, "start", at(3, 1))).toBe(MARKER_REASONS.startNotClassroom);
+      expect(markerRejection(s, "assembly", at(3, 1))).toBe(MARKER_REASONS.assemblyNotOutdoor);
+    },
+  );
+
+  it.each<MarkerKind>(["fireOrigin", "start", "assembly"])(
+    "%s はマス目の外・整数でない・数でない位置には置けない",
+    (kind) => {
+      for (const cell of OUTSIDE_CELLS) {
+        expect(markerRejection(drillState(), kind, cell)).toBe(MARKER_REASONS.outside);
+      }
+    },
+  );
+
+  it("理由はどれも空でない日本語の文", () => {
+    for (const reason of Object.values(MARKER_REASONS)) {
+      expect(reason.length).toBeGreaterThan(0);
+    }
+    expect(new Set(Object.values(MARKER_REASONS)).size).toBe(3);
+  });
+});
+
+describe("toggleFireOrigin", () => {
+  it.each<[string, CellXZ]>([
+    ["教室", at(0, 0)],
+    ["廊下", at(2, 1)],
+    ["屋外", at(0, 2)],
+  ])("%s のマスに火元を足せる（1 回分の履歴になる）", (_, cell) => {
+    const s = drillState();
+    const { state: next, reason } = toggleFireOrigin(s, cell);
+    expect(reason).toBeNull();
+    expect(next.plan.drill.fireOrigins).toEqual([ref(3, 0), ref(cell.x, cell.z)]);
+    expect(next.past).toHaveLength(1);
+    expect(next.past[0]).toBe(s.plan);
+    expect(next.future).toEqual([]);
+    expectDrillOthersKept(s.plan, next.plan, ["fireOrigins"]);
+  });
+
+  it("足した位置は編集中の階（EDIT_FLOOR）を指す", () => {
+    const { state: next } = toggleFireOrigin(drillState(), at(1, 0));
+    expect(next.plan.drill.fireOrigins.at(-1)?.floor).toBe(EDIT_FLOOR);
+  });
+
+  it("同じマスをもう一度選ぶと外す（最後の 1 つも外せ，validatePlan の誤りになる）", () => {
+    const s = drillState();
+    const { state: next, reason } = toggleFireOrigin(s, at(3, 0));
+    expect(reason).toBeNull();
+    expect(next.plan.drill.fireOrigins).toEqual([]);
+    expect(next.past).toHaveLength(1);
+    expect(validatePlan(next.plan)).toContain("火元が 1 つもありません");
+    expectDrillOthersKept(s.plan, next.plan, ["fireOrigins"]);
+  });
+
+  it("足して外すと元の火元に戻る（同じマスが 2 つにならない）", () => {
+    let s = drillState();
+    s = toggleFireOrigin(s, at(0, 0)).state;
+    s = toggleFireOrigin(s, at(0, 0)).state;
+    expect(s.plan.drill.fireOrigins).toEqual([ref(3, 0)]);
+    expect(s.past).toHaveLength(2);
+  });
+
+  it("複数の中から 1 つだけ外せる", () => {
+    const s = drillState({ fireOrigins: [ref(0, 0), ref(2, 0), ref(3, 0)] });
+    const { state: next } = toggleFireOrigin(s, at(2, 0));
+    expect(next.plan.drill.fireOrigins).toEqual([ref(0, 0), ref(3, 0)]);
+  });
+
+  it("元に戻す・やり直すで前後の校舎に戻る", () => {
+    const s = drillState();
+    const added = toggleFireOrigin(s, at(0, 0)).state;
+    const undone = undo(added);
+    expect(undone.plan).toBe(s.plan);
+    expect(canRedo(undone)).toBe(true);
+    const redone = redo(undone);
+    expect(redone.plan).toBe(added.plan);
+  });
+
+  it("新しく足すと，やり直す先は捨てる", () => {
+    const s = toggleFireOrigin(drillState(), at(0, 0)).state;
+    const undone = undo(s);
+    const next = toggleFireOrigin(undone, at(1, 0)).state;
+    expect(next.future).toEqual([]);
+    expect(canRedo(next)).toBe(false);
+  });
+
+  it.each(OUTSIDE_CELLS)("マス目の外 %o には置けず，理由が返り履歴に積まない", (cell) => {
+    const s = drillState();
+    expectRejected(s, toggleFireOrigin(s, cell), MARKER_REASONS.outside);
+  });
+
+  it("入力の校舎を書き換えない（凍らせた校舎で例外にならない）", () => {
+    const s = drillState();
+    const snapshot = JSON.stringify(s.plan);
+    expect(() => toggleFireOrigin(s, at(0, 0))).not.toThrow();
+    expect(() => toggleFireOrigin(s, at(3, 0))).not.toThrow();
+    expect(JSON.stringify(s.plan)).toBe(snapshot);
+  });
+});
+
+describe("toggleAssembly", () => {
+  it("屋外のマスに集合場所を足せる（1 回分の履歴になる）", () => {
+    const s = drillState();
+    const { state: next, reason } = toggleAssembly(s, at(0, 2));
+    expect(reason).toBeNull();
+    expect(next.plan.drill.assembly).toEqual([ref(3, 2), ref(0, 2)]);
+    expect(next.past).toEqual([s.plan]);
+    expectDrillOthersKept(s.plan, next.plan, ["assembly"]);
+    expect(validatePlan(next.plan)).toEqual([]);
+  });
+
+  it.each<[string, CellXZ]>([
+    ["教室", at(0, 0)],
+    ["廊下", at(2, 1)],
+  ])("%s のマスには置けず，理由が返り履歴に積まない", (_, cell) => {
+    const s = drillState();
+    expectRejected(s, toggleAssembly(s, cell), MARKER_REASONS.assemblyNotOutdoor);
+  });
+
+  it.each(OUTSIDE_CELLS)("マス目の外 %o には置けない", (cell) => {
+    const s = drillState();
+    expectRejected(s, toggleAssembly(s, cell), MARKER_REASONS.outside);
+  });
+
+  it("同じマスをもう一度選ぶと外す（最後の 1 つも外せ，validatePlan の誤りになる）", () => {
+    const s = drillState();
+    const { state: next, reason } = toggleAssembly(s, at(3, 2));
+    expect(reason).toBeNull();
+    expect(next.plan.drill.assembly).toEqual([]);
+    expect(next.past).toHaveLength(1);
+    expect(validatePlan(next.plan)).toContain("集合場所が 1 つもありません");
+  });
+
+  it("屋外でなくなったマスの集合場所も，選べば外せる", () => {
+    const s = drillState({ assembly: [ref(3, 2), ref(2, 0)] });
+    const { state: next, reason } = toggleAssembly(s, at(2, 0));
+    expect(reason).toBeNull();
+    expect(next.plan.drill.assembly).toEqual([ref(3, 2)]);
+  });
+
+  it("元に戻す・やり直すで前後の校舎に戻る", () => {
+    const s = drillState();
+    const added = toggleAssembly(s, at(1, 2)).state;
+    expect(undo(added).plan).toBe(s.plan);
+    expect(redo(undo(added)).plan).toBe(added.plan);
+  });
+});
+
+describe("placeStart", () => {
+  it("教室のマスに置くと前の位置から移る（1 つだけ・1 回分の履歴）", () => {
+    const s = drillState();
+    const { state: next, reason } = placeStart(s, at(0, 0));
+    expect(reason).toBeNull();
+    expect(next.plan.drill.start).toEqual(ref(0, 0));
+    expect(next.past).toEqual([s.plan]);
+    expectDrillOthersKept(s.plan, next.plan, ["start"]);
+  });
+
+  it("向き（startYaw）は置き直しても変わらない", () => {
+    const s = drillState({ startYaw: Math.PI });
+    const next = placeStart(s, at(0, 1)).state;
+    expect(next.plan.drill.startYaw).toBe(Math.PI);
+  });
+
+  it("同じマスに置き直しても何も変わらず，履歴に積まない", () => {
+    const s = drillState();
+    const result = placeStart(s, at(1, 1));
+    expect(result.reason).toBeNull();
+    expect(result.state.plan).toBe(s.plan);
+    expect(result.state.past).toEqual([]);
+  });
+
+  it.each<[string, CellXZ]>([
+    ["廊下", at(2, 0)],
+    ["屋外", at(0, 2)],
+  ])("%s のマスには置けず，理由が返り履歴に積まない", (_, cell) => {
+    const s = drillState();
+    expectRejected(s, placeStart(s, cell), MARKER_REASONS.startNotClassroom);
+  });
+
+  it.each(OUTSIDE_CELLS)("マス目の外 %o には置けない", (cell) => {
+    const s = drillState();
+    expectRejected(s, placeStart(s, cell), MARKER_REASONS.outside);
+  });
+
+  it("元に戻す・やり直すで前後の校舎に戻る", () => {
+    const s = drillState();
+    const moved = placeStart(s, at(0, 0)).state;
+    expect(undo(moved).plan).toBe(s.plan);
+    expect(redo(undo(moved)).plan).toBe(moved.plan);
+  });
+});
+
+describe("setStartFacing", () => {
+  it.each<[Facing, number]>([
+    ["right", Math.PI / 2],
+    ["down", Math.PI],
+    ["left", -Math.PI / 2],
+  ])("%s を選ぶと startYaw が FACING_YAW の値になる（1 回分の履歴）", (facing, yaw) => {
+    const s = drillState({ startYaw: 0 });
+    const next = setStartFacing(s, facing);
+    expect(next.plan.drill.startYaw).toBeCloseTo(yaw, 12);
+    expect(next.plan.drill.startYaw).toBe(FACING_YAW[facing]);
+    expect(facingOfYaw(next.plan.drill.startYaw)).toBe(facing);
+    expect(next.past).toEqual([s.plan]);
+    expectDrillOthersKept(s.plan, next.plan, ["startYaw"]);
+  });
+
+  it("今と同じ向きなら何も変わらず，履歴に積まない", () => {
+    const s = drillState({ startYaw: 0 });
+    const next = setStartFacing(s, "up");
+    expect(next.plan).toBe(s.plan);
+    expect(next.past).toEqual([]);
+  });
+
+  it("4 方向でない向き（0.3 rad）から上を選ぶと 0 になる", () => {
+    const s = drillState({ startYaw: 0.3 });
+    const next = setStartFacing(s, "up");
+    expect(next.plan.drill.startYaw).toBe(0);
+    expect(next.past).toHaveLength(1);
+  });
+
+  it("元に戻す・やり直すで前後の向きに戻る", () => {
+    const s = drillState();
+    const turned = setStartFacing(s, "left");
+    expect(undo(turned).plan).toBe(s.plan);
+    expect(redo(undo(turned)).plan).toBe(turned.plan);
+  });
+});
+
+describe("placeMarker", () => {
+  it("塗る道具の時は何もしない（理由も出さない）", () => {
+    const s = drillState();
+    const result = placeMarker(s, at(0, 0));
+    expect(result.state).toBe(s);
+    expect(result.reason).toBeNull();
+  });
+
+  it("火元の道具ではマスの火元を足し・外す", () => {
+    const s = selectTool(drillState(), { kind: "fireOrigin" });
+    const added = placeMarker(s, at(0, 0));
+    expect(added.reason).toBeNull();
+    expect(added.state.plan.drill.fireOrigins).toEqual([ref(3, 0), ref(0, 0)]);
+    const removed = placeMarker(added.state, at(0, 0));
+    expect(removed.state.plan.drill.fireOrigins).toEqual([ref(3, 0)]);
+  });
+
+  it("開始地点の道具では教室に置き，教室以外は理由を返す", () => {
+    const s = selectTool(drillState(), { kind: "start" });
+    expect(placeMarker(s, at(0, 0)).state.plan.drill.start).toEqual(ref(0, 0));
+    expectRejected(s, placeMarker(s, at(2, 0)), MARKER_REASONS.startNotClassroom);
+  });
+
+  it("集合場所の道具では屋外に置き，屋外以外は理由を返す", () => {
+    const s = selectTool(drillState(), { kind: "assembly" });
+    expect(placeMarker(s, at(0, 2)).state.plan.drill.assembly).toEqual([ref(3, 2), ref(0, 2)]);
+    expectRejected(s, placeMarker(s, at(0, 0)), MARKER_REASONS.assemblyNotOutdoor);
+  });
+
+  it("置いた後も道具は変わらない", () => {
+    const s = selectTool(drillState(), { kind: "assembly" });
+    expect(placeMarker(s, at(0, 2)).state.tool).toEqual({ kind: "assembly" });
+  });
+});
+
+describe("置く道具の時の塗る操作", () => {
+  it.each<MarkerKind>(["fireOrigin", "start", "assembly"])(
+    "%s の道具では paintCell は塗らず，履歴に積まない",
+    (kind) => {
+      const s = selectTool(drillState(), { kind });
+      const next = paintCell(s, at(2, 0));
+      expect(next.plan).toBe(s.plan);
+      expect(next.past).toEqual([]);
+    },
+  );
+
+  it.each<MarkerKind>(["fireOrigin", "start", "assembly"])(
+    "%s の道具ではドラッグしても塗らず，履歴に積まない",
+    (kind) => {
+      const s = selectTool(drillState(), { kind });
+      const dragged = endStroke(continueStroke(beginStroke(s, at(0, 0)), at(3, 1)));
+      expect(dragged.plan).toEqual(s.plan);
+      expect(changedCells(s.plan, dragged.plan)).toEqual([]);
+      expect(dragged.past).toEqual([]);
+    },
+  );
+
+  it("塗る道具に戻せば塗れる", () => {
+    let s = selectTool(drillState(), { kind: "fireOrigin" });
+    s = selectTool(s, { kind: "wall" });
+    s = paintCell(s, at(2, 0));
+    expect(cellAt(s, 2, 0)).toEqual(["wall", -1]);
+    expect(s.past).toHaveLength(1);
+  });
+
+  it("ドラッグで塗っている途中に置くと，塗った分と置いた分が別々の履歴になる", () => {
+    const s0 = selectTool(drillState(), { kind: "corridor" });
+    const painting = continueStroke(beginStroke(s0, at(0, 0)), at(1, 0));
+    const { state: placed } = toggleFireOrigin(painting, at(2, 1));
+    expect(placed.stroke).toBeNull();
+    expect(placed.past).toHaveLength(2);
+    expect(placed.plan.drill.fireOrigins).toContainEqual(ref(2, 1));
+    const once = undo(placed);
+    expect(once.plan.drill.fireOrigins).toEqual([ref(3, 0)]);
+    expect(cellAt(once, 0, 0)).toEqual(["corridor", -1]);
+    expect(undo(once).plan).toBe(s0.plan);
+  });
+});
+
+describe("塗り替え・大きさの変更の後の訓練条件", () => {
+  it("開始地点の教室を廊下に塗り替えても開始地点は残り，validatePlan の誤りになる", () => {
+    let s = drillState();
+    s = selectTool(s, { kind: "corridor" });
+    s = paintCell(s, at(1, 1));
+    expect(s.plan.drill.start).toEqual(ref(1, 1));
+    expect(validatePlan(s.plan)).toContain("開始地点 1階の (1, 1) が教室のマスではありません");
+  });
+
+  it("集合場所の屋外を廊下に塗り替えても集合場所は残り，validatePlan の誤りになる", () => {
+    let s = drillState();
+    s = selectTool(s, { kind: "corridor" });
+    s = paintCell(s, at(3, 2));
+    expect(s.plan.drill.assembly).toEqual([ref(3, 2)]);
+    expect(validatePlan(s.plan)).toContain("集合場所 1階の (3, 2) が屋外のマスではありません");
+  });
+
+  it("火元のマスを塗り替えても火元は残る", () => {
+    let s = drillState();
+    s = selectTool(s, { kind: "wall" });
+    s = paintCell(s, at(3, 0));
+    expect(s.plan.drill.fireOrigins).toEqual([ref(3, 0)]);
+  });
+
+  it("小さくしてマス目の外に出ても火元・集合場所は残り，validatePlan の誤りになる", () => {
+    const s = drillState();
+    const next = resizeGrid(s, 2, 2);
+    expect(next.plan.drill).toEqual(s.plan.drill);
+    const errors = validatePlan(next.plan);
+    expect(errors.some((e) => /^火元 1.*\(3, 0\).*マス目の外/.test(e))).toBe(true);
+    expect(errors.some((e) => /^集合場所 1.*\(3, 2\).*マス目の外/.test(e))).toBe(true);
+  });
+
+  it("大きさを元に戻すと誤りが消える", () => {
+    const s = drillState();
+    const back = undo(resizeGrid(s, 2, 2));
+    expect(validatePlan(back.plan)).toEqual([]);
+  });
+});
+
+describe("訓練条件の一連の編集", () => {
+  it("1 操作が 1 回分の履歴になり，すべて元に戻すと最初の校舎に戻る", () => {
+    const original = drillState();
+    const snapshot = JSON.stringify(original.plan);
+    let s = original;
+    s = toggleFireOrigin(s, at(0, 2)).state;
+    expect(s.past).toHaveLength(1);
+    s = toggleFireOrigin(s, at(3, 0)).state;
+    expect(s.past).toHaveLength(2);
+    s = placeStart(s, at(0, 0)).state;
+    expect(s.past).toHaveLength(3);
+    s = setStartFacing(s, "down");
+    expect(s.past).toHaveLength(4);
+    s = toggleAssembly(s, at(0, 2)).state;
+    expect(s.past).toHaveLength(5);
+    s = toggleAssembly(s, at(0, 0)).state; // 置けない
+    expect(s.past).toHaveLength(5);
+
+    const drill = s.plan.drill;
+    expect(drill.fireOrigins).toEqual([ref(0, 2)]);
+    expect(drill.start).toEqual(ref(0, 0));
+    expect(drill.startYaw).toBe(Math.PI);
+    expect(drill.assembly).toEqual([ref(3, 2), ref(0, 2)]);
+    expect(drill.route).toEqual(TEST_DRILL.route);
+    expect(drill.spread).toEqual(TEST_DRILL.spread);
+    expect(drill.timeLimitSeconds).toBe(TEST_DRILL.timeLimitSeconds);
+    expect(drill.mode).toBe(TEST_DRILL.mode);
+
+    const done = s;
+    while (canUndo(s)) s = undo(s);
+    expect(s.plan).toBe(original.plan);
+    while (canRedo(s)) s = redo(s);
+    expect(s.plan).toBe(done.plan);
+    expect(JSON.stringify(original.plan)).toBe(snapshot);
+  });
+});
+
+describe("FACING_YAW / FACINGS（SPEC_02: 0 が -Z（エディタの上）向き，右回りに増える）", () => {
+  it("上下左右が 1 つずつ並ぶ", () => {
+    expect(new Set(FACINGS)).toEqual(new Set<Facing>(["up", "right", "down", "left"]));
+    expect(FACINGS).toHaveLength(4);
+  });
+
+  it("上は 0 rad", () => {
+    expect(FACING_YAW.up).toBe(0);
+  });
+
+  it("上から右回りに 90° ずつ: 右 π/2・下 π・左 3π/2（-π/2 と同じ向き）", () => {
+    const norm = (a: number) => ((a % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+    expect(norm(FACING_YAW.right)).toBeCloseTo(Math.PI / 2, 12);
+    expect(norm(FACING_YAW.down)).toBeCloseTo(Math.PI, 12);
+    expect(norm(FACING_YAW.left)).toBeCloseTo((3 * Math.PI) / 2, 12);
+  });
+});
+
+describe("yawToGridDirection", () => {
+  it.each<[Facing, number, number]>([
+    ["up", 0, -1],
+    ["right", 1, 0],
+    ["down", 0, 1],
+    ["left", -1, 0],
+  ])("%s の向きはマス目の (x %s, z %s) 方向（x は右・z は画面の下）", (facing, x, z) => {
+    const d = yawToGridDirection(FACING_YAW[facing]);
+    expect(d.x).toBeCloseTo(x, 12);
+    expect(d.z).toBeCloseTo(z, 12);
+  });
+
+  it.each([0, 0.3, 1, Math.PI / 4, 2, -2.5, 10])("長さは 1（%s rad）", (yaw) => {
+    const d = yawToGridDirection(yaw);
+    expect(Math.hypot(d.x, d.z)).toBeCloseTo(1, 12);
+  });
+});
+
+describe("facingOfYaw", () => {
+  it.each(FACINGS)("FACING_YAW の %s を戻すと同じ向き", (facing) => {
+    expect(facingOfYaw(FACING_YAW[facing])).toBe(facing);
+  });
+
+  it.each(FACINGS)("2π 回った向き（%s）も同じ向き", (facing) => {
+    expect(facingOfYaw(FACING_YAW[facing] + 2 * Math.PI)).toBe(facing);
+    expect(facingOfYaw(FACING_YAW[facing] - 2 * Math.PI)).toBe(facing);
+    expect(facingOfYaw(FACING_YAW[facing] + 6 * Math.PI)).toBe(facing);
+  });
+
+  it.each<[number, Facing]>([
+    [Math.PI / 4 - 0.01, "up"],
+    [Math.PI / 4 + 0.01, "right"],
+    [(3 * Math.PI) / 4 - 0.01, "right"],
+    [(3 * Math.PI) / 4 + 0.01, "down"],
+    [(5 * Math.PI) / 4 - 0.01, "down"],
+    [(5 * Math.PI) / 4 + 0.01, "left"],
+    [-Math.PI / 4 + 0.01, "up"],
+    [-Math.PI / 4 - 0.01, "left"],
+    [-Math.PI + 0.01, "down"],
+    [0.3, "up"],
+  ])("%s rad は最も近い %s", (yaw, facing) => {
+    expect(facingOfYaw(yaw)).toBe(facing);
+  });
+
+  it.each<[number, readonly Facing[]]>([
+    [Math.PI / 4, ["up", "right"]],
+    [(3 * Math.PI) / 4, ["right", "down"]],
+    [-Math.PI / 4, ["up", "left"]],
+  ])("ちょうど真ん中（%s rad）は隣り合う 2 つのどちらか", (yaw, candidates) => {
+    expect(candidates).toContain(facingOfYaw(yaw));
+  });
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+    "数でない（%s）時は null",
+    (yaw) => {
+      expect(facingOfYaw(yaw)).toBeNull();
+    },
+  );
 });

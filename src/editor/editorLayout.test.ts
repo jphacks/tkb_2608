@@ -1,13 +1,14 @@
 // エディタの上から見た図の配置の計算のテスト．
 // 基準は docs/04_SPEC/SPEC_02_校舎データの形式.md（座標: x は右，z は下，左上が (0, 0)・「壁の自動配置」は sim/ の wallBetween），Issue #108
 import { describe, expect, it } from "vitest";
-import type { Floor, Room } from "../core/schoolPlan";
+import type { CellRef, DrillSetup, Floor, Room } from "../core/schoolPlan";
 import { DEMO_SCHOOL, DEMO_SCHOOL_ROWS } from "../share/samples/demoSchool";
 import { createFloorFromRows } from "../share/samples/floorFromRows";
 import { wallBetween } from "../sim/walls";
 import {
   canvasToCell,
   computeGridLayout,
+  drillMarkers,
   GRID_MARGIN_PX,
   type GridEdge,
   type GridLayout,
@@ -229,5 +230,89 @@ describe("roomLabels", () => {
       expect(f.cells[i]).toBe("classroom");
       expect(f.roomOf[i]).toBe(l.room);
     }
+  });
+});
+
+describe("drillMarkers", () => {
+  const r = (x: number, z: number, f = 0): CellRef => ({ floor: f, x, z });
+  // 4 × 3 マスの階
+  const f4x3 = floor(["00hh", "01hh", "oooo"]);
+  const drill = (d: Partial<DrillSetup>): DrillSetup => ({
+    ...DEMO_SCHOOL.drill,
+    fireOrigins: [],
+    start: r(1, 1),
+    assembly: [],
+    route: [],
+    ...d,
+  });
+
+  it("その階のマス目の中の火元・開始地点・集合場所を (x, z) で返す（順番を保つ）", () => {
+    const m = drillMarkers(
+      drill({ fireOrigins: [r(3, 0), r(0, 0)], start: r(1, 1), assembly: [r(0, 2), r(3, 2)] }),
+      0,
+      f4x3,
+    );
+    expect(m.fireOrigins).toEqual([
+      { x: 3, z: 0 },
+      { x: 0, z: 0 },
+    ]);
+    expect(m.start).toEqual({ x: 1, z: 1 });
+    expect(m.assembly).toEqual([
+      { x: 0, z: 2 },
+      { x: 3, z: 2 },
+    ]);
+  });
+
+  it("他の階の物は除く（開始地点は null）", () => {
+    const m = drillMarkers(
+      drill({ fireOrigins: [r(0, 0, 1), r(1, 0)], start: r(1, 1, 1), assembly: [r(0, 2, 1)] }),
+      0,
+      f4x3,
+    );
+    expect(m.fireOrigins).toEqual([{ x: 1, z: 0 }]);
+    expect(m.start).toBeNull();
+    expect(m.assembly).toEqual([]);
+  });
+
+  it("floorIndex の階の物だけを返す（2 階を描く時は 2 階の物）", () => {
+    const m = drillMarkers(
+      drill({ fireOrigins: [r(0, 0, 0), r(2, 1, 1)], start: r(1, 0, 1) }),
+      1,
+      f4x3,
+    );
+    expect(m.fireOrigins).toEqual([{ x: 2, z: 1 }]);
+    expect(m.start).toEqual({ x: 1, z: 0 });
+  });
+
+  it.each<[number, number]>([
+    [-1, 0],
+    [0, -1],
+    [4, 0],
+    [0, 3],
+    [0.5, 1],
+    [Number.NaN, 0],
+    [0, Number.POSITIVE_INFINITY],
+  ])("マス目の外・整数でない位置 (%s, %s) は除く", (x, z) => {
+    const m = drillMarkers(
+      drill({ fireOrigins: [r(x, z)], start: r(x, z), assembly: [r(x, z)] }),
+      0,
+      f4x3,
+    );
+    expect(m.fireOrigins).toEqual([]);
+    expect(m.start).toBeNull();
+    expect(m.assembly).toEqual([]);
+  });
+
+  it("マス目の端（右下）は含む", () => {
+    const m = drillMarkers(drill({ fireOrigins: [r(3, 2)], start: r(3, 2) }), 0, f4x3);
+    expect(m.fireOrigins).toEqual([{ x: 3, z: 2 }]);
+    expect(m.start).toEqual({ x: 3, z: 2 });
+  });
+
+  it("デモの校舎の印はすべてマス目の中にある", () => {
+    const m = drillMarkers(DEMO_SCHOOL.drill, 0, DEMO_SCHOOL.floors[0]);
+    expect(m.fireOrigins).toHaveLength(DEMO_SCHOOL.drill.fireOrigins.length);
+    expect(m.start).toEqual({ x: DEMO_SCHOOL.drill.start.x, z: DEMO_SCHOOL.drill.start.z });
+    expect(m.assembly).toHaveLength(DEMO_SCHOOL.drill.assembly.length);
   });
 });
