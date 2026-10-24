@@ -20,7 +20,22 @@ gh の操作は数回で済むため，ops-runner に委譲せず自分で行う
 
 3. `.devcontainer/` 配下の変更が無ければ，「Rebuild が必要な変更はありません（npm の依存の変更は，各自のセッション開始時に `[env-sync]` の警告で通知されます）」と伝えて終了する
 
-## ステップ 2: 重複の確認 (Duplicates)
+## ステップ 2: 作者の Rebuild の確認 (Author Verification)
+
+**作者が自分の環境でこの変更を Rebuild し，`/env-check` を通してからでないと Issue を作らない**．作者の環境で通らない変更を Issue にすると，全員が同じところで詰まるため．
+
+1. 手元のブランチが PR のブランチであることを確かめる（`gh pr view <PR番号> --json headRefName -q .headRefName` と `git branch --show-current` が一致する）．違えば「PR のブランチ（`<ブランチ名>`）に切り替えて Rebuild してから実行してください」と伝えて終了する
+2. `git status --porcelain -- .devcontainer/` が空であること（PR に入っていない手元の変更で確認していないこと）を確かめる
+3. 確認済みの記録が今の `.devcontainer/` と一致しているかを見る:
+
+   ```bash
+   bash .claude/hooks/run_python.sh .claude/hooks/check_env_sync.py
+   ```
+
+   - 出力に「環境の確認が未実施」または「最後に確認した時から変わっている」が含まれていれば，作者の確認が済んでいない．Issue を作らず，次を伝えて終了する: 「先にこのブランチのまま `Dev Containers: Rebuild Container` を実行し，`/env-check`（引数無し）で確認してから，もう一度 `/env-notify <PR番号>` を実行してください」
+   - npm の警告（`npm ci`）は Rebuild とは無関係なので，ここでは見ない
+
+## ステップ 3: 重複の確認 (Duplicates)
 
 同じ PR の Issue が既にあれば作らない．
 
@@ -28,9 +43,9 @@ gh の操作は数回で済むため，ops-runner に委譲せず自分で行う
 gh issue list --label env-sync --state all --search "PR #<PR番号> in:body" --json number,title,state
 ```
 
-- 既にある場合は，その Issue に「PR に追加の変更が入った」旨と追加の確認項目をコメントし，ステップ 5 に進む
+- 既にある場合は，その Issue に「PR に追加の変更が入った」旨と追加の確認項目をコメントし，ステップ 6 に進む
 
-## ステップ 3: Issue の中身を作る (Compose)
+## ステップ 4: Issue の中身を作る (Compose)
 
 `.devcontainer/` の差分を読み（`gh pr diff <PR番号>` の該当部分），以下を判断して本文を作る．**ここが品質の要であり，差分から具体的に書く**．
 
@@ -70,7 +85,7 @@ PR #<PR番号> で Dev Container（`.devcontainer/`）が変わります．**マ
 - [ ] <メンバー2>
 ````
 
-## ステップ 4: 起票 (Create)
+## ステップ 5: 起票 (Create)
 
 1. ラベルを用意する（既にあれば更新されるだけ）:
 
@@ -86,13 +101,13 @@ PR #<PR番号> で Dev Container（`.devcontainer/`）が変わります．**マ
 
 3. 本文の「この Issue の番号」を実際の番号に置き換えて `gh issue edit <Issue番号> --body-file <本文ファイル>` で更新する
 
-## ステップ 5: PR にリンクを残す (Link)
+## ステップ 6: PR にリンクを残す (Link)
 
 ```bash
 gh pr comment <PR番号> --body "Dev Container の変更があるため #<Issue番号> を作成しました．マージ後に各自 Rebuild して \`/env-check <Issue番号>\` を実行してください．"
 ```
 
-## ステップ 6: 報告 (Report)
+## ステップ 7: 報告 (Report)
 
 - Issue の番号・タイトル・URL
 - 確認コマンドとして載せた内容（1 行ずつ）
