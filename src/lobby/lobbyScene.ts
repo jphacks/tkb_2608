@@ -1,6 +1,7 @@
 // ロビー（lobby，VR 表示）．簡単な部屋で開始ボタンを待ち，押されたら見え方の調整（二眼の像が重なるよう
 // ゴーグル側で合わせる．一定時間で次へ）の後に指示を出して
-// 正面 → 立つ → しゃがむ → 足踏み の順に基準を取り，CalibrationProfile を Session.calibration に書いてシナリオへ進む．
+// 正面 → 立つ → しゃがむ → しゃがみ歩き → 足踏み の順に行い，正面（yawOffset）と各手順の区間（segments．
+// 値の計算は input/ が行う）を CalibrationProfile として Session.calibration に書いてシナリオへ進む．
 // ゴーグル装着中なので画面のタッチは使わない（各手順は制限時間で既定値に進むため詰まらない）．
 // 開始は今は一定時間で自動（ゴーグルを付ける時間）．input/ の手が揃ったら
 // DEFAULT_START_GATE_CONFIG.startMode を "hand" にして，手で開始ボタンに触れて始める方法に切り替える（startGate.ts）．
@@ -14,6 +15,7 @@ import {
   DEFAULT_CALIBRATION_CONFIG,
   isCalibrationFinished,
   type OrientationSample,
+  restartCalibrationStep,
   skipCalibrationStep,
   startCalibration,
   toCalibrationProfile,
@@ -81,6 +83,8 @@ interface Active {
   /** 指示の板の枠の明るさ（0〜1） */
   highlight: number;
   skipRequested: boolean;
+  /** 直前のフレームで止めていたか（再開した時に今の手順をやり直すため） */
+  wasPaused: boolean;
   done: boolean;
 }
 
@@ -190,6 +194,7 @@ export function createLobbyScene(options: LobbySceneOptions = {}): Scene {
         lastNarrationKey: "",
         highlight: 0,
         skipRequested: false,
+        wasPaused: false,
         done: false,
         dispose: () => {
           window.removeEventListener("keydown", onKeyDown);
@@ -210,7 +215,20 @@ export function createLobbyScene(options: LobbySceneOptions = {}): Scene {
       const samples = a.feed.drain();
       followHead(a, frame);
       // 止めている間に届いたサンプルは，ゴーグルに入っていない時の値なので基準に混ぜない
-      if (options.isPaused?.() === true) return;
+      if (options.isPaused?.() === true) {
+        a.wasPaused = true;
+        return;
+      }
+      // 区間の時刻は input/ のセンサーのサンプルと同じ時計（performance.now() の ms）で記録する
+      const nowMs = performance.now();
+      if (a.wasPaused) {
+        a.wasPaused = false;
+        // 手順の途中で止めた時は，止める前後の値が区間に混ざらないよう，その手順を最初からやり直す（指示も読み直す）
+        if (a.gate.startedBy !== null && a.state.phase === "step") {
+          a.state = restartCalibrationStep(a.state, nowMs);
+          a.lastNarrationKey = "";
+        }
+      }
       // 開始ボタンが押されるまでキャリブレーションを始めない（制限時間も数えない．サンプルは捨てる）
       if (a.gate.startedBy === null) {
         updateGate(a, frame, samples.orientation);
@@ -218,7 +236,7 @@ export function createLobbyScene(options: LobbySceneOptions = {}): Scene {
       }
       a.state = advanceCalibration(
         a.state,
-        { dt: frame.dt, motion: samples.motion, orientation: samples.orientation },
+        { dt: frame.dt, nowMs, motion: samples.motion, orientation: samples.orientation },
         config,
       );
       if (a.skipRequested) {

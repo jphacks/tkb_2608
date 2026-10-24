@@ -47,14 +47,17 @@
 | 見え方の調整 | 左右それぞれの目の画面の中心に十字を出し，1 つに重なってくっきり見えるよう，スマホの位置やゴーグルのレンズの幅を合わせるよう案内する．値は作らない | 時間で進む | 15 秒 |
 | 導入 | これから行う手順を案内する | 時間で進む | 4 秒 |
 | 正面 | 正面を向いて止まる → `yawOffset` | 3 秒の間ずれが ±15° 以内 | 8 秒 |
-| 立つ | 立って止まる → `standingBaseline` | 最初の 1 秒を捨て，続く 3 秒の揺れが小さい | 8 秒 |
-| しゃがむ | しゃがんで止まる → `crouchThreshold` | 基準から十分ずれた後に止まる | 10 秒 |
-| 足踏み | その場で足踏み → `stepPeakThreshold` | 6 歩分の山を数える | 12 秒 |
+| 立つ | 立って止まる → 区間 `standing`（input/ が静止時の揺れを求める） | 最初の 1 秒を捨て，続く 3 秒の揺れが小さい | 8 秒 |
+| しゃがむ | しゃがんで止まる → 区間 `crouching`（input/ がしゃがみの深さ・時間を求める） | 基準から十分ずれた後に止まる | 10 秒 |
+| しゃがみ歩き | しゃがんだまま足踏み → 区間 `crouchWalking`（input/ がしゃがみ歩きの山の大きさを求める） | 4 歩分の山を数える | 12 秒 |
+| 足踏み | 立ち上がってその場で足踏み → 区間 `stepping`（input/ が立った足踏みの山の大きさ・間隔を求める） | 6 歩分の山を数える | 12 秒 |
 | 終わり | 完了を伝え，`Session.calibration` に書いて避難へ | 時間で進む | 3 秒 |
 
 - 時間切れの時は，その手順で取れたデータがあればその値を使い，無ければ既定値（「もう一度」の時は前回の値）のまま次へ進む
-- 「もう一度」でロビーに戻った時は，開始ボタン → 見え方の調整 → 導入 → 正面だけを行い，姿勢と足踏みの値は前回のまま保つ（ゴーグルの付け直しで正面がずれるため）
-- しきい値の項目（`stepPeakThreshold`・`crouchThreshold`）は lobby/ と input/ で意味がずれているため，今は入力に渡していない（Issue #58）．lobby/ は手順の区間（立つ・しゃがむ・足踏みの開始と終了）だけを伝え，センサーの値の保持としきい値への当てはめは input/ が行う形に改める方針（後述「キャリブレーションとの分担」）
+- 「もう一度」でロビーに戻った時は，開始ボタン → 見え方の調整 → 導入 → 正面だけを行い，姿勢と足踏みの区間（`segments`）は前回のまま保つ（ゴーグルの付け直しで正面がずれるため）
+- 手順の途中で縦向きの案内が出て止まった時は，再開した時にその手順を最初からやり直す（止まる前のセンサーの値が区間に混ざらないため）
+- lobby/ は各手順（立つ・しゃがむ・しゃがみ歩き・足踏み）の区間を `CalibrationProfile.segments` に記録して渡す（#58．種類・開始と終了の時刻（`performance.now()` の ms．input/ のセンサーのサンプルの時刻と同じ時計）・結果 `completed`／`timeout`／`skipped`）．正面は区間を記録せず，`yawOffset` を lobby/ が測る．手順を終える判定（歩数等）は lobby/ が行うが，判定に使う値は作らない（後述「キャリブレーションとの分担」）
+- 旧来のしきい値の項目（`stepPeakThreshold`・`standingBaseline`・`crouchThreshold`）は非推奨で，lobby/ と input/ で意味がずれているため入力に渡さない（`src/app/yawOnlyCalibration.ts` が無効にする）．input/ が `segments` から値を求める形に移ったら core から消す
 
 ### 起動の切り替え (Launch Parameters)
 
@@ -188,7 +191,7 @@ src/
 | `DrillEvaluation` | `core/drill.ts`（**新規**） | sim/ → debrief/ | 評価（外れた区間・火に近づいた点・煙の中でしゃがんでいた割合・避難時間・逃げ遅れか） |
 | `PlayerInput` | `core/types.ts` | input/ → app/ → scenes/・scenario/ | 1 フレーム分の入力．頭の向き（`head`，正面リセット済み），姿勢（`posture`: `standing`／`crouching`），足踏み中か（`walking`）と前進の速さ（`walkSpeed`），左右の手（`hands`） |
 | `HandState` | `core/types.ts` | input/ → scenes/ | 片手の状態．認識できているか（`tracked`），手のひらの位置（頭を原点とした座標），握り具合（`grip`: 0〜1．握った状態の間は 0.6 以上，開いた状態の間は 0.4 以下に収めるため，0.5 で区切ればヒステリシスどおりに判定できる．握ったまま一瞬見失っても約 0.8 秒は `tracked` と握ったままを保つ） |
-| `CalibrationProfile` | `core/types.ts` | lobby/ → input/ | 正面のヨー角と，足踏み・しゃがみの判定のしきい値．項目の見直しは後述「キャリブレーションとの分担」 |
+| `CalibrationProfile` | `core/types.ts` | lobby/ → input/ | 正面のヨー角（`yawOffset`）と，各手順の区間（`segments`: `CalibrationSegment` の配列）．旧来のしきい値の 3 項目は非推奨（後述「キャリブレーションとの分担」） |
 | `Scene` | `core/scene.ts` | 各担当 → app/ | 画面の共通インターフェース（`enter`・`update`・`exit`） |
 | `SceneContext` | `core/scene.ts` | app/ → 各 Scene | イベントバス，描画先（`Stage`），画面をまたぐデータ（`Session`），画面の切り替え（`goTo`） |
 | `Session` | `core/scene.ts` | 各担当 | `plan`（app/ が URL から読んで書く．読み込む前と読み込めなかった時は `null`），`planLoadError`（app/ が書き，開始画面（lobby/）が読んで案内を出す．`decodePlan` の失敗の `kind` と `reason`（`PlanLoadError`．SPEC_02「URL と QR への埋め込み」）．読み込めた時と URL に無い時は `null`），`calibration`（lobby/ が書く），`result`（app/ が書く），`drill`（app/ が `DrillTrack` と `DrillEvaluation` を書く．**新規**），`recording`（recording/ が書く） |
@@ -292,10 +295,10 @@ PLAN_04 の非機能要件「iPhone で 30 fps 以上」を守るため，処理
 
 | 担当 | 受け持つこと |
 | --- | --- |
-| 担当C（`lobby/`） | 基準取りの流れと UI（何を何秒行わせるか，ナレーションと表示，時間切れの扱い）．各手順（立つ・しゃがむ・足踏み）の開始と終了を伝える |
+| 担当C（`lobby/`） | 基準取りの流れと UI（何を何秒行わせるか，ナレーションと表示，時間切れの扱い）．各手順（立つ・しゃがむ・しゃがみ歩き・足踏み）の開始と終了を `segments` に記録して伝える |
 | 担当D（`input/`） | 手順の区間のセンサーの値をためて，判定のしきい値（または判定のモデル）を本人に当てはめることと，その結果の安定性．データが足りない・時間切れの時は既定の判定に戻し，既定より悪くしない |
 
-- 今の `CalibrationProfile` は lobby/ がしきい値を計算して渡す形だが，lobby/ と input/ で値の意味がずれている（Issue #58）．上の分担に合わせて，lobby/ は区間だけを渡し，値の計算は input/ が行う形に改める（core の専用 PR．項目は担当C・D で決める）
+- #58 で lobby/ は区間（`segments`）を渡す形に改めた．input/ は区間でセンサーの値を切り出して，静止時の揺れ（`standing`）・しゃがみの深さと時間（`crouching`）・しゃがみ歩きの山（`crouchWalking`）・立った足踏みの山と間隔（`stepping`）を求める（`experiment_山﨑/04`・`05`・`09`）．`timeout`・`skipped` の区間やサンプルが足りない区間は捨てて既定の判定に戻す．input/ 側の実装は担当D の作業として残っている
 
 ## シナリオ定義の形式 (Scenario Definition Format)
 

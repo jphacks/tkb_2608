@@ -140,7 +140,8 @@ export function startApp(): void {
   let appliedCalibration: CalibrationProfile | null = null;
   const applyCalibration = (source: InputSource, calibration: CalibrationProfile): void => {
     appliedCalibration = calibration;
-    // device: 正面（yawOffset）を差し替える．mock: センサーの向きが無いため今の向きを正面にする
+    // device: 正面（yawOffset）と手順の区間（segments）を渡す（非推奨のしきい値は yawOnly で外す）．
+    // mock: センサーの向きが無いため今の向きを正面にする
     if (source.tracker !== null) source.tracker.setCalibration(yawOnly(calibration));
     else source.recenter();
   };
