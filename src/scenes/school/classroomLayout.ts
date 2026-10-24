@@ -4,7 +4,7 @@
 // 生徒は -Z（黒板）を向いて座る．壁は辺に置く物として別に置く前提で，壁の厚みの半分だけ内側を使う
 
 import type { Obstacle, XZRect } from "../walk/collision";
-import { type BoxSpec, WALL_THICKNESS } from "./schoolLayout";
+import { type BoxSpec, LENGTH_EPSILON, WALL_THICKNESS } from "./schoolLayout";
 
 /** 教室の中身の有無．shell（外側だけ）は机と椅子・黒板・教卓を置かない（床・天井と周りの壁は同じ） */
 export type ClassroomInterior = "furnished" | "shell";
@@ -107,8 +107,9 @@ export interface ClassroomLayout {
 
 /** 長さ available の中に，大きさ size の物を間隔 pitch で並べられる数（入らなければ 0） */
 export function countAlong(available: number, size: number, pitch: number): number {
-  if (!(available >= size)) return 0;
-  return Math.floor((available - size) / pitch + 1e-9) + 1;
+  // 下限ちょうどの教室で浮動小数の誤差（0.7999… < 0.8）により 1 つも置けなくならないようにする
+  if (!(available >= size - LENGTH_EPSILON)) return 0;
+  return Math.max(0, Math.floor((available - size + LENGTH_EPSILON) / pitch)) + 1;
 }
 
 /**

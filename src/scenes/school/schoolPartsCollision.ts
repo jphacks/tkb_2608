@@ -12,6 +12,7 @@ import {
   edgeLayout,
   edgeStaticObstacles,
   exitOutsideRect,
+  exitSillRect,
   type FireShutterUserData,
   type FloorSurfaceUserData,
   floorSurfaceLayout,
@@ -30,7 +31,7 @@ export interface SchoolCollision {
   readonly obstacles: readonly Obstacle[];
   /** 閉じている間だけふさぐ物（ドアの開口部・シャッターの幕） */
   readonly doors: readonly DoorBlocker[];
-  /** 体の中心が動ける床の範囲（床の面・出口の外のポーチ） */
+  /** 体の中心が動ける床の範囲（床の面・出口の外のポーチと敷居） */
   readonly floors: readonly XZRect[];
   /** エリア（床の面の id・出口の外 `${出口の id}-outside`） */
   readonly areas: readonly FloorArea[];
@@ -119,7 +120,7 @@ export function collectSchoolCollision(root: THREE.Object3D): SchoolCollision {
         }
         if (data.edgeKind === "exit") {
           const outside = placeRect(exitOutsideRect(layout), placement);
-          floors.push(outside);
+          floors.push(outside, placeRect(exitSillRect(layout), placement));
           areas.push({ id: `${data.id}-outside`, ...outside });
         }
         return;

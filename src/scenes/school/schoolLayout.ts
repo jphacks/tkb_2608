@@ -44,8 +44,14 @@ export interface BoxSpec {
   readonly position: Vec3Tuple;
 }
 
+/**
+ * 長さの比較の許容誤差（m）．下限を寸法の和で出すと浮動小数の誤差で下限ちょうどの値を
+ * 拒んでしまう（例: 2.32 が 2.3200000000000003 未満になる）ため，これだけの差は等しいとみなす
+ */
+export const LENGTH_EPSILON = 1e-9;
+
 function requireAtLeast(name: string, value: number, min: number): void {
-  if (!Number.isFinite(value) || value < min) {
+  if (!Number.isFinite(value) || value < min - LENGTH_EPSILON) {
     throw new RangeError(`${name} は ${min} m 以上にしてください: ${value}`);
   }
 }
@@ -55,12 +61,18 @@ export function assertCeilingHeight(height: number): void {
   requireAtLeast("天井の高さ", height, MIN_CEILING_HEIGHT);
 }
 
+/** ratio を丸めた 1 以上の整数（数でなければ 1．Math.max(1, NaN) は NaN になるため） */
+function atLeastOneCount(ratio: number): number {
+  const n = Math.round(ratio);
+  return Number.isFinite(n) ? Math.max(1, n) : 1;
+}
+
 /**
  * 繰り返しのテクスチャを extent（m）に貼るときの枚数．整数にして，同じ大きさの面を並べた時に
  * 継ぎ目で模様がつながるようにする（1 枚の大きさは tileSize から少しずれる）
  */
 export function tileRepeat(extent: number, tileSize: number): number {
-  return Math.max(1, Math.round(extent / tileSize));
+  return atLeastOneCount(extent / tileSize);
 }
 
 // ---------------------------------------------------------------------------
@@ -92,7 +104,7 @@ export interface FloorSurfaceLayout {
 
 /** 面の extent（m）に，間隔 pitch の目安で並べる数（1 以上） */
 export function lightCount(extent: number, pitch: number): number {
-  return Math.max(1, Math.round(extent / pitch));
+  return atLeastOneCount(extent / pitch);
 }
 
 /** 床の面（幅 width × 奥行き depth・天井の高さ ceilingHeight）の寸法と照明の配置 */
@@ -295,13 +307,17 @@ export interface FireShutterLayout {
 
 /**
  * 防火シャッターの寸法．くぐり戸は中央から wicketOffset（m．ローカル X の向き）ずらした位置に置き，
- * ガイドレールにかからない範囲に切り詰める
+ * ガイドレールにかからない範囲に切り詰める（±Infinity は端へ寄せる）．wicketOffset が NaN なら RangeError
  */
 export function fireShutterLayout(
   length: number,
   height: number,
   wicketOffset = 0,
 ): FireShutterLayout {
+  // NaN は Math.min・Math.max を通り抜けて位置が数でなくなるため，ここで止める
+  if (Number.isNaN(wicketOffset)) {
+    throw new RangeError(`くぐり戸のずれは数にしてください: ${wicketOffset}`);
+  }
   const wallLength = edgeWallLength(length);
   const boxBottom = height - FIRE_SHUTTER.boxHeight;
   const half = FIRE_SHUTTER.wicketWidth / 2;
@@ -483,6 +499,20 @@ export function exitOutsideRect(layout: EdgeLayout): XZRect {
     maxX: edgeLocalX(layout.length, opening.u1),
     minZ: -WALL_THICKNESS / 2 - EXIT.apronDepth,
     maxZ: -WALL_THICKNESS / 2,
+  };
+}
+
+/**
+ * 出口の開口部の敷居（壁の厚みの分）の床の範囲（ローカル座標）．床の面は辺の線で終わり，
+ * ポーチは壁の外の面から始まるため，この範囲を床にしないと内から外へ歩いて出られない
+ */
+export function exitSillRect(layout: EdgeLayout): XZRect {
+  const outside = exitOutsideRect(layout);
+  return {
+    minX: outside.minX,
+    maxX: outside.maxX,
+    minZ: -WALL_THICKNESS / 2,
+    maxZ: WALL_THICKNESS / 2,
   };
 }
 
