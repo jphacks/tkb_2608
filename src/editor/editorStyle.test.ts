@@ -5,6 +5,7 @@ import { FACINGS, type MarkerKind } from "./editorState";
 import {
   CELL_COLORS,
   CELL_KIND_LABELS,
+  DRILL_MODES,
   EDITOR_COLORS,
   FACING_LABELS,
   MARKER_LABELS,
@@ -117,5 +118,19 @@ describe("MARKER_TOOLS / MARKER_LABELS / FACING_LABELS", () => {
   it("上下左右すべてに向きのボタンの文字があり，重ならない", () => {
     for (const f of FACINGS) expect(FACING_LABELS[f]).toBeTruthy();
     expect(new Set(FACINGS.map((f) => FACING_LABELS[f])).size).toBe(4);
+  });
+});
+
+describe("DRILL_MODES", () => {
+  it("学習とテストの 2 つのモードがこの順に 1 つずつある", () => {
+    expect(DRILL_MODES.map((m) => m.mode)).toEqual(["learn", "test"]);
+  });
+
+  it("どのモードにも名前と説明があり，名前は重ならない", () => {
+    for (const m of DRILL_MODES) {
+      expect(m.label).toBeTruthy();
+      expect(m.hint).toBeTruthy();
+    }
+    expect(new Set(DRILL_MODES.map((m) => m.label)).size).toBe(DRILL_MODES.length);
   });
 });

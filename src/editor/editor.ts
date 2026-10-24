@@ -2,6 +2,7 @@
 // マウスとキーの操作を editorState.ts の純粋な関数に渡して，返ってきた状態で描き直す．VR・three.js は使わない
 import type { SchoolPlan } from "../core/schoolPlan";
 import { DEMO_SCHOOL } from "../share/samples/demoSchool";
+import { createShareLink } from "../share/shareUrl";
 import { validatePlan } from "../share/validatePlan";
 import type { CellXZ } from "../sim/grid";
 import { drawEditorGrid } from "./editorCanvas";
@@ -28,6 +29,7 @@ import {
   renameRoom,
   resizeGrid,
   selectTool,
+  setDrillMode,
   setStartFacing,
   startBlank,
   undo,
@@ -35,12 +37,14 @@ import {
 import {
   CELL_COLORS,
   CELL_KIND_LABELS,
+  DRILL_MODES,
   FACING_LABELS,
   MARKER_LABELS,
   MARKER_TOOLS,
   PART_TOOLS,
   roomColor,
 } from "./editorStyle";
+import { createSharePanel } from "./sharePanel";
 
 /** 画面の隅に並べる校舎の誤りの件数（残りは件数だけ出す） */
 const SHOWN_ERRORS = 5;
@@ -103,6 +107,24 @@ const STYLE = `
 .editor__facings .editor__button { padding: 4px 0; }
 .editor__facings .editor__button[aria-pressed="true"] { border-color: #5b9bff; background: #4a6390; }
 .editor__errors ul { margin: 4px 0 0; padding-left: 18px; }
+.editor__modes { display: grid; grid-template-columns: repeat(2, 1fr); gap: 4px; margin-top: 6px; }
+.editor__modes .editor__button[aria-pressed="true"] { border-color: #5b9bff; background: #4a6390; }
+.editor__share {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: rgba(10, 14, 20, 0.6);
+}
+.editor__share[hidden] { display: none; }
+.editor__share-card {
+  max-width: min(520px, calc(100% - 32px)); max-height: calc(100% - 32px); overflow-y: auto; box-sizing: border-box;
+  padding: 16px; border-radius: 8px; background: #222b38; border: 1px solid #4a5d78;
+}
+.editor__share-card h2 { font-size: 16px; margin: 0 0 8px; }
+.editor__share-body { display: flex; flex-direction: column; align-items: stretch; }
+.editor__share-qr { align-self: center; image-rendering: pixelated; }
+.editor__share-body .editor__row input[type="text"] { flex: 1; min-width: 0; }
+.editor__share-error { margin: 0; color: #ffb4a8; }
+.editor__share-reasons { margin: 4px 0 0; padding-left: 18px; font-size: 13px; }
+.editor__share-actions { justify-content: flex-end; margin-top: 12px; }
 `;
 
 /** エディタを立ち上げる（document.body に画面を置く）．最初はデモの校舎を開いた状態にする */
@@ -185,6 +207,31 @@ export function startEditor(initialPlan: SchoolPlan = DEMO_SCHOOL): void {
     "クリックで置く．火元・集合場所はもう一度クリックで外す．開始地点は 1 つだけで，置き直すと移る．開始時の向きは上のボタンで選ぶ";
   side.append(heading("開始時の向き"), facingRow, markerHint);
 
+  side.append(heading("モード"));
+  const modeRow = el("div", "editor__modes");
+  modeRow.setAttribute("role", "group");
+  modeRow.setAttribute("aria-label", "訓練のモード");
+  const modeButtons = DRILL_MODES.map(({ mode, label: text, hint }) => {
+    const b = button(text);
+    b.title = hint;
+    b.setAttribute("aria-pressed", "false");
+    b.addEventListener("click", () => update(setDrillMode(state, mode)));
+    modeRow.appendChild(b);
+    return { mode, button: b };
+  });
+  const modeHint = el("p", "editor__hint");
+  side.append(modeRow, modeHint);
+
+  side.append(heading("生徒用の QR コード"));
+  const shareButton = button("QR コードを出す");
+  shareButton.addEventListener("click", () => void openShare());
+  const shareRow = el("div", "editor__row");
+  shareRow.appendChild(shareButton);
+  const shareHint = el("p", "editor__hint");
+  shareHint.textContent =
+    "今の校舎とモードで，生徒が読み取る QR コードと URL を出す．校舎に誤りがある時・大きすぎる時は理由を出す";
+  side.append(shareRow, shareHint);
+
   side.append(heading("元に戻す"));
   const historyRow = el("div", "editor__row");
   const undoButton = button("元に戻す");
@@ -237,6 +284,27 @@ export function startEditor(initialPlan: SchoolPlan = DEMO_SCHOOL): void {
       noticeBox.hidden = true;
     }, NOTICE_MS);
   };
+
+  // 生徒用の QR の窓（案内の帯より下に重ね，コピーの成否は案内の帯で知らせる）
+  const sharePanel = createSharePanel(showNotice);
+  main.insertBefore(sharePanel.element, noticeBox);
+  /** QR を出している校舎．これと違う校舎になったら窓を閉じる（古い QR を配らないように） */
+  let sharedPlan: SchoolPlan | null = null;
+
+  /** 今の校舎で生徒用の URL を作り，QR か理由を窓に出す */
+  async function openShare(): Promise<void> {
+    const settled = endStroke(state);
+    if (settled !== state) update(settled);
+    const plan = state.plan;
+    sharedPlan = plan;
+    sharePanel.showPending();
+    const result = await createShareLink(plan, {
+      baseUrl: window.location.origin + window.location.pathname,
+    });
+    // 作っている間に校舎が変わった・閉じられた時は出さない
+    if (sharedPlan !== plan || !sharePanel.isOpen()) return;
+    sharePanel.show(result);
+  }
 
   const cellAt = (e: PointerEvent): CellXZ | null => {
     const rect = canvas.getBoundingClientRect();
@@ -293,6 +361,10 @@ export function startEditor(initialPlan: SchoolPlan = DEMO_SCHOOL): void {
     const toolChanged = next.tool !== state.tool;
     const roomsChanged = next.plan.rooms !== state.plan.rooms;
     state = next;
+    if (sharedPlan !== null && state.plan !== sharedPlan) {
+      sharedPlan = null;
+      sharePanel.hide();
+    }
     if (toolChanged || roomsChanged) renderRooms();
     render();
   }
@@ -336,6 +408,11 @@ export function startEditor(initialPlan: SchoolPlan = DEMO_SCHOOL): void {
     for (const { facing: f, button: b } of facingButtons) {
       b.setAttribute("aria-pressed", String(f === facing));
     }
+    for (const { mode, button: b } of modeButtons) {
+      b.setAttribute("aria-pressed", String(state.plan.drill.mode === mode));
+    }
+    modeHint.textContent =
+      DRILL_MODES.find((m) => m.mode === state.plan.drill.mode)?.hint ?? "モードを選んでください";
     undoButton.disabled = !canUndo(state);
     redoButton.disabled = !canRedo(state);
     // 入力中の値は書き換えない

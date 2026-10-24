@@ -36,6 +36,7 @@ import {
   renameRoom,
   resizeGrid,
   selectTool,
+  setDrillMode,
   setStartFacing,
   startBlank,
   toggleAssembly,
@@ -1451,4 +1452,69 @@ describe("facingOfYaw", () => {
       expect(facingOfYaw(yaw)).toBeNull();
     },
   );
+});
+
+// ---- 訓練のモード（学習／テスト）を選ぶ操作（Issue #130・PLAN_04 E6・SPEC_02 の DrillSetup.mode） ----
+describe("setDrillMode", () => {
+  it.each<[DrillSetup["mode"], DrillSetup["mode"]]>([
+    ["learn", "test"],
+    ["test", "learn"],
+  ])(
+    "%s から %s を選ぶとモードが変わる（1 回分の履歴．ほかの訓練条件・マス目は変えない）",
+    (from, to) => {
+      const s = drillState({ mode: from });
+      const next = setDrillMode(s, to);
+      expect(next.plan.drill.mode).toBe(to);
+      expect(next.past).toEqual([s.plan]);
+      expect(next.future).toEqual([]);
+      expectDrillOthersKept(s.plan, next.plan, ["mode"]);
+      expect(validatePlan(next.plan)).toEqual([]);
+    },
+  );
+
+  it.each<DrillSetup["mode"]>(["learn", "test"])(
+    "今と同じモード（%s）なら同じ状態を返し，履歴に積まない",
+    (mode) => {
+      const s = drillState({ mode });
+      const next = setDrillMode(s, mode);
+      expect(next.plan).toBe(s.plan);
+      expect(next.past).toEqual([]);
+      expect(canUndo(next)).toBe(false);
+    },
+  );
+
+  it("元に戻す・やり直すで前後のモードに戻る", () => {
+    const s = drillState({ mode: "learn" });
+    const changed = setDrillMode(s, "test");
+    const undone = undo(changed);
+    expect(undone.plan).toBe(s.plan);
+    expect(undone.plan.drill.mode).toBe("learn");
+    expect(canRedo(undone)).toBe(true);
+    const redone = redo(undone);
+    expect(redone.plan).toBe(changed.plan);
+    expect(redone.plan.drill.mode).toBe("test");
+  });
+
+  it("モードを選ぶと，やり直しの履歴は消える", () => {
+    const s = drillState({ mode: "learn" });
+    const undone = undo(setStartFacing(s, "left"));
+    expect(canRedo(undone)).toBe(true);
+    const next = setDrillMode(undone, "test");
+    expect(canRedo(next)).toBe(false);
+  });
+
+  it("ドラッグの途中で選ぶと，塗りを 1 回分の履歴にしてからモードを変える", () => {
+    let s = selectTool(drillState({ mode: "learn" }), { kind: "corridor" });
+    const before = s.plan;
+    s = beginStroke(s, at(0, 2));
+    const next = setDrillMode(s, "test");
+    expect(next.stroke).toBeNull();
+    expect(next.plan.drill.mode).toBe("test");
+    expect(next.past).toHaveLength(2);
+    expect(next.past[0]).toBe(before);
+    const undoneOnce = undo(next);
+    expect(undoneOnce.plan.drill.mode).toBe("learn");
+    expect(cellAt(undoneOnce, 0, 2)[0]).toBe("corridor");
+    expect(undo(undoneOnce).plan).toBe(before);
+  });
 });
