@@ -13,6 +13,40 @@ function fakeElement() {
   return t as unknown as HTMLElement;
 }
 
+/** モックの手の操作を受ける要素（800x600．ポインターの捕捉は何もしない） */
+function fakeMouseTarget() {
+  const captured = new Set<number>();
+  return Object.assign(fakeElement(), {
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }),
+    setPointerCapture: (id: number) => captured.add(id),
+    hasPointerCapture: (id: number) => captured.has(id),
+    releasePointerCapture: (id: number) => captured.delete(id),
+  }) as unknown as HTMLElement;
+}
+
+function pointer(type: string, o: Record<string, unknown> = {}): Event {
+  return Object.assign(new Event(type), {
+    pointerType: "mouse",
+    pointerId: 1,
+    clientX: 400,
+    clientY: 300,
+    button: -1,
+    buttons: 0,
+    ...o,
+  });
+}
+
+function key(type: string, code: string): Event {
+  return Object.assign(new Event(type), {
+    code,
+    repeat: false,
+    ctrlKey: false,
+    metaKey: false,
+    altKey: false,
+    preventDefault: () => undefined,
+  });
+}
+
 beforeEach(() => {
   windowTarget = new EventTarget();
   documentTarget = new EventTarget();
@@ -28,7 +62,7 @@ afterEach(() => {
 });
 
 describe("createInputSource", () => {
-  it("device: 手は常に UNTRACKED_HAND，サンプルが無ければ止まって立つ", () => {
+  it("device: カメラを渡していなければ手は UNTRACKED_HAND，サンプルが無ければ止まって立つ", () => {
     const src = createInputSource({ kind: "device", params: TEST_PARAMS });
     expect(src.kind).toBe("device");
     expect(src.tracker).not.toBeNull();
@@ -98,6 +132,65 @@ describe("createInputSource", () => {
     expect(input).toMatchObject({ posture: "standing", walking: false, walkSpeed: 0 });
     expect(() => src.recenter()).not.toThrow();
     src.dispose();
+  });
+
+  it("mock: マウスを動かすと右手が目の前に出て（左手は未認識），画面の外に出ると未認識に戻る", () => {
+    const target = fakeMouseTarget();
+    const src = createInputSource({ kind: "mock", params: TEST_PARAMS, target });
+    target.dispatchEvent(pointer("pointermove", { clientX: 400, clientY: 300 }));
+    const input = src.read(16);
+    expect(input.hands.left).toEqual(UNTRACKED_HAND);
+    expect(input.hands.right.tracked).toBe(true);
+    expect(input.hands.right.position.x).toBeCloseTo(0, 9);
+    expect(input.hands.right.position.y).toBeCloseTo(0, 9);
+    expect(input.hands.right.position.z).toBeCloseTo(-0.45, 9);
+    expect(input.hands.right.grip).toBe(0);
+
+    target.dispatchEvent(pointer("pointermove", { clientX: 700, clientY: 100 }));
+    const moved = src.read(32).hands.right.position;
+    expect(moved.x).toBeGreaterThan(0);
+    expect(moved.y).toBeGreaterThan(0);
+
+    target.dispatchEvent(pointer("pointerleave"));
+    expect(src.read(48).hands).toEqual({ left: UNTRACKED_HAND, right: UNTRACKED_HAND });
+    src.dispose();
+  });
+
+  it("mock: 右ボタンか F キーを押している間は右手が握る（grip: 1）", () => {
+    vi.stubGlobal("HTMLElement", class {});
+    const target = fakeMouseTarget();
+    const src = createInputSource({ kind: "mock", params: TEST_PARAMS, target });
+    target.dispatchEvent(pointer("pointermove"));
+    target.dispatchEvent(pointer("pointerdown", { button: 2, buttons: 2 }));
+    expect(src.read(16).hands.right.grip).toBe(1);
+    target.dispatchEvent(pointer("pointerup", { button: 2, buttons: 0 }));
+    expect(src.read(32).hands.right.grip).toBe(0);
+
+    windowTarget.dispatchEvent(key("keydown", "KeyF"));
+    expect(src.read(48).hands.right.grip).toBe(1);
+    windowTarget.dispatchEvent(key("keyup", "KeyF"));
+    expect(src.read(64).hands.right.grip).toBe(0);
+    src.dispose();
+  });
+
+  it("mock: ホイールで右手の奥行きが変わる", () => {
+    const target = fakeMouseTarget();
+    const src = createInputSource({ kind: "mock", params: TEST_PARAMS, target });
+    target.dispatchEvent(pointer("pointermove"));
+    target.dispatchEvent(Object.assign(new Event("wheel"), { deltaY: -200 }));
+    expect(src.read(16).hands.right.position.z).toBeCloseTo(-0.55, 9);
+    src.dispose();
+  });
+
+  it("mock・device: attachCamera は例外を出さない（mock では手は変わらない）", () => {
+    const mock = createInputSource({ kind: "mock", params: TEST_PARAMS, target: fakeElement() });
+    expect(() => mock.attachCamera(null)).not.toThrow();
+    expect(mock.read(0).hands).toEqual({ left: UNTRACKED_HAND, right: UNTRACKED_HAND });
+    mock.dispose();
+    const device = createInputSource({ kind: "device", params: TEST_PARAMS });
+    expect(() => device.attachCamera(null)).not.toThrow();
+    expect(device.read(0).hands).toEqual({ left: UNTRACKED_HAND, right: UNTRACKED_HAND });
+    device.dispose();
   });
 
   it("replay: 許可は要らず，記録を読み込むまでは止まって立ち，読み込むと判定の中身（tracker）が出る", async () => {

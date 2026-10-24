@@ -1,5 +1,5 @@
 // ?input=mock|device|replay の解釈と，入力の確認用の表示の文字列（DOM に依存しない純粋な関数）
-import type { PlayerInput } from "../core/types";
+import type { HandState, PlayerInput } from "../core/types";
 import { pitchOfQuat, yawOfQuat } from "./head/quat";
 import type { InputKind } from "./inputSource";
 
@@ -23,4 +23,15 @@ export function formatPlayerInput(input: PlayerInput): string {
     `walking  ${input.walking}  ${input.walkSpeed.toFixed(2)} m/s`,
     `head     yaw ${deg(yawOfQuat(input.head))}  pitch ${deg(pitchOfQuat(input.head))}`,
   ].join("\n");
+}
+
+function formatHand(name: string, hand: HandState): string {
+  if (!hand.tracked) return `${name} -`;
+  const p = hand.position;
+  return `${name} (${p.x.toFixed(2)}, ${p.y.toFixed(2)}, ${p.z.toFixed(2)}) grip ${hand.grip.toFixed(2)}`;
+}
+
+/** 両手（PlayerInput.hands）を 1 行にする（画面の隅の表示用．認識していない手は "-"） */
+export function formatHands(hands: PlayerInput["hands"]): string {
+  return `hands    ${formatHand("L", hands.left)}  ${formatHand("R", hands.right)}`;
 }

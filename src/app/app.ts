@@ -55,7 +55,7 @@ export function startApp(): void {
 
   const stage: Stage = { world, rig, overlay };
   const session: Session = { calibration: null, result: null, recording: null };
-  // 開始画面で取れた機器．input/（カメラ）・audio/（AudioContext）ができたら渡す
+  // 開始画面で取れた機器．カメラは input/ の手の認識に渡す．AudioContext は audio/ ができたら渡す
   const devices: { current: AcquiredDevices | null } = { current: null };
 
   // ?app だけなら実機のセンサー（device），?app&input=mock なら PC のキーボード・ドラッグ（mock）
@@ -73,6 +73,8 @@ export function startApp(): void {
           // 許可は開始画面のタップの中で lobby/ が取り終えている．iOS は許可済みならタップの外でも
           // requestPermission が granted を返すため，ここで呼んでも許可のダイアログは重ならない
           void input.activate();
+          // 開始画面で取った背面カメラを手の認識に渡す（取れなかった時は null で，手なしで進む）
+          input.attachCamera(acquired.cameraStream);
         },
       }),
     home: () => createHomeScene(),

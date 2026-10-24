@@ -2,13 +2,14 @@ import { describe, expect, it } from "vitest";
 import { DEV_PAGES, resolveDevRedirect } from "./devPages";
 
 describe("DEV_PAGES", () => {
-  it("センサーの確認・手順の記録・判定の確認・ゴーグルでの確認・再生と調整・操作盤のページがある", () => {
+  it("センサーの確認・手順の記録・判定の確認・ゴーグルでの確認・再生と調整・手の確認・操作盤のページがある", () => {
     expect(DEV_PAGES.map((p) => p.file)).toEqual([
       "sensors.html",
       "protocol.html",
       "detect.html",
       "goggles.html",
       "replay.html",
+      "hands.html",
       "panel.html",
     ]);
   });

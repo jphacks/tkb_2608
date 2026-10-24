@@ -1,0 +1,417 @@
+// 片手の追跡（experiment_山﨑/07「認識の有無の安定化」「手の形」・SPEC_01「HandState」「手の位置のぶれ・途切れ」）
+import { describe, expect, it } from "vitest";
+import type { HandParams } from "./handParams";
+import {
+  cameraModelOf,
+  createHandTrack,
+  type HandTrack,
+  handPositions,
+  lostTimeoutMs,
+  observeHand,
+  readHandTrack,
+  resetHandTrack,
+  toHandState,
+} from "./handTracker";
+import {
+  FIST,
+  handLandmarks,
+  IMG_H,
+  IMG_W,
+  OPEN,
+  observation,
+  POINT,
+  seededRandom,
+  TEST_HAND_PARAMS,
+  testHandParams,
+} from "./testHands";
+import type { HandObservation } from "./types";
+
+const P = TEST_HAND_PARAMS;
+/** 認識の間隔（15 回/秒） */
+const DT = 1000 / 15;
+/** 握り具合が 0.4〜0.6 の間になる手（人差し指・中指だけ曲げる．生の値 0.5） */
+const HALF: readonly [number, number, number, number] = [1, 1, 0, 0];
+
+function see(track: HandTrack, obs: HandObservation | null, t: number, p: HandParams = P): void {
+  observeHand(track, obs, t, IMG_W, IMG_H, p);
+}
+
+/** t0 から DT ごとに n 回認識する．最後の時刻を返す */
+function seeMany(track: HandTrack, obs: HandObservation | null, t0: number, n: number): number {
+  let t = t0;
+  for (let i = 0; i < n; i++) {
+    t = t0 + i * DT;
+    see(track, obs, t);
+  }
+  return t;
+}
+
+/** 認識して tracked になった手．最後に認識した時刻も返す */
+function trackedHand(
+  obs: HandObservation = observation(),
+  t0 = 0,
+): { track: HandTrack; t: number } {
+  const track = createHandTrack();
+  const t = seeMany(track, obs, t0, 3);
+  return { track, t };
+}
+
+describe("createHandTrack", () => {
+  it("まだ認識していない手は tracked でなく，読むと原点・grip 0・ageMs は Infinity", () => {
+    const track = createHandTrack();
+    const r = readHandTrack(track, 1000, P);
+    expect(r).toMatchObject({
+      tracked: false,
+      position: { x: 0, y: 0, z: 0 },
+      indexTip: { x: 0, y: 0, z: 0 },
+      grip: 0,
+      pinch: 0,
+      pinching: false,
+      pointing: false,
+    });
+    expect(r.ageMs).toBe(Number.POSITIVE_INFINITY);
+  });
+});
+
+describe("observeHand（表示し始める）", () => {
+  it("1 回の認識では tracked にせず，2 回続けたら tracked にする", () => {
+    const track = createHandTrack();
+    see(track, observation(), 0);
+    expect(track.tracked).toBe(false);
+    expect(readHandTrack(track, 10, P).tracked).toBe(false);
+    see(track, observation(), DT);
+    expect(track.tracked).toBe(true);
+    expect(readHandTrack(track, DT + 10, P).tracked).toBe(true);
+  });
+
+  it("1 回だけの誤認識（間に見えない回を挟む）では tracked にならない", () => {
+    const track = createHandTrack();
+    see(track, observation(), 0);
+    see(track, null, DT);
+    see(track, observation(), 2 * DT);
+    see(track, null, 3 * DT);
+    expect(track.tracked).toBe(false);
+  });
+
+  it("trackAppearCount の回数に従う（3 回）", () => {
+    const p = testHandParams({ trackAppearCount: 3 });
+    const track = createHandTrack();
+    see(track, observation(), 0, p);
+    see(track, observation(), DT, p);
+    expect(track.tracked).toBe(false);
+    see(track, observation(), 2 * DT, p);
+    expect(track.tracked).toBe(true);
+  });
+
+  it("間が大きく空いた 2 回の認識（結果が届かない間をはさむ）は「続けて」とみなさない", () => {
+    const track = createHandTrack();
+    see(track, observation(), 0);
+    // カメラが止まる等で，この間 observeHand が呼ばれない
+    see(track, observation(), 5000);
+    expect(track.tracked).toBe(false);
+  });
+
+  it("tracked の手の結果が長く届かなかった後は，1 回の認識だけでは tracked に戻さない", () => {
+    const { track, t } = trackedHand();
+    // 結果が届かない間に読む側では見失いになっている
+    expect(readHandTrack(track, t + 5000, P).tracked).toBe(false);
+    see(track, observation(), t + 5000);
+    expect(readHandTrack(track, t + 5000, P).tracked).toBe(false);
+    see(track, observation(), t + 5000 + DT);
+    expect(readHandTrack(track, t + 5000 + DT, P).tracked).toBe(true);
+  });
+
+  it("点が足りない・値がおかしい手は見えなかった回として扱う", () => {
+    const track = createHandTrack();
+    const broken = { ...observation(), landmarks: handLandmarks().slice(0, 10) };
+    const nan = {
+      ...observation(),
+      landmarks: handLandmarks().map((p) => ({ ...p, x: Number.NaN })),
+    };
+    see(track, broken, 0);
+    see(track, nan, DT);
+    see(track, observation(), 2 * DT);
+    expect(track.tracked).toBe(false);
+    expect(track.seenStreak).toBe(1);
+  });
+
+  it("時刻が NaN の結果は無視する", () => {
+    const { track } = trackedHand();
+    const before = { ...track };
+    see(track, null, Number.NaN);
+    see(track, observation({ cx: 0.9 }), Number.NaN);
+    expect(track).toEqual(before);
+  });
+
+  it("時刻が戻った結果が来ても位置は壊れず（有限のまま），tracked を保つ", () => {
+    const { track, t } = trackedHand();
+    see(track, observation({ cx: 0.8 }), t - 30);
+    const r = readHandTrack(track, t + 10, P);
+    expect(r.tracked).toBe(true);
+    expect(Number.isFinite(r.position.x)).toBe(true);
+    expect(Number.isFinite(r.position.y)).toBe(true);
+    expect(Number.isFinite(r.position.z)).toBe(true);
+  });
+});
+
+describe("observeHand（見失う・戻る）", () => {
+  it("開いた手を見失っても 0.3 秒までは tracked のまま，それを超えたら外す", () => {
+    const { track, t } = trackedHand(observation({ curls: OPEN }));
+    see(track, null, t + 100);
+    see(track, null, t + 300);
+    expect(track.tracked).toBe(true);
+    expect(readHandTrack(track, t + 300, P).tracked).toBe(true);
+    see(track, null, t + 301);
+    expect(track.tracked).toBe(false);
+    expect(readHandTrack(track, t + 301, P).tracked).toBe(false);
+  });
+
+  it("見失っている間（0.3 秒以内）も最後の位置を出し続ける", () => {
+    const { track, t } = trackedHand();
+    const last = readHandTrack(track, t, P).position;
+    see(track, null, t + DT);
+    see(track, null, t + 2 * DT);
+    const r = readHandTrack(track, t + 2 * DT, P);
+    expect(r.tracked).toBe(true);
+    expect(r.position.x).toBeCloseTo(last.x, 6);
+    expect(r.position.y).toBeCloseTo(last.y, 6);
+    expect(r.position.z).toBeCloseTo(last.z, 6);
+  });
+
+  it("握ったまま一瞬見失っても，約 0.8 秒は tracked と握ったままを保つ（0.5 で区切っても握っている）", () => {
+    const { track, t } = trackedHand(observation({ curls: FIST }));
+    expect(readHandTrack(track, t, P).grip).toBeGreaterThanOrEqual(0.6);
+    for (const dt of [100, 300, 500, 700, 800]) {
+      see(track, null, t + dt);
+      const r = readHandTrack(track, t + dt, P);
+      expect(r.tracked).toBe(true);
+      expect(r.grip).toBeGreaterThanOrEqual(0.6);
+      expect(toHandState(r).grip).toBeGreaterThan(0.5);
+    }
+    see(track, null, t + 801);
+    const r = readHandTrack(track, t + 801, P);
+    expect(r.tracked).toBe(false);
+    expect(r.grip).toBeLessThanOrEqual(0.4);
+  });
+
+  it("握ったまま保つ時間は gripHoldMs に従い，trackLostMs より短くはならない", () => {
+    const { track } = trackedHand(observation({ curls: FIST }));
+    expect(lostTimeoutMs(track, P)).toBe(800);
+    expect(lostTimeoutMs(track, testHandParams({ gripHoldMs: 100 }))).toBe(300);
+    const open = trackedHand(observation({ curls: OPEN })).track;
+    expect(lostTimeoutMs(open, P)).toBe(300);
+  });
+
+  it("見失って外れた手が戻ると，2 回の認識（約 0.13 秒）で tracked に戻る（1 秒以内に戻る）", () => {
+    const { track, t } = trackedHand();
+    see(track, null, t + DT);
+    see(track, null, t + 400);
+    expect(track.tracked).toBe(false);
+    const back = t + 450;
+    see(track, observation(), back);
+    expect(track.tracked).toBe(false);
+    see(track, observation(), back + DT);
+    expect(track.tracked).toBe(true);
+    // 見失い始めてから戻るまで 1 秒以内
+    expect(back + DT - t).toBeLessThan(1000);
+  });
+
+  it("0.3 秒より短い見失いでは tracked が途切れない", () => {
+    const { track, t } = trackedHand();
+    see(track, null, t + DT);
+    see(track, null, t + 2 * DT);
+    see(track, observation(), t + 3 * DT);
+    expect(track.tracked).toBe(true);
+    expect(readHandTrack(track, t + 3 * DT, P).tracked).toBe(true);
+  });
+
+  it("見失った後に別の所で戻った時は，古い位置から滑らず新しい位置から始める", () => {
+    const { track, t } = trackedHand(observation({ cx: 0.25 }));
+    see(track, null, t + 400);
+    expect(track.tracked).toBe(false);
+    const newObs = observation({ cx: 0.75 });
+    see(track, newObs, t + 500);
+    see(track, newObs, t + 500 + DT);
+    const expected = handPositions(newObs, cameraModelOf(P, IMG_W, IMG_H), P);
+    const r = readHandTrack(track, t + 500 + DT, P);
+    expect(r.tracked).toBe(true);
+    expect(r.position.x).toBeCloseTo(expected?.palm.x ?? Number.NaN, 6);
+    expect(r.position.y).toBeCloseTo(expected?.palm.y ?? Number.NaN, 6);
+  });
+
+  it("見失って外れると，握る・つまむ・指を差すの状態も戻る", () => {
+    const { track, t } = trackedHand(observation({ curls: POINT, pinch: true }));
+    see(track, null, t + 1000);
+    const r = readHandTrack(track, t + 1000, P);
+    expect(r).toMatchObject({ tracked: false, pinching: false, pointing: false, pinch: 0 });
+    expect(r.grip).toBeLessThanOrEqual(0.4);
+  });
+});
+
+describe("observeHand（手の形）", () => {
+  it("握り具合のヒステリシス: 握った後に 0.4〜0.6 の手になっても握ったまま，開くと開いた", () => {
+    const track = createHandTrack();
+    let t = seeMany(track, observation({ curls: FIST }), 0, 2);
+    expect(readHandTrack(track, t, P).grip).toBeGreaterThanOrEqual(0.6);
+    t = seeMany(track, observation({ curls: HALF }), t + DT, 3);
+    expect(track.gripRaw).toBeGreaterThan(0.4);
+    expect(track.gripRaw).toBeLessThan(0.6);
+    expect(track.gripped).toBe(true);
+    expect(readHandTrack(track, t, P).grip).toBeGreaterThanOrEqual(0.6);
+    t = seeMany(track, observation({ curls: OPEN }), t + DT, 1);
+    expect(track.gripped).toBe(false);
+    expect(readHandTrack(track, t, P).grip).toBeLessThanOrEqual(0.4);
+  });
+
+  it("開いた後に 0.4〜0.6 の手になっても開いたまま", () => {
+    const track = createHandTrack();
+    let t = seeMany(track, observation({ curls: OPEN }), 0, 2);
+    t = seeMany(track, observation({ curls: HALF }), t + DT, 3);
+    expect(track.gripped).toBe(false);
+    expect(readHandTrack(track, t, P).grip).toBeLessThanOrEqual(0.4);
+  });
+
+  it("指を差す形は 2 回続けたら確定する", () => {
+    const track = createHandTrack();
+    see(track, observation({ curls: POINT }), 0);
+    expect(track.pointing.value).toBe(false);
+    see(track, observation({ curls: POINT }), DT);
+    expect(readHandTrack(track, DT, P).pointing).toBe(true);
+    see(track, observation({ curls: OPEN }), 2 * DT);
+    expect(readHandTrack(track, 2 * DT, P).pointing).toBe(true);
+    see(track, observation({ curls: OPEN }), 3 * DT);
+    expect(readHandTrack(track, 3 * DT, P).pointing).toBe(false);
+  });
+
+  it("つまむと pinching になり，つまむ具合が大きい", () => {
+    const { track, t } = trackedHand(observation({ pinch: true }));
+    const r = readHandTrack(track, t, P);
+    expect(r.pinching).toBe(true);
+    expect(r.pinch).toBeGreaterThan(0.5);
+    const open = trackedHand(observation({ pinch: false }));
+    const ro = readHandTrack(open.track, open.t, P);
+    expect(ro.pinching).toBe(false);
+    expect(ro.pinch).toBe(0);
+  });
+});
+
+describe("readHandTrack", () => {
+  it("画像の中央の手は，目の前（-z）の手を伸ばした距離にある", () => {
+    const obs = observation({ cx: 0.5 });
+    const { track, t } = trackedHand(obs);
+    const r = readHandTrack(track, t, P);
+    expect(r.position.z).toBeLessThan(-0.3);
+    expect(r.position.z).toBeGreaterThan(-0.8);
+    // 手のひらの中心は中指の付け根より手首側（画像の下＝頭の座標系の下）
+    expect(r.position.y).toBeLessThan(0);
+    // 人差し指の先は手のひらより上
+    expect(r.indexTip.y).toBeGreaterThan(r.position.y);
+  });
+
+  it("画像の右にある手は +x，左にある手は -x", () => {
+    const right = trackedHand(observation({ cx: 0.8 }));
+    const left = trackedHand(observation({ cx: 0.2 }));
+    expect(readHandTrack(right.track, right.t, P).position.x).toBeGreaterThan(0);
+    expect(readHandTrack(left.track, left.t, P).position.x).toBeLessThan(0);
+  });
+
+  it("動かしている手は次の結果までの間を外挿で進め，80 ms を超えたら止める", () => {
+    const track = createHandTrack();
+    let t = 0;
+    for (let i = 0; i < 10; i++) {
+      t = i * DT;
+      see(track, observation({ cx: 0.3 + i * 0.02 }), t);
+    }
+    const at0 = readHandTrack(track, t, P).position.x;
+    const at40 = readHandTrack(track, t + 40, P).position.x;
+    const at80 = readHandTrack(track, t + 80, P).position.x;
+    const at200 = readHandTrack(track, t + 200, P).position.x;
+    expect(at40).toBeGreaterThan(at0);
+    expect(at80).toBeGreaterThan(at40);
+    expect(at200).toBeCloseTo(at80, 9);
+  });
+
+  it("認識が止まった（結果が来ない）時は，読む側でも見失いとみなす（開いた手 0.3 秒＋0.5 秒）", () => {
+    const { track, t } = trackedHand(observation({ curls: OPEN }));
+    expect(readHandTrack(track, t + 800, P).tracked).toBe(true);
+    expect(readHandTrack(track, t + 801, P).tracked).toBe(false);
+  });
+
+  it("認識が止まった時，握った手は 0.8 秒＋0.5 秒まで握ったまま", () => {
+    const { track, t } = trackedHand(observation({ curls: FIST }));
+    const r = readHandTrack(track, t + 1300, P);
+    expect(r.tracked).toBe(true);
+    expect(r.grip).toBeGreaterThanOrEqual(0.6);
+    const r2 = readHandTrack(track, t + 1301, P);
+    expect(r2.tracked).toBe(false);
+    expect(r2.grip).toBeLessThanOrEqual(0.4);
+  });
+
+  it("ageMs は最後に認識した映像からの時間", () => {
+    const { track, t } = trackedHand();
+    expect(readHandTrack(track, t + 50, P).ageMs).toBeCloseTo(50, 9);
+  });
+
+  it("読んでも状態は変わらない", () => {
+    const { track, t } = trackedHand();
+    const before = JSON.stringify(track);
+    readHandTrack(track, t + 5000, P);
+    expect(JSON.stringify(track)).toBe(before);
+  });
+
+  it("止めた手（21 点がぶれる）の位置の震えは，1 回ごとの位置の震えより小さい", () => {
+    const rnd = seededRandom(7);
+    const cam = cameraModelOf(P, IMG_W, IMG_H);
+    const track = createHandTrack();
+    const raw: number[] = [];
+    const out: number[] = [];
+    for (let i = 0; i < 60; i++) {
+      const t = i * DT;
+      // 画像の上で ±1 px 程度のぶれ
+      const dx = (rnd() - 0.5) * (2 / IMG_W);
+      const dy = (rnd() - 0.5) * (2 / IMG_H);
+      const base = observation();
+      const obs = {
+        ...base,
+        landmarks: base.landmarks.map((p) => ({ ...p, x: p.x + dx, y: p.y + dy })),
+      };
+      see(track, obs, t);
+      if (i >= 15) {
+        raw.push(handPositions(obs, cam, P)?.palm.x ?? Number.NaN);
+        out.push(readHandTrack(track, t, P).position.x);
+      }
+    }
+    const std = (v: number[]) => {
+      const m = v.reduce((a, b) => a + b, 0) / v.length;
+      return Math.sqrt(v.reduce((a, b) => a + (b - m) ** 2, 0) / v.length);
+    };
+    expect(std(out)).toBeLessThan(std(raw) * 0.5);
+  });
+});
+
+describe("resetHandTrack", () => {
+  it("tracked と形の状態を戻し，位置（フィルタ）は残す", () => {
+    const { track } = trackedHand(observation({ curls: FIST, pinch: true }));
+    const palm = track.palm;
+    resetHandTrack(track);
+    expect(track).toMatchObject({
+      tracked: false,
+      seenStreak: 0,
+      gripped: false,
+      gripRaw: 0,
+      pinching: false,
+      pointing: { value: false, streak: 0 },
+    });
+    expect(track.palm).toBe(palm);
+  });
+});
+
+describe("toHandState", () => {
+  it("HandState の項目（tracked・position・grip）だけを載せる", () => {
+    const { track, t } = trackedHand(observation({ curls: FIST }));
+    const r = readHandTrack(track, t, P);
+    const s = toHandState(r);
+    expect(Object.keys(s).sort()).toEqual(["grip", "position", "tracked"]);
+    expect(s).toEqual({ tracked: r.tracked, position: r.position, grip: r.grip });
+  });
+});

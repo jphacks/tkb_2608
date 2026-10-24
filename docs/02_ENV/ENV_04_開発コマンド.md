@@ -24,10 +24,10 @@
 - 体験の流れ（開始画面 → ホーム → ロビー → シナリオ）は URL に `?app` を付けて開く（例: `http://localhost:5173/?app`．スマホでは QR コードの URL の末尾に `?app` を足す）．`?debug`・`?stereo=1` 等は [SPEC_01](../04_SPEC/SPEC_01_画面遷移とモジュール構成.md)「起動の切り替え」を参照
   - `?app` だけなら入力はスマホのセンサー（`device`）で，頭の向き・足踏み・しゃがみが流れに届く．PC では `?app&input=mock` で開き，下記の `?input=mock` と同じキー・ドラッグで操作する（PC で `?app` だけだと視点は動かない）
 - `http://localhost:5173/?input=mock` のように `?input=` を付けると，担当D の `src/input/` の入力で歩く（当たり判定あり．`?scene=` と併用できる．例: `?scene=train&input=mock`）．指定しない時は今までどおりドラッグで視点を回し，画面のボタンで歩く
-  - `?input=mock`: PC 用．W で歩く（1.0 m/s）・S でゆっくり歩く（0.5 m/s．足踏みには向きが無いため後ろへは進まない）・C でしゃがみの切り替え・E で近くのドアの開閉・ドラッグで頭の向き（A・D は今は使わない）
-  - `?input=device`: スマホの実機用（トンネル経由の HTTPS で開く）．画面をタップしてセンサーを許可すると，頭の向き・足踏み・しゃがみの判定で動く．最初に受け取った向きが正面になる
+  - `?input=mock`: PC 用．W で歩く（1.0 m/s）・S でゆっくり歩く（0.5 m/s．足踏みには向きが無いため後ろへは進まない）・C でしゃがみの切り替え・E で近くのドアの開閉・ドラッグで頭の向き（A・D は今は使わない）．手は右手だけで，マウスの位置が右手の位置（画面のマウスの下・目の前 0.45 m の所）・右ボタンか F キーを押している間は握る（`grip: 1`）・ホイールで手の奥行き（0.2〜0.8 m）．マウスが画面の外に出ると手は未認識になる
+  - `?input=device`: スマホの実機用（トンネル経由の HTTPS で開く）．画面をタップしてセンサーを許可すると，頭の向き・足踏み・しゃがみの判定で動く．最初に受け取った向きが正面になる．同じタップで背面カメラも取り，手を認識する（`?app` では開始画面で取ったカメラを使う）
   - `?input=replay`: 開発サーバー（`npm run dev`）でだけ使える．`logs/input/` の記録を，記録した時と同じ間隔で本物の入力と同じ判定に流す（実機の動きのとおりの入力で部屋やシナリオを確かめる）．`?log=<ファイル名>` で記録を選ぶ（省くと最も新しい記録），`?from=<秒>` で途中から流す，`?loop=0` で最後まで流したら止める（既定は最初に戻る）．例: `?scene=train&input=replay&log=20261024-143537_o0qich1i.jsonl&from=30`．`?app&input=replay` でも使える．本番のビルドには含まれず，本番で指定すると止まって立ったままになる
-  - いずれも画面の左上に `PlayerInput` の中身（`posture`・`walking`・`walkSpeed`・頭のヨー）と歩行の状態（位置・エリア・近くのドア）を出す．画面のボタンは出さない
+  - いずれも画面の左上に `PlayerInput` の中身（`posture`・`walking`・`walkSpeed`・頭のヨー・両手の位置と `grip`）と歩行の状態（位置・エリア・近くのドア）を出す．画面のボタンは出さない
 - `npm run tunnel` は外部からアクセスできる経路を開くため，Claude Code の auto mode では実行が止められる．人間が VS Code のターミナルで実行する
 - URL を知っていれば誰でも開けるため，使い終わったら `Ctrl+C` で止める
 
@@ -43,6 +43,7 @@
 | 判定の確認 | `http://localhost:5173/src/input/dev/detect.html` | 足踏み・しゃがみの判定の途中の値（上下の加速度・帯域通過後・しきい値・`Δh`）と状態のグラフ，`PlayerInput`，出来事の一覧．しきい値をスライダーで変えられる |
 | ゴーグルでの確認 | `http://localhost:5173/src/input/dev/goggles.html` | 左右 2 画面の最小限の空間（床の格子・1 m ごとの柱・正面の目印）で，判定のとおりに歩く・しゃがむ・見回す．判定の状態を視界の下に出し，1 歩ごと・姿勢の切り替えで音を鳴らす（`?sound=0` で消す）．開始の後に画面をタップすると正面と位置をリセットする |
 | 再生と調整（PC） | `http://localhost:5173/src/input/dev/replay.html` | `logs/input/` の記録（または手元の `.jsonl`）を今のコードの判定に流し直す．波形・Δh・判定（基準のしきい値＝前と，スライダーの値＝後）・手順のラベル・印を同じ時間軸に重ね，指標（誤検出・見逃し・動き出しの遅れ）を前後で並べる．決めた値を params の JSON と URL パラメータで書き出す．表示の範囲を回帰テスト用の `.jsonl` に切り出せる．`?log=<ファイル名>` で開いた時に読み込む |
+| 手の確認 | `http://localhost:5173/src/input/dev/hands.html` | 背面カメラ（PC ではウェブカメラ）の映像に，認識した 21 点・なめらかにした手のひらの中心と人差し指の先・手の形（握・摘・指）を重ねる．認識の処理（Worker／メインスレッド，GPU／CPU）・頻度・1 回の時間・映像から結果までの遅れ・描画の fps と，左右の手の位置・奥行き・`grip`・つまむ・指を差すを出す．認識の結果（21 点）を `hand` として記録する．`?worker=0` でメインスレッドで認識する．しきい値は `?cameraHfovDeg=60&oneEuroBeta=2` のように渡す（項目名は `src/input/hand/handParams.ts` の `HandParams`） |
 | 操作盤（PC） | `http://localhost:5173/src/input/dev/panel.html` | スマホで記録を始めた後に PC で開き，誤判定を見たら `1`（歩いていないのに進んだ）・`2`（歩いたのに進まない）・`3`（立っていないのに立った）・`4`（手が震えた・消えた）・`Space`（その他）を押す．印は開発サーバー経由でスマホの記録に `mark` として書き込まれる．スマホの判定の状態（約 2 秒遅れ）も出す |
 
 - スマホでは `npm run tunnel -- /src/input/dev/` の QR コードを読み取る．センサーは HTTPS でないと使えないため，スマホでは必ずトンネル経由で開く
@@ -54,6 +55,30 @@
 - 記録を始めると，スマホは開発サーバーと時刻を合わせて `clock` を記録する．操作盤の PC も開いた時に合わせ，押した時刻を開発サーバーの時刻を介してスマホの時刻に換算する（合わせる前に付けた印は，スマホの壁時計で換算するため少しずれる．印の `clock` が `wall` になる）．開発サーバーを再起動すると，記録を送り直すまで操作盤にその端末が出ない
 - 誤判定の場面を回帰テストにする時は，再生と調整のページで表示の範囲を切り出し，判定の対象と同じフォルダの `fixtures/`（例: `src/input/body/fixtures/`）に `<端末>_<装着状態>_<動作>.jsonl` の名前で置き，テストに期待する判定を足す（`src/input/replay/regression.ts` の `checkExpectations`）
 - 開発サーバーにつながらない間の記録はページのメモリに残り，「記録をダウンロード」で `.jsonl` として保存できる（ページを閉じると消える）
+
+### ハンドトラッキングのモデルと wasm (Hand Tracking Assets)
+
+手の認識（`@mediapipe/tasks-vision` の `HandLandmarker`）に使うモデルと wasm は `public/mediapipe/` に同梱して自前で配信する（ENV_01「ハンドトラッキング」．外部の CDN に依存しない）．`npm run build` で `dist/mediapipe/` にそのまま写る．どちらも手の認識を始めた時に初めて読み込む．
+
+| ファイル | 大きさ | 取得元 |
+| --- | --- | --- |
+| `public/mediapipe/wasm/vision_wasm_module_internal.js` | 約 330 KB | npm の `@mediapipe/tasks-vision`（`package.json` で版を固定．今は `1.1.1`）の `wasm/` |
+| `public/mediapipe/wasm/vision_wasm_module_internal.wasm` | 約 13 MB | 同上 |
+| `public/mediapipe/hand_landmarker.task` | 約 7.5 MB | `https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task`（Google の公式の配信元．float16 の版 1） |
+
+- wasm は ES モジュールの版（`_module_`）だけを置く．Worker（`type: "module"`）でもメインスレッドでも `import()` で読める（`src/input/hand/landmarkerCore.ts`）．SIMD の無い版（`_nosimd_`）は置かない（iPhone の Safari 16.4 以降は SIMD に対応している）
+- `@mediapipe/tasks-vision` の版を上げた時は，wasm も必ず同じ版のものに置き換える（ライブラリと wasm の版がずれると動かない）
+
+```bash
+# @mediapipe/tasks-vision の版を変えた後に wasm を取り直す
+npm install --save-exact @mediapipe/tasks-vision@<版>
+cp node_modules/@mediapipe/tasks-vision/wasm/vision_wasm_module_internal.js \
+   node_modules/@mediapipe/tasks-vision/wasm/vision_wasm_module_internal.wasm public/mediapipe/wasm/
+
+# モデルを取り直す
+curl -fL -o public/mediapipe/hand_landmarker.task \
+  https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task
+```
 
 ## 確認 (Checks)
 

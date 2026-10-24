@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { IDLE_PLAYER_INPUT, type PlayerInput } from "../core/types";
+import { IDLE_PLAYER_INPUT, type PlayerInput, UNTRACKED_HAND } from "../core/types";
 import { quatFromYawPitch } from "./head/quat";
-import { formatPlayerInput, parseInputKind } from "./inputParam";
+import { formatHands, formatPlayerInput, parseInputKind } from "./inputParam";
 
 describe("parseInputKind", () => {
   it.each([
@@ -59,5 +59,27 @@ describe("formatPlayerInput", () => {
     expect(text).toContain("0.00 m/s");
     expect(text).toContain("yaw 0°");
     expect(text).toContain("pitch 0°");
+  });
+});
+
+describe("formatHands", () => {
+  it("認識していない手は - を出す", () => {
+    expect(formatHands({ left: UNTRACKED_HAND, right: UNTRACKED_HAND })).toBe("hands    L -  R -");
+  });
+
+  it("認識している手は位置（m）と grip を小数 2 桁で出す", () => {
+    const text = formatHands({
+      left: UNTRACKED_HAND,
+      right: { tracked: true, position: { x: 0.123, y: -0.2, z: -0.456 }, grip: 0.6 },
+    });
+    expect(text).toBe("hands    L -  R (0.12, -0.20, -0.46) grip 0.60");
+  });
+
+  it("両手とも出す（1 行）", () => {
+    const h = { tracked: true, position: { x: 0, y: 0, z: -0.5 }, grip: 1 };
+    const text = formatHands({ left: h, right: h });
+    expect(text.split("\n")).toHaveLength(1);
+    expect(text).toContain("L (0.00, 0.00, -0.50) grip 1.00");
+    expect(text).toContain("R (0.00, 0.00, -0.50) grip 1.00");
   });
 });
