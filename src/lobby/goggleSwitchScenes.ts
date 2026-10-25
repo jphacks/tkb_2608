@@ -11,11 +11,12 @@ import {
   advanceGoggleSwitchElapsed,
   advanceNoHandSeconds,
   DEFAULT_GOGGLE_SWITCH_CONFIG,
-  GOGGLE_OFF_BUTTON_LABEL,
   GOGGLE_ON_BUTTON_LABEL,
   GOGGLE_ON_TITLE,
   type GoggleGuidePanel,
   type GoggleSwitchConfig,
+  goggleOffButtonLabel,
+  goggleOffNarrates,
   goggleOffPanel,
   goggleOnCaption,
   goggleOnConfirmPanel,
@@ -201,8 +202,9 @@ export interface GoggleOffSceneOptions extends GuideOptionsBase {
 }
 
 /**
- * ゴーグルを外す案内（VR．左右 2 画面で描く）．避難の画面を片付けた後の何も無い空間に板と手のボタンを出し，
- * 「ゴーグルを外して」のナレーションを流す．ボタンを押したら結果画面へ進む．
+ * ゴーグルを外す案内（VR．左右 2 画面で描く）．前の画面を片付けた後の何も無い空間に板と手のボタンを出す．
+ * 結果画面へ進む時は「ゴーグルを外して」のナレーションを流す（今の流れでは結果画面からホームへ進む時に出し，
+ * その時は流さない．goggleOffNarrates）．ボタンを押したら次の画面へ進む．
  * 縦向きの案内が出ても止めない（ゴーグルを外すと縦向きにされやすく，止めると結果画面へ進めないため）．
  * 左右 2 画面で描く画面として扱うため，id は避難の画面と同じ "scenario" にする
  */
@@ -229,15 +231,24 @@ export function createGoggleOffScene(options: GoggleOffSceneOptions): GoggleGuid
       const confirm = createVrConfirm(
         ctx,
         options,
-        GOGGLE_OFF_BUTTON_LABEL,
+        goggleOffButtonLabel(options.next),
         config.takeOffArmSeconds,
       );
       vr = confirm;
-      lastPanel = showPanel(confirm.board, lastPanel, goggleOffPanel(confirm.handsUsable));
+      lastPanel = showPanel(
+        confirm.board,
+        lastPanel,
+        goggleOffPanel(confirm.handsUsable, false, options.next),
+      );
       if (confirm.handsUsable && options.allowTap === true) {
         const tap = (): void => confirm.press();
         onPointerDown = tap;
         window.addEventListener("pointerdown", tap);
+      }
+      // ナレーションを流さない時は，読み上げの終わりを待たない（手が使えない時は最短の秒数で進む）
+      if (!goggleOffNarrates(options.next)) {
+        narrationEnded = true;
+        return;
       }
       const ended = narrationEndedSignal(NARRATION_ID.gogglesOff);
       unsubscribe = ctx.bus.on("signal", (event) => {
@@ -251,7 +262,11 @@ export function createGoggleOffScene(options: GoggleOffSceneOptions): GoggleGuid
       const pressed = vr.update(frame, false);
       elapsed = advanceGoggleSwitchElapsed(elapsed, frame.dt, false);
       if (vr.handsUsable) {
-        lastPanel = showPanel(vr.board, lastPanel, goggleOffPanel(true, vr.promptHand()));
+        lastPanel = showPanel(
+          vr.board,
+          lastPanel,
+          goggleOffPanel(true, vr.promptHand(), options.next),
+        );
       }
       const go = vr.handsUsable
         ? pressed

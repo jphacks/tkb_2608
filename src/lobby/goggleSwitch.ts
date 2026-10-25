@@ -1,7 +1,8 @@
-// ゴーグルを付けて見る画面（ロビー・避難）と外して見る画面（ホーム・結果）の間の切り替えで出す案内の決まり
+// ゴーグルを付けて見る画面（ロビー・避難・結果）と外して見る画面（ホーム）の間の切り替えで出す案内の決まり
 // （DOM・three.js に依存しない純粋な関数．docs/04_SPEC/SPEC_01「ゴーグルの付け外しの案内」）．
-// - 外す（takeOff）: 避難 → 結果．VR の中の板と手で押すボタンで「押してからゴーグルを外して」と伝え，押したら結果画面へ
-// - 付ける（putOn）: 結果・ホーム → ロビー．1 画面の HTML で「スマホをゴーグルにセットして」と伝えて読ませた後（read），
+// 結果画面は VR の中で見る（Issue #146）ので，避難 → 結果・結果 → ロビーには案内を挟まない
+// - 外す（takeOff）: 結果 → ホーム．VR の中の板と手で押すボタンで「押してからゴーグルを外して」と伝え，押したらホームへ
+// - 付ける（putOn）: ホーム → ロビー（結果画面をスマホの画面に切り替えた後の結果 → ロビーも）．1 画面の HTML で「スマホをゴーグルにセットして」と伝えて読ませた後（read），
 //   そのままロビーへ進む（ロビーの開始ボタンが装着の確認を兼ねる）．ロビーを飛ばして避難へ進む時（?app&demo）だけ，
 //   左右 2 画面に切り替え，VR の中の手で押すボタンを押したら（confirm）進む（goggleOnNeedsConfirm）
 // 手のボタンは時間では進まない（勝手に先へ進まないため．Issue #145）．ただし詰まらないよう，次の逃げ道を残す
@@ -11,19 +12,31 @@
 
 import type { SceneId } from "../core/scene";
 
-/** ゴーグルを付けて見る画面（左右 2 画面で描く） */
-export const GOGGLE_SCENES: ReadonlySet<SceneId> = new Set<SceneId>(["lobby", "scenario"]);
+/**
+ * ゴーグルを付けて見る画面（左右 2 画面で描く）．結果画面は VR の中で見る（Issue #146．画面のタップでスマホの画面に
+ * 切り替えた後は，goggleSwitchBetween の fromGoggles で外していると伝える）
+ */
+export const GOGGLE_SCENES: ReadonlySet<SceneId> = new Set<SceneId>([
+  "lobby",
+  "scenario",
+  "debrief",
+]);
 
 /** 切り替えの案内の種類．takeOff = ゴーグルを外す，putOn = スマホをゴーグルにセットする */
 export type GoggleSwitch = "takeOff" | "putOn";
 
 /**
  * 画面の切り替えで出す案内．from は今の画面（まだ何も出していなければ null）．
- * 許可の画面（start）からは直接ロビーへ進まないため，start は案内の対象にしない
+ * 許可の画面（start）からは直接ロビーへ進まないため，start は案内の対象にしない．
+ * fromGoggles は今の画面を左右 2 画面で見ているか（省くと GOGGLE_SCENES で決める．結果画面をスマホの画面に
+ * 切り替えた後のように，同じ画面の中で変わる時に渡す）
  */
-export function goggleSwitchBetween(from: SceneId | null, to: SceneId): GoggleSwitch | null {
+export function goggleSwitchBetween(
+  from: SceneId | null,
+  to: SceneId,
+  fromGoggles: boolean = from !== null && GOGGLE_SCENES.has(from),
+): GoggleSwitch | null {
   if (from === null || from === "start" || to === "start") return null;
-  const fromGoggles = GOGGLE_SCENES.has(from);
   const toGoggles = GOGGLE_SCENES.has(to);
   if (fromGoggles && !toGoggles) return "takeOff";
   if (!fromGoggles && toGoggles) return "putOn";
@@ -155,14 +168,49 @@ export interface GoggleGuidePanel {
 /** 手が見つからない時に板の補足に出す案内（ロビーの開始ボタンの案内 handPrompt.ts と同じ趣旨） */
 export const GOGGLE_HAND_PROMPT = "手を目の前に出して，カメラに映るようにしてください";
 
-/** 外す案内の手のボタンの文字 */
+/** 外す案内の手のボタンの文字（結果画面へ進む時．今の流れでは結果画面は VR の中で見るので使わない） */
 export const GOGGLE_OFF_BUTTON_LABEL = "結果を見る";
+
+/** 結果画面からホームへ進む時の，外す案内の手のボタンの文字 */
+export const GOGGLE_OFF_HOME_BUTTON_LABEL = "OK";
+
+/** 外す案内の手のボタンの文字．next は案内の後に進む画面 */
+export function goggleOffButtonLabel(next: SceneId): string {
+  return next === "home" ? GOGGLE_OFF_HOME_BUTTON_LABEL : GOGGLE_OFF_BUTTON_LABEL;
+}
+
+/**
+ * 外す案内でナレーション goggles-off（「スマホの画面で結果を見てください」）を流すか．
+ * ホームへ進む時は文が合わないので流さない（その時は読み上げの終わりを待たない）
+ */
+export function goggleOffNarrates(next: SceneId): boolean {
+  return next !== "home";
+}
 
 /**
  * VR の中の板に出す，ゴーグルを外す案内．handsUsable は手のボタンで進むか（false なら時間で進む），
- * handPrompt は手が見つからない時の案内を出すか
+ * handPrompt は手が見つからない時の案内を出すか，next は案内の後に進む画面（ホームなら「ホームに戻ります」の文）
  */
-export function goggleOffPanel(handsUsable: boolean, handPrompt = false): GoggleGuidePanel {
+export function goggleOffPanel(
+  handsUsable: boolean,
+  handPrompt = false,
+  next: SceneId = "debrief",
+): GoggleGuidePanel {
+  if (next === "home") {
+    const title = "ホームに戻ります";
+    if (!handsUsable) {
+      return {
+        title,
+        body: "ゴーグルを外して，スマホの画面を見てください．ホームが表示されます",
+        caption: "まもなくホームに切り替わります",
+      };
+    }
+    return {
+      title,
+      body: "目の前のボタンに手のひらをかざしてから，ゴーグルを外してスマホの画面を見てください",
+      caption: handPrompt ? GOGGLE_HAND_PROMPT : "ゴーグルを外して画面をタップしても進みます",
+    };
+  }
   if (!handsUsable) {
     return {
       title: "訓練が終わりました",
