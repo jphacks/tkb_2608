@@ -7,7 +7,9 @@
 // 開始ボタンを待つ間に手がしばらく見つからなければ，手を目の前に出すよう案内する（自動では始めない．handPrompt.ts）．
 // debug が有効な時だけ，注視での開始と Enter / Space による飛ばしを使える（デバッグ用）
 
+import type { Object3D } from "three";
 import type { FrameInfo, Scene, SceneContext } from "../core/scene";
+import type { Handedness, HandState, Quat } from "../core/types";
 import {
   advanceCalibration,
   type CalibrationConfig,
@@ -43,11 +45,9 @@ import {
 import {
   type AlignmentMarker,
   createAlignmentMarker,
-  createHandMarkers,
   createLobbyPanel,
   createLobbyRoom,
   createStartButton,
-  type HandMarkers,
   LOBBY_EYE_HEIGHT,
   LOBBY_PANEL_CENTER,
   type LobbyPanel,
@@ -94,7 +94,21 @@ export interface LobbyPanelView {
   readonly alignMarker: boolean;
 }
 
+/**
+ * 手の印（開始ボタンへ手を合わせやすくするため）．実体は校舎と共通の部品（scenes/common/handMarkers.ts）で，
+ * 画面を持つモジュール同士は import しないため app/ が作る関数を渡す（形はその HandMarkers と同じ）
+ */
+export interface LobbyHandMarkers {
+  /** rig に足す（目の位置が原点） */
+  readonly object: Object3D;
+  /** 認識している手の位置に印を出す（hands の position は頭の座標系）．visible が false なら隠す */
+  update(head: Quat, hands: Readonly<Record<Handedness, HandState>>, visible: boolean): void;
+  dispose(): void;
+}
+
 export interface LobbySceneOptions {
+  /** 手の印を作る（app/ が scenes/common/handMarkers.ts の createHandMarkers を渡す）．enter のたびに 1 回呼ぶ */
+  readonly createHandMarkers: () => LobbyHandMarkers;
   readonly config?: CalibrationConfig;
   readonly startGateConfig?: StartGateConfig;
   readonly handPromptConfig?: HandPromptConfig;
@@ -126,7 +140,7 @@ interface Active {
   readonly panel: LobbyPanel;
   readonly button: StartButtonView;
   readonly marker: AlignmentMarker;
-  readonly handMarkers: HandMarkers;
+  readonly handMarkers: LobbyHandMarkers;
   readonly feed: SensorFeed;
   readonly dispose: () => void;
   gate: StartGateState;
@@ -152,7 +166,7 @@ interface Active {
   done: boolean;
 }
 
-export function createLobbyScene(options: LobbySceneOptions = {}): Scene {
+export function createLobbyScene(options: LobbySceneOptions): Scene {
   const config = options.config ?? DEFAULT_CALIBRATION_CONFIG;
   const gateConfig = options.startGateConfig ?? DEFAULT_START_GATE_CONFIG;
   const handPromptConfig = options.handPromptConfig ?? DEFAULT_HAND_PROMPT_CONFIG;
@@ -284,7 +298,7 @@ export function createLobbyScene(options: LobbySceneOptions = {}): Scene {
       const marker = createAlignmentMarker();
       marker.object.visible = false;
       ctx.stage.rig.add(marker.object);
-      const handMarkers = createHandMarkers();
+      const handMarkers = options.createHandMarkers();
       ctx.stage.rig.add(handMarkers.object);
       const feed = createSensorFeed();
       ctx.stage.world.add(room.root, panel.object);
