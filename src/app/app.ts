@@ -31,6 +31,7 @@ import { createScreenWakeLock } from "../lobby/wakeLock";
 import { createHandMarkers } from "../scenes/common/handMarkers";
 import { createPlanFingerprintFromHash } from "../share/monitorIds";
 import { loadPlanFromHash } from "../share/planHash";
+import { DEMO_PITCH_SCHOOL } from "../share/samples/demoPitchSchool";
 import { DEMO_SCHOOL } from "../share/samples/demoSchool";
 import { createDrillScene, type DrillScene } from "./drillScene";
 import { resolveDebug, resolveDemo, resolveStereo } from "./launchMode";
@@ -272,7 +273,8 @@ export function startApp(): void {
 
   // 読み込み中も描画のループは回す（空の 3D 空間の背景が出て，画面は真っ白で止まらない）．
   // 想定外の例外で読めなくても開始画面へは進む（plan・planLoadError は null のまま）
-  loadPlanFromHash(window.location.hash)
+  // デモ用の起動（?app&demo）で #p= が無い時は，発表のデモ用の校舎を使う（Issue #189）
+  loadPlanFromHash(window.location.hash, demo ? DEMO_PITCH_SCHOOL : DEMO_SCHOOL)
     .then((loaded) => {
       // 教員が経路を決めていない校舎は，ここで提案の経路を入れる（床の矢印・結果画面・評価が同じ経路を使うように）
       session.plan = loaded.plan === null ? null : withResolvedRoute(loaded.plan);
