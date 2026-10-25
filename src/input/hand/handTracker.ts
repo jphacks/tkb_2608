@@ -21,7 +21,13 @@ import {
   stepOneEuroVec3,
 } from "./oneEuro";
 import { type CameraModel, estimateDepth, focalLengthPx, imageToHead } from "./projection";
-import { type HandObservation, type HandReading, LM } from "./types";
+import {
+  HAND_LANDMARK_COUNT,
+  type HandObservation,
+  type HandReading,
+  type Landmark,
+  LM,
+} from "./types";
 
 /** 片手の追跡の状態（observeHand・resetHandTrack が書き換える） */
 export interface HandTrack {
@@ -33,6 +39,8 @@ export interface HandTrack {
   /** 手のひらの中心・人差し指の先のフィルタ（頭の座標系．m） */
   palm: OneEuroVec3 | null;
   tip: OneEuroVec3 | null;
+  /** 21 点の手のひらの中心（フィルタ前）からのずれのフィルタ（頭の座標系．m．手の形を描く用．Issue #160） */
+  shape: OneEuroVec3[] | null;
   gripRaw: number;
   gripped: boolean;
   pinchRatio: number;
@@ -49,6 +57,7 @@ export function createHandTrack(): HandTrack {
     lastSeenT: Number.NEGATIVE_INFINITY,
     palm: null,
     tip: null,
+    shape: null,
     gripRaw: 0,
     gripped: false,
     pinchRatio: Number.POSITIVE_INFINITY,
@@ -93,27 +102,54 @@ export function cameraModelOf(params: HandParams, width: number, height: number)
   };
 }
 
-/** 頭の座標系の手のひらの中心と人差し指の先．求められなければ null */
+/**
+ * 画像の上の 1 点を頭の座標系に直す．奥行きは手のひらの奥行き depth に，MediaPipe の相対の z（x と同じ縮尺）の
+ * 手のひらの中心 center との差を足す（[minDepthM, maxDepthM] に収める）．求められなければ null
+ */
+function landmarkToHead(
+  p: Landmark,
+  center: Landmark,
+  depth: number,
+  f: number,
+  cam: CameraModel,
+  params: HandParams,
+): Vec3 | null {
+  const d = Math.min(
+    Math.max(depth + ((p.z - center.z) * cam.width * depth) / f, params.minDepthM),
+    params.maxDepthM,
+  );
+  return imageToHead(p, Number.isFinite(d) ? d : depth, cam);
+}
+
+/**
+ * 頭の座標系の手のひらの中心・人差し指の先・21 点．求められなければ null
+ * （21 点のどれか 1 つでも求められない時も null．形の崩れた手を描かないため）
+ */
 export function handPositions(
   obs: HandObservation,
   cam: CameraModel,
   params: HandParams,
-): { palm: Vec3; tip: Vec3; depth: number } | null {
+): { palm: Vec3; tip: Vec3; landmarks: Vec3[]; depth: number } | null {
   const lm = obs.landmarks;
+  if (lm.length < HAND_LANDMARK_COUNT) return null;
   const depth = estimateDepth(lm, cam, params.palmLengthM, params.minDepthM, params.maxDepthM);
   if (!Number.isFinite(depth)) return null;
   const center = palmCenter(lm);
   const palm = imageToHead(center, depth, cam);
-  // 指の先の奥行きは MediaPipe の相対の z（x と同じ縮尺）で手のひらとの差を足す
+  if (palm === null) return null;
   const f = focalLengthPx(cam);
-  const tipLm = lm[LM.INDEX_TIP];
-  const tipDepth = Math.min(
-    Math.max(depth + ((tipLm.z - center.z) * cam.width * depth) / f, params.minDepthM),
-    params.maxDepthM,
-  );
-  const tip = imageToHead(tipLm, Number.isFinite(tipDepth) ? tipDepth : depth, cam);
-  if (palm === null || tip === null) return null;
-  return { palm, tip, depth };
+  const landmarks: Vec3[] = [];
+  for (let i = 0; i < HAND_LANDMARK_COUNT; i++) {
+    const v = landmarkToHead(lm[i], center, depth, f, cam, params);
+    if (v === null) return null;
+    landmarks.push(v);
+  }
+  return { palm, tip: landmarks[LM.INDEX_TIP], landmarks, depth };
+}
+
+/** 21 点の手のひらの中心からのずれ（頭の座標系．m） */
+function offsetsFromPalm(landmarks: readonly Vec3[], palm: Vec3): Vec3[] {
+  return landmarks.map((p) => ({ x: p.x - palm.x, y: p.y - palm.y, z: p.z - palm.z }));
 }
 
 /**
@@ -149,12 +185,18 @@ export function observeHand(
     (!track.tracked && track.seenStreak === 0) ||
     lostGap;
   const oe = oneEuroParams(params);
-  if (fresh || track.palm === null || track.tip === null) {
+  // 21 点は手のひらの中心からのずれ（手の形）だけをフィルタする．位置は手のひらのフィルタと外挿に任せ，
+  // 認識の合間も手のひらと一緒に全体が動くようにする（21 点それぞれを外挿すると指がばらばらに飛ぶ）
+  const offsets = offsetsFromPalm(pos.landmarks, pos.palm);
+  if (fresh || track.palm === null || track.tip === null || track.shape === null) {
     track.palm = createOneEuroVec3(pos.palm, t);
     track.tip = createOneEuroVec3(pos.tip, t);
+    track.shape = offsets.map((o) => createOneEuroVec3(o, t));
   } else {
     track.palm = stepOneEuroVec3(track.palm, pos.palm, t, oe);
     track.tip = stepOneEuroVec3(track.tip, pos.tip, t, oe);
+    const shape = track.shape;
+    track.shape = offsets.map((o, i) => stepOneEuroVec3(shape[i], o, t, oe));
   }
   track.depth = pos.depth;
   track.seenStreak++;
@@ -188,10 +230,16 @@ export function readHandTrack(track: HandTrack, now: number, params: HandParams)
     f === null ? ORIGIN : tracked ? extrapolateVec3(f, now, ex) : { x: f.x, y: f.y, z: f.z };
   const gripped = tracked && track.gripped;
   const pinching = tracked && track.pinching;
+  const position = at(track.palm);
+  const landmarks =
+    track.shape === null
+      ? null
+      : track.shape.map((o) => ({ x: position.x + o.x, y: position.y + o.y, z: position.z + o.z }));
   return {
     tracked,
-    position: at(track.palm),
+    position,
     indexTip: at(track.tip),
+    landmarks,
     grip: gripOutput(gripped, tracked ? track.gripRaw : 0, params.gripOn, params.gripOff),
     pinch: tracked ? pinchAmount(track.pinchRatio, params.pinchOffRatio) : 0,
     pinching,
@@ -200,7 +248,8 @@ export function readHandTrack(track: HandTrack, now: number, params: HandParams)
   };
 }
 
-/** PlayerInput に載せる形にする（今の HandState にある項目だけ．Issue #64） */
+/** PlayerInput に載せる形にする（今の HandState にある項目だけ．Issue #64）．21 点が無ければ landmarks を省く */
 export function toHandState(r: HandReading): HandState {
-  return { tracked: r.tracked, position: r.position, grip: r.grip };
+  const s = { tracked: r.tracked, position: r.position, grip: r.grip };
+  return r.landmarks === null ? s : { ...s, landmarks: r.landmarks };
 }

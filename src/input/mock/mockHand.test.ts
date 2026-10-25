@@ -107,4 +107,25 @@ describe("mockHandState", () => {
     expect(h.tracked).toBe(false);
     expect(h.grip).toBe(0);
   });
+
+  it("21 点を持ち，手のひらの中心が position に重なる", () => {
+    const h = mockHandState(hand({ ndcX: 0.3, ndcY: -0.2 }));
+    expect(h.landmarks).toHaveLength(21);
+    const ids = [0, 5, 9, 13, 17];
+    for (const k of ["x", "y", "z"] as const) {
+      const mean = ids.reduce((a, i) => a + (h.landmarks?.[i][k] ?? Number.NaN), 0) / ids.length;
+      expect(mean).toBeCloseTo(h.position[k], 9);
+    }
+  });
+
+  it("握っている間は握った手の形（中指の先が手のひらに近い）", () => {
+    const tipDist = (s: MockHandState) => {
+      const h = mockHandState(s);
+      const p = h.landmarks?.[12];
+      return p === undefined
+        ? Number.NaN
+        : Math.hypot(p.x - h.position.x, p.y - h.position.y, p.z - h.position.z);
+    };
+    expect(tipDist(hand({ gripping: true }))).toBeLessThan(tipDist(hand({ gripping: false })) / 2);
+  });
 });

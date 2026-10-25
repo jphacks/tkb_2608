@@ -1,6 +1,7 @@
 // モック入力の手の純粋な部分（SPEC_01「モック入力」: マウスで手の位置，クリックで握る）．
 // 画面の上のマウスの位置を，頭の座標系で目の前 depth m の所の右手の位置にする（マウスの下に手が見えるようにする）
 import type { HandState } from "../../core/types";
+import { mockHandLandmarks } from "./mockHandShape";
 
 export interface MockHandState {
   /** マウスが画面（対象の要素）の上にあるか．外に出たら手を隠す */
@@ -73,19 +74,23 @@ export function applyMockHandWheel(
   return { ...s, depth: Math.max(options.minDepth, Math.min(options.maxDepth, depth)) };
 }
 
-/** 外に出す右手の状態．見えていない時は tracked: false（位置は直前のまま） */
+/**
+ * 外に出す右手の状態．見えていない時は tracked: false（位置は直前のまま）．
+ * 21 点は開いた手・握った手の決め打ちの形（mockHandShape.ts）を手のひらの位置に置く
+ */
 export function mockHandState(
   s: MockHandState,
   options: MockHandOptions = DEFAULT_MOCK_HAND_OPTIONS,
 ): HandState {
   const t = Math.tan((options.vfovDeg * Math.PI) / 360);
-  return {
-    tracked: s.visible,
-    position: {
-      x: s.ndcX * t * s.aspect * s.depth,
-      y: s.ndcY * t * s.depth,
-      z: -s.depth,
-    },
-    grip: s.visible && s.gripping ? 1 : 0,
+  const position = {
+    x: s.ndcX * t * s.aspect * s.depth,
+    y: s.ndcY * t * s.depth,
+    z: -s.depth,
   };
+  const grip = s.visible && s.gripping ? 1 : 0;
+  const landmarks = mockHandLandmarks(position, grip);
+  return landmarks === null
+    ? { tracked: s.visible, position, grip }
+    : { tracked: s.visible, position, grip, landmarks };
 }

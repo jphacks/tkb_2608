@@ -45,7 +45,7 @@
 
 | 段階 | 内容 | 次へ進む条件 | 制限時間 |
 | --- | --- | --- | --- |
-| 開始ボタン | 目の前に 3D のボタンを出し，ゴーグルを付けて手のひらをかざすよう案内する．認識した手の位置に印を出す（校舎と共通の部品 `src/scenes/common/handMarkers.ts`．lobby/ は scenes/ を import しないため，app/ が `createLobbyScene` の `createHandMarkers` に渡す）．待つ間はキャリブレーションの時間を数えず，センサーの値も捨てる．手が 10 秒続けて見つからない時は「手を目の前に出して，カメラに映るようにしてください」と案内し，15 秒ごとに読み直す（自動では始めない．`src/lobby/handPrompt.ts`） | 手のひらをボタンに 1 秒かざす（`startMode: "hand"`．input/ の `PlayerInput.hands`）．時間で始める方式（`"auto"`．15 秒）も設定で選べる | ― |
+| 開始ボタン | 目の前に 3D のボタンを出し，ゴーグルを付けて手のひらをかざすよう案内する．認識した手の形（21 点の関節と骨．左右で色を変える）を出す（校舎と共通の部品 `src/scenes/common/handMarkers.ts`．lobby/ は scenes/ を import しないため，app/ が `createLobbyScene` の `createHandMarkers` に渡す）．待つ間はキャリブレーションの時間を数えず，センサーの値も捨てる．手が 10 秒続けて見つからない時は「手を目の前に出して，カメラに映るようにしてください」と案内し，15 秒ごとに読み直す（自動では始めない．`src/lobby/handPrompt.ts`） | 手のひらをボタンに 1 秒かざす（`startMode: "hand"`．input/ の `PlayerInput.hands`）．時間で始める方式（`"auto"`．15 秒）も設定で選べる | ― |
 | 見え方の調整 | 左右それぞれの目の画面の中心に十字を出し，1 つに重なってくっきり見えるよう，スマホの位置やゴーグルのレンズの幅を合わせるよう案内する．値は作らない | 時間で進む | 15 秒 |
 | 導入 | これから行う手順を案内する | 時間で進む | 4 秒 |
 | 正面 | 正面を向いて止まる → `yawOffset` | 3 秒の間ずれが ±15° 以内 | 8 秒 |
@@ -207,7 +207,7 @@ relay/           #126 の担当: 見守りの中継（Cloudflare Worker と Dura
 - `sim/`・`share/` は `core/` だけを import する純粋な関数のライブラリで，どのモジュールからも import してよい（エディタのプレビューと VR が同じ計算を使うため）
 - `input/` は three.js のシーンを import しない（`PlayerInput` は素のデータ．`core/types.ts` の `Vec3`・`Quat` を使う）
 - `scenes/` はセンサー・カメラの API（`DeviceMotionEvent`・`getUserMedia` 等）に触れない．入力は `FrameInfo.input` だけから受け取る
-- 画面をまたいで使う 3D の部品（今は手の印 `scenes/common/handMarkers.ts`）は scenes/ に置き，他の画面を持つモジュールには app/ が作る関数を渡す（例: ロビーの `createHandMarkers`）．受け取る側は使う形だけを自分で型にする
+- 画面をまたいで使う 3D の部品（今は手の形 `scenes/common/handMarkers.ts`）は scenes/ に置き，他の画面を持つモジュールには app/ が作る関数を渡す（例: ロビーの `createHandMarkers`）．受け取る側は使う形だけを自分で型にする
 - `scenario/`・`sim/`・`share/` は three.js にもブラウザ API にも依存しない（純粋な TypeScript．`share/` の圧縮に使う `CompressionStream` と，見守りの ID・指紋を作る `crypto.getRandomValues`・`crypto.subtle.digest` だけは例外とし，テストは Node の同じ API で行う）
 - `core/` のうち three.js の型を使うのは `core/scene.ts` だけ（型だけの import なので実行時の依存は無い）．`input/`・`scenario/`・`sim/`・`share/` は `core/scene.ts` を import しない
 
@@ -702,7 +702,7 @@ ctx.bus.emit({ type: "cue", cue: narrationCue(NARRATION_ID.fireAnnouncement, { r
 - **core の型を最初に入れる**: 「受け渡すデータ」の新規・変更の型を 1 本の専用 PR で先に入れる
 - **デモの校舎**: `src/share/samples/` に，手で書いた小さな `SchoolPlan`（教室 2〜3 つ・廊下・昇降口・校庭）を最初に置く．エディタの完成を待たずに，校舎の 3D・延焼・結果画面を作り始められる
 - **関数の形を先に決める**: `sim/` の関数（`computeSpread`・`proposeRoute`・`evaluateDrill`・`wallBetween`）は，中身より先に引数と戻り値の型を入れる．中身ができるまでは，延焼は「火元からの距離 × 秒数」，経路は「開始地点から集合場所へのまっすぐな幅優先探索」等の簡単な版でよい
-- **モック入力**: キーボードとマウスで `PlayerInput` を作る（W／S で歩行，C でしゃがみの切り替え，左ドラッグで頭の向き，マウスの位置で右手の位置，右ボタンか F キーを押している間は握る，ホイールで手の奥行き）．PC のブラウザだけで校舎と避難を確かめられる．置き場所は `src/input/`（担当D）とし，`app/` で本物の入力と切り替える
+- **モック入力**: キーボードとマウスで `PlayerInput` を作る（W／S で歩行，C でしゃがみの切り替え，左ドラッグで頭の向き，マウスの位置で右手の位置，右ボタンか F キーを押している間は握る，ホイールで手の奥行き．手の 21 点は開いた手・握った手の決め打ちの形）．PC のブラウザだけで校舎と避難を確かめられる．置き場所は `src/input/`（担当D）とし，`app/` で本物の入力と切り替える
 - **各自の dev ページ**: 担当ごとに単独で動かせるページを作る（例: `?scene=school` はモック入力で校舎を歩く，エディタは `?editor` だけで動く，結果画面はデモの校舎と手で作った `DrillTrack` で表示する）．本番のビルドには含めない
 
 ## バックエンド (Backend)

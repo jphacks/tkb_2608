@@ -407,11 +407,171 @@ describe("resetHandTrack", () => {
 });
 
 describe("toHandState", () => {
-  it("HandState の項目（tracked・position・grip）だけを載せる", () => {
+  it("HandState の項目（tracked・position・grip・landmarks）だけを載せる", () => {
     const { track, t } = trackedHand(observation({ curls: FIST }));
     const r = readHandTrack(track, t, P);
     const s = toHandState(r);
+    expect(Object.keys(s).sort()).toEqual(["grip", "landmarks", "position", "tracked"]);
+    expect(s).toEqual({
+      tracked: r.tracked,
+      position: r.position,
+      grip: r.grip,
+      landmarks: r.landmarks,
+    });
+  });
+
+  it("まだ 21 点が無い（一度も認識していない）手は landmarks を省く", () => {
+    const s = toHandState(readHandTrack(createHandTrack(), 0, P));
     expect(Object.keys(s).sort()).toEqual(["grip", "position", "tracked"]);
-    expect(s).toEqual({ tracked: r.tracked, position: r.position, grip: r.grip });
+  });
+});
+
+describe("handPositions（21 点）", () => {
+  const cam = cameraModelOf(P, IMG_W, IMG_H);
+
+  it("21 点を頭の座標系に直し，人差し指の先は 8 番と同じ", () => {
+    const pos = handPositions(observation(), cam, P);
+    expect(pos?.landmarks).toHaveLength(21);
+    expect(pos?.landmarks[8]).toEqual(pos?.tip);
+  });
+
+  it("相対の z が同じなら，手首と 4 本の指の付け根の平均が手のひらの中心になる", () => {
+    const pos = handPositions(observation(), cam, P);
+    if (pos === null) throw new Error("位置が求められない");
+    const ids = [0, 5, 9, 13, 17];
+    for (const k of ["x", "y", "z"] as const) {
+      const mean = ids.reduce((a, i) => a + pos.landmarks[i][k], 0) / ids.length;
+      expect(mean).toBeCloseTo(pos.palm[k], 9);
+    }
+  });
+
+  it("MediaPipe の相対の z が大きい（カメラから遠い）点ほど奥（-z）に置く", () => {
+    const base = observation();
+    const lm = base.landmarks.map((p, i) => (i === 12 ? { ...p, z: p.z + 0.05 } : p));
+    const flat = handPositions(base, cam, P);
+    const deep = handPositions({ ...base, landmarks: lm }, cam, P);
+    expect(deep?.landmarks[12].z).toBeLessThan(flat?.landmarks[12].z ?? Number.NaN);
+    expect(deep?.landmarks[8].z).toBeCloseTo(flat?.landmarks[8].z ?? Number.NaN, 9);
+  });
+
+  it("21 点に足りない手は null", () => {
+    const base = observation();
+    expect(handPositions({ ...base, landmarks: base.landmarks.slice(0, 20) }, cam, P)).toBeNull();
+  });
+
+  it("有限でない点がある手は null（形の崩れた手を描かない）", () => {
+    const base = observation();
+    const lm = base.landmarks.map((p, i) => (i === 20 ? { ...p, x: Number.NaN } : p));
+    expect(handPositions({ ...base, landmarks: lm }, cam, P)).toBeNull();
+  });
+});
+
+describe("readHandTrack（21 点）", () => {
+  it("一度も認識していない手の landmarks は null", () => {
+    expect(readHandTrack(createHandTrack(), 0, P).landmarks).toBeNull();
+  });
+
+  it("認識した手は 21 点を返し，認識した直後は 1 回ごとの 21 点と同じ所にある", () => {
+    const obs = observation({ cx: 0.4 });
+    const track = createHandTrack();
+    see(track, obs, 0);
+    const r = readHandTrack(track, 0, P);
+    const expected = handPositions(obs, cameraModelOf(P, IMG_W, IMG_H), P);
+    expect(r.landmarks).toHaveLength(21);
+    for (const i of [0, 4, 8, 12, 20]) {
+      expect(r.landmarks?.[i].x).toBeCloseTo(expected?.landmarks[i].x ?? Number.NaN, 9);
+      expect(r.landmarks?.[i].y).toBeCloseTo(expected?.landmarks[i].y ?? Number.NaN, 9);
+      expect(r.landmarks?.[i].z).toBeCloseTo(expected?.landmarks[i].z ?? Number.NaN, 9);
+    }
+  });
+
+  it("認識の合間は手のひらの外挿に合わせて 21 点全体が同じだけ動く（形は変えない）", () => {
+    const track = createHandTrack();
+    let t = 0;
+    for (let i = 0; i < 10; i++) {
+      t = i * DT;
+      see(track, observation({ cx: 0.3 + i * 0.02 }), t);
+    }
+    const r0 = readHandTrack(track, t, P);
+    const r40 = readHandTrack(track, t + 40, P);
+    expect(r40.position.x).toBeGreaterThan(r0.position.x);
+    for (let i = 0; i < 21; i++) {
+      const a = r0.landmarks?.[i];
+      const b = r40.landmarks?.[i];
+      expect((b?.x ?? Number.NaN) - r40.position.x).toBeCloseTo(
+        (a?.x ?? Number.NaN) - r0.position.x,
+        9,
+      );
+      expect((b?.y ?? Number.NaN) - r40.position.y).toBeCloseTo(
+        (a?.y ?? Number.NaN) - r0.position.y,
+        9,
+      );
+    }
+  });
+
+  it("握った手は開いた手より指の先が手のひらに近い", () => {
+    const dist = (r: ReturnType<typeof readHandTrack>, i: number) => {
+      const p = r.landmarks?.[i];
+      return p === undefined
+        ? Number.NaN
+        : Math.hypot(p.x - r.position.x, p.y - r.position.y, p.z - r.position.z);
+    };
+    const open = trackedHand(observation({ curls: OPEN }));
+    const fist = trackedHand(observation({ curls: FIST }));
+    const ro = readHandTrack(open.track, open.t, P);
+    const rf = readHandTrack(fist.track, fist.t, P);
+    for (const tip of [8, 12, 16, 20]) expect(dist(rf, tip)).toBeLessThan(dist(ro, tip));
+  });
+
+  it("見失った後に別の形で戻った時は，古い形から滑らず新しい形から始める", () => {
+    const { track, t } = trackedHand(observation({ curls: OPEN }));
+    see(track, null, t + 400);
+    const fistObs = observation({ curls: FIST });
+    see(track, fistObs, t + 500);
+    const r = readHandTrack(track, t + 500, P);
+    const expected = handPositions(fistObs, cameraModelOf(P, IMG_W, IMG_H), P);
+    expect(r.landmarks?.[12].y).toBeCloseTo(expected?.landmarks[12].y ?? Number.NaN, 9);
+  });
+
+  it("見失った手の landmarks は直前の値のまま（tracked は false）", () => {
+    const { track, t } = trackedHand();
+    const before = readHandTrack(track, t, P).landmarks;
+    see(track, null, t + 1000);
+    const r = readHandTrack(track, t + 1000, P);
+    expect(r.tracked).toBe(false);
+    expect(r.landmarks?.[8].x).toBeCloseTo(before?.[8].x ?? Number.NaN, 9);
+  });
+
+  it("止めた手の指の先（点ごとに別々にぶれる）の震えは，1 回ごとの震えより小さい", () => {
+    const rnd = seededRandom(11);
+    const cam = cameraModelOf(P, IMG_W, IMG_H);
+    const track = createHandTrack();
+    const raw: number[] = [];
+    const out: number[] = [];
+    for (let i = 0; i < 60; i++) {
+      const t = i * DT;
+      const base = observation();
+      const obs = {
+        ...base,
+        landmarks: base.landmarks.map((p) => ({
+          ...p,
+          x: p.x + (rnd() - 0.5) * (2 / IMG_W),
+          y: p.y + (rnd() - 0.5) * (2 / IMG_H),
+        })),
+      };
+      see(track, obs, t);
+      if (i >= 15) {
+        const pos = handPositions(obs, cam, P);
+        const r = readHandTrack(track, t, P);
+        raw.push((pos?.landmarks[12].x ?? Number.NaN) - (pos?.palm.x ?? Number.NaN));
+        out.push((r.landmarks?.[12].x ?? Number.NaN) - r.position.x);
+      }
+    }
+    const std = (v: number[]) => {
+      const m = v.reduce((a, b) => a + b, 0) / v.length;
+      return Math.sqrt(v.reduce((a, b) => a + (b - m) ** 2, 0) / v.length);
+    };
+    // 点ごとのぶれは見かけの速さになり One Euro の平滑化が弱まるため，手全体のぶれ（0.5 倍）より緩い目安にする
+    expect(std(out)).toBeLessThan(std(raw) * 0.7);
   });
 });
