@@ -82,6 +82,18 @@ import {
   startGateProgress,
 } from "./startGate";
 
+/** 指示の板に出している内容と，開始ボタン・見え方の調整の十字を出しているか（見守り画面へ送るため） */
+export interface LobbyPanelView {
+  readonly title: string;
+  readonly body: string;
+  /** 右上の補足（無ければ空の文字列） */
+  readonly caption: string;
+  /** 開始ボタンを出しているか */
+  readonly startButton: boolean;
+  /** 見え方の調整の十字を出しているか */
+  readonly alignMarker: boolean;
+}
+
 export interface LobbySceneOptions {
   readonly config?: CalibrationConfig;
   readonly startGateConfig?: StartGateConfig;
@@ -98,6 +110,11 @@ export interface LobbySceneOptions {
    * 縦向きの案内を出している間はゴーグルに入っておらず，指示も見えないため（app/ が orientationGuide の状態を渡す）
    */
   readonly isPaused?: () => boolean;
+  /**
+   * 指示の板の内容・開始ボタン・十字の表示が変わった時に呼ぶ（省略可．app/ が見守りの中継へ送る）．
+   * 読み取るだけで，ロビーの進み方には影響しない
+   */
+  readonly onPanelView?: (view: LobbyPanelView) => void;
 }
 
 /** 指示の板が頭の向きに追いつく速さ（1/秒）．見回した時に一瞬遅れて追いつく様子が分かるよう緩めにする */
@@ -128,6 +145,8 @@ interface Active {
   /** 指示の板の枠の明るさ（0〜1） */
   highlight: number;
   skipRequested: boolean;
+  /** 最後に onPanelView へ渡した内容（変わった時だけ呼ぶため） */
+  lastPanelView: string;
   /** 直前のフレームで止めていたか（再開した時に今の手順をやり直すため） */
   wasPaused: boolean;
   done: boolean;
@@ -152,6 +171,21 @@ export function createLobbyScene(options: LobbySceneOptions = {}): Scene {
       .filter((s) => s !== null)
       .join("　");
     a.panel.show({ title: instruction.title, body: instruction.body, caption });
+    if (options.onPanelView) {
+      const startButton = a.gate.startedBy === null;
+      const alignMarker = !startButton && a.briefing === null && a.state.phase === "align";
+      const signature = `${instruction.title}\n${instruction.body}\n${caption}\n${startButton}\n${alignMarker}`;
+      if (signature !== a.lastPanelView) {
+        a.lastPanelView = signature;
+        options.onPanelView({
+          title: instruction.title,
+          body: instruction.body,
+          caption,
+          startButton,
+          alignMarker,
+        });
+      }
+    }
     if (instruction.key !== a.lastNarrationKey) {
       a.lastNarrationKey = instruction.key;
       a.narrationCount += 1;
@@ -281,6 +315,7 @@ export function createLobbyScene(options: LobbySceneOptions = {}): Scene {
         narration: SILENT_NARRATION,
         narrationCount: 0,
         highlight: 0,
+        lastPanelView: "",
         skipRequested: false,
         wasPaused: false,
         done: false,

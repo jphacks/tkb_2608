@@ -10,6 +10,9 @@
     "includes": [
       "src/**",
       "scripts/**",
+      "relay/src/**",
+      "relay/scripts/**",
+      "relay/tsconfig.json",
       "vite.config.ts",
       "biome.json",
       "tsconfig.json",

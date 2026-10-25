@@ -75,6 +75,61 @@
 | 床の正解経路の矢印 | `http://localhost:5173/src/scenes/school/dev/routeArrows.html` | デモの校舎のマス目を種類ごとの色の板で並べ，その上に正解経路の矢印を出す（開始地点は黄色の輪，集合場所は白い輪）．左上に矢印の数と種類ごとの内訳．ドラッグで回す・ホイールで寄る・右ドラッグで動かす．`?mode=test` で矢印を作らない（テストモード），`?route=broken` で異常を混ぜた経路 |
 | 火と煙 | `http://localhost:5173/src/scenes/school/dev/fireSmoke.html` | デモの校舎を簡易な床・柱・天井で並べ，`computeSpread()` の結果で火と煙を描く．下のパネルで時刻を動かす（Space で再生・一時停止，速さ 1・2・5・10 倍，スライダー）．一人称（WASD で歩く・ドラッグで向き・C でしゃがむ）と見下ろす視点（V で切り替え，`?view=top`）．左上に fps・更新の時間（ms）・描画の回数・燃えているマスと煙のあるマスの数・目の位置の煙とフォグの濃さ．`?plan=large` で 2,040 マスの校舎（重い時の確認）．同じ場面を見比べる時は `?t=<秒>`（始める時刻）・`?at=<x>,<z>`（立つ位置，m）・`?yaw=<度>`（正で左へ回る．-90 で東を向く）・`?pitch=<度>`（正で下を向く）・`?crouch=1`（しゃがんで始める）を付ける（例: `?t=40&at=12.5,2.5&yaw=-90&pitch=-5`）．デモの校舎ではシャッターより西に煙が来ないので，しゃがむと晴れることは廊下を東へ歩いて確かめる |
 
+### 見守りの中継 (Monitor Relay)
+
+見守り（SPEC_01「見守り」）の中継は，Pages（アプリの配信）とは別の Cloudflare Worker として `relay/` に置く（Pages Functions では Durable Object を定義できず，Pages の `functions/` に置くと Pages Functions として扱われるため，別の名前のフォルダにしている）．`relay/src/index.ts` が Worker と Durable Object（`Room`．部屋の ID ごとに 1 つ），`relay/src/rules.ts` が役割・部屋の ID・大きさの判定，`relay/wrangler.jsonc` が設定．
+
+| コマンド | 内容 |
+| --- | --- |
+| `npm run relay:dev` | 中継をローカルで起動する（`wrangler dev`．`ws://127.0.0.1:8787`）．Cloudflare へのログインは要らない．`npm run dev` と別のターミナルで実行し，`Ctrl+C` で止める |
+| `npm run relay:check` | 起動した中継に student 2 つ・monitor 2 つをつなぎ，流れること・4 KiB を超えるものと monitor から届いたものが捨てられること・役割や部屋の ID が不正な接続を断ることを確かめる（`relay/scripts/relayCheck.mjs`．毎回乱数の部屋の ID を使う）．最後に `ALL OK` と出れば合格 |
+| `npm run relay:check -- wss://<中継>` | デプロイした中継に対して同じことを確かめる（発表の前日の確認等） |
+
+- 接続の URL: `<中継の住所>/rooms/<部屋の ID>?role=student`（生徒．送るだけ）と `?role=monitor`（見守り画面．受け取るだけ）．部屋の ID は base64url の文字で 8〜64 文字．形が合わない・`role` が無いか不正なら，中継は WebSocket にせず 400 を返す（別のパスは 404，WebSocket でない要求は 426）
+- 中継は中身を読まず，student から届いたもの（テキスト・バイナリとも）を同じ部屋の monitor 全員にそのまま流す．monitor から届いたものと 4 KiB（4096 バイト．テキストは UTF-8 で数える）を超えるものは捨てる．何も保存せず，メモリにも持たない．WebSocket Hibernation API を使うので，何も届かない間は Durable Object が眠って費用がかからない
+- `relay/` の型チェックは `npm run typecheck`（`tsc -p relay` を含む）で，lint は `npm run lint` で行う
+- `wrangler dev` の作る `relay/.wrangler/` は Git の管理外（`relay/.gitignore`）
+
+#### 中継の住所の渡し方 (Relay Address)
+
+中継の住所は URL に入れず，ビルドの環境変数 **`VITE_MONITOR_RELAY_URL`** で渡す（生徒の端末・見守り画面とも `import.meta.env.VITE_MONITOR_RELAY_URL` で読む．#127・#128）．値は `ws://` か `wss://` で始まる住所で，末尾に `/` を付けない（例: `wss://tkb2608-relay.<アカウントのサブドメイン>.workers.dev`）．読む側が後ろに `/rooms/<部屋の ID>?role=…` を足す．未設定・空のビルドでは見守りを使わない（生徒の端末は何もせず，見守り画面は「中継の住所が設定されていません」と出す）．
+
+- ローカル: `VITE_MONITOR_RELAY_URL=ws://127.0.0.1:8787 npm run dev`（`npm run relay:dev` と並べて起動する）．毎回書かない時は `.env.development.local` に `VITE_MONITOR_RELAY_URL=ws://127.0.0.1:8787` と書く（`.env.*` は Git の管理外）．PC の同じブラウザの別のタブで `?app&input=mock#room=<部屋の ID>` と `?monitor#room=<部屋の ID>` を開けば試せる（手順は下記「見守りをローカルで試す」）
+- スマホの実機（トンネル経由の `https`）からは `ws://127.0.0.1:8787` につなげない（https のページから `ws://` は使えず，`127.0.0.1` はスマホ自身を指す）．実機で試す時は，デプロイした中継の `wss://` の住所を `VITE_MONITOR_RELAY_URL` に入れて `npm run dev` を起動する
+- staging・本番: `deploy-staging.yml`・`deploy-prod.yml` のビルド（`npm run build`）の環境変数に `VITE_MONITOR_RELAY_URL` を渡す（リポジトリの変数から渡す形にする．下記「中継のデプロイ」）
+
+#### 中継のデプロイ (Relay Deployment)
+
+中継のデプロイと Cloudflare 側の作成は人間（管理者）が行う．Claude は `wrangler login`・`wrangler deploy` を実行しない．
+
+1. `npx wrangler login` でチームの Cloudflare アカウントにログインする（Pages と同じアカウント）
+2. `npx wrangler deploy --config relay/wrangler.jsonc` で Worker `tkb2608-relay` と Durable Object（SQLite 版．無料プランで使える）を作る．表示された `https://tkb2608-relay.<サブドメイン>.workers.dev` の `https` を `wss` に替えたものが中継の住所
+3. `npm run relay:check -- wss://tkb2608-relay.<サブドメイン>.workers.dev` で `ALL OK` を確かめる
+4. 中継の住所を Pages のビルドに渡す: リポジトリの変数 `MONITOR_RELAY_URL` を作り（`gh variable set MONITOR_RELAY_URL --body wss://…`），`deploy-staging.yml`・`deploy-prod.yml` のビルドの手順に `env: VITE_MONITOR_RELAY_URL: ${{ vars.MONITOR_RELAY_URL }}` を足す（ワークフローの変更は別の PR で行う）
+5. 費用の確認: Workers・Durable Objects の無料枠（リクエスト数・Durable Object の実行時間）を Cloudflare の画面で確かめる．WebSocket のメッセージは 20 件で 1 リクエストとして数えられ，生徒 1 人が 1 秒に 20〜30 回送るので，発表・練習の数十分では無料枠に収まる見込み．長く開きっぱなしにしない
+
+中継のコードを変えた時は，手順 2・3 をもう一度行う（Pages の配信とは別で，GitHub Actions からは配信しない）．
+
+#### 見守りをローカルで試す (Local Monitor Check)
+
+生徒の画面（送る側．`src/app/monitorSender.ts`）と見守り画面（`?monitor`．`src/monitor/`）を，PC の 1 つのブラウザで一緒に試す．
+
+1. 部屋の ID を作る（base64url の 16 文字．生徒と見守り画面で同じものを使う）
+
+   ```bash
+   node -e "console.log(require('crypto').randomBytes(12).toString('base64url'))"
+   ```
+
+2. ターミナル 1 で `npm run relay:dev`（`Ready on http://127.0.0.1:8787` が出るまで待つ）
+3. ターミナル 2 で `VITE_MONITOR_RELAY_URL=ws://127.0.0.1:8787 npm run dev`
+4. 見守り画面 `http://localhost:5173/?monitor#room=<部屋の ID>` を開き，「体験者の接続を待っています」が出ることを確かめる（`F` で全画面）
+5. 別のタブで生徒の画面 `http://localhost:5173/?app&input=mock#room=<同じ部屋の ID>` を開いて進める．ホームの間は「体験者は準備中です」，ロビーでは同じ部屋と指示の板が生徒の向きで，避難の画面では生徒の目線が，終わると同じ結果画面（ボタンなし）が見守り画面に出る
+
+- 5173 番を別のサーバーが使っていると，Vite は次の番号（5174 等）で起動する．URL のポートは `npm run dev` が表示したものに合わせる
+- エディタの校舎で試す時は，両方のフラグメントに同じ `p=` を付ける（`#p=<埋め込みデータ>&room=<部屋の ID>`）．`p=` が違うと見守り画面は描かずに案内を出す
+- `room=` が無い・`VITE_MONITOR_RELAY_URL` が無い時，見守り画面は案内だけを出して止まり，生徒の画面はいつもどおり動く（送らない）
+- `relay:dev` を止めると見守り画面は「中継につながりません．つなぎ直しています」と出し，起動し直すと 3 秒おきのつなぎ直しで自動で戻る（生徒の端末は 5 秒おき）
+
 ### 正解付きの記録の集計 (Replay & Evaluate)
 
 `protocol.html` で取った正解付きの記録を今の判定に流し直し，区間ごとの指標を SPEC_01「判定の安定性」の目安と照らして端末に表で出す（`src/input/replay/replayCli.ts`．実体は `scripts/replay.mjs`）．
@@ -121,12 +176,12 @@ PR を作る前に，以下がすべて通ることを確認する．
 | --- | --- |
 | `npm run lint` | Biome で lint と整形の差分を確認する（書き換えない） |
 | `npm run format` | Biome で lint の自動修正と整形を行う（ファイルを書き換える） |
-| `npm run typecheck` | TypeScript の型チェック（`tsc`．出力はしない） |
-| `npm test` | Vitest で単体テストを実行する（`src/**/*.test.ts`） |
+| `npm run typecheck` | TypeScript の型チェック（`tsc` と，見守りの中継の `tsc -p relay`．出力はしない） |
+| `npm test` | Vitest で単体テストを実行する（`src/**/*.test.ts` と，見守りの中継の `relay/src/**/*.test.ts`） |
 | `npm run build` | 型チェックの後，`dist/` に本番用のファイルを出力する（GitHub Pages 用に `base` が `/tkb_2608/` になる） |
 | `npm run preview` | `npm run build` の出力をローカルで配信して確認する |
 
-- Biome の対象は `src/`・`scripts/`・`vite.config.ts` と設定ファイル（`biome.json`・`tsconfig.json`・`package.json`）だけに絞っている（`biome.json` の `files.includes`）．Biome は Markdown も整形できるため，対象を広げると `docs/`・`.claude/` のフロントマターや表が書き換えられてルールが壊れる（実際に起きた）．対象を広げない
+- Biome の対象は `src/`・`scripts/`・`relay/src/`・`relay/scripts/`・`vite.config.ts` と設定ファイル（`biome.json`・`tsconfig.json`・`package.json`・`relay/tsconfig.json`）だけに絞っている（`biome.json` の `files.includes`）．Biome は Markdown も整形できるため，対象を広げると `docs/`・`.claude/` のフロントマターや表が書き換えられてルールが壊れる（実際に起きた）．対象を広げない
 - ビルド時の「500 kB を超えるチャンクがある」という警告は three.js 等の大きさによるもので，現時点では無視してよい（必要になったら分割する）
 
 ## デプロイ (Deployment)

@@ -4,8 +4,9 @@
 // - ?debrief: 結果画面だけを，デモの校舎と手で作った記録で表示する（開発用．?app が優先）
 // - ?audio: 避難の音（audio/）だけを鳴らして確かめる（開発用．?app・?debrief が優先）
 // - ?editor: 教員用のエディタ（本番でも使う．?app・?debrief・?audio が優先）
+// - ?monitor: 教員用の見守り画面（本番でも使う．?app・?debrief・?audio・?editor が優先）
 
-export type LaunchMode = "viewer" | "app" | "debrief" | "audio" | "editor";
+export type LaunchMode = "viewer" | "app" | "debrief" | "audio" | "editor" | "monitor";
 
 export function resolveLaunchMode(search: string): LaunchMode {
   const params = new URLSearchParams(search);
@@ -13,6 +14,7 @@ export function resolveLaunchMode(search: string): LaunchMode {
   if (isOn(params.get("debrief"))) return "debrief";
   if (isOn(params.get("audio"))) return "audio";
   if (isOn(params.get("editor"))) return "editor";
+  if (isOn(params.get("monitor"))) return "monitor";
   return "viewer";
 }
 

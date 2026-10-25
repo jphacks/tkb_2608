@@ -32,11 +32,11 @@ describe("vite.config.ts", () => {
     expect(resolve("production", "build").server?.host).toBe("127.0.0.1");
   });
 
-  it("どの mode でもトンネルのホストを許可し，テストの対象は src/**/*.test.ts のまま", () => {
+  it("どの mode でもトンネルのホストを許可し，テストの対象は src/**/*.test.ts と中継の relay/src/**/*.test.ts", () => {
     for (const mode of ["record", "development", "production", "staging"]) {
       const c = resolve(mode) as UserConfig & { test?: { include?: string[] } };
       expect(c.server?.allowedHosts).toEqual([".trycloudflare.com"]);
-      expect(c.test?.include).toEqual(["src/**/*.test.ts"]);
+      expect(c.test?.include).toEqual(["src/**/*.test.ts", "relay/src/**/*.test.ts"]);
     }
   });
 });
