@@ -1,5 +1,5 @@
 // ロビーの部屋（学校の防災学習室: フローリングの床・クリーム色の壁と木の腰板・蛍光灯の天井，立ち位置の印と
-// 黒板・消火器・非常口の誘導灯等の置き物（lobbyProps.ts））と，指示を出す板・開始ボタン・見え方の調整の十字・手の印．
+// 黒板・消火器・非常口の誘導灯等の置き物（lobbyProps.ts））と，指示を出す板・開始ボタン・見え方の調整の丸・手の印．
 // 模様はすべて CanvasTexture でコードから描く（外部ファイルを足さない）．影は使わず，ライトは 2 つに抑える．
 // 2 画面で描くため，光の計算は MeshStandardMaterial より軽い MeshLambertMaterial にする
 
@@ -445,15 +445,22 @@ export interface AlignmentMarker {
 }
 
 /**
- * 十字の置き場所（目からの距離，m）．PerspectiveCamera.focus の既定（10）と合わせる．
+ * 丸の置き場所（目からの距離，m）．PerspectiveCamera.focus の既定（10）と合わせる．
  * StereoCamera（StereoEffect）は focus の距離で左右の像が重なるため，ここに置いた点は左右それぞれの目の画面の中心に出る．
  * 2 画面でない時は画面の中心に 1 つ出る
  */
 const MARKER_DISTANCE = 10;
-const MARKER_ARM = 0.6;
-const MARKER_THICKNESS = 0.06;
+/**
+ * 丸（輪）の内側と外側の半径（m．目から MARKER_DISTANCE 先での大きさ）．十字を外しても見つけやすいよう，
+ * 以前の輪（半径 0.192〜0.232 m）と同じ大きさのまま，太さを 0.04 m から 0.06 m にした．
+ * 塗りつぶしの円にしないのは，左右の像がずれた時に 2 つの輪の重なり具合が分かりやすいため
+ */
+const MARKER_RING_INNER = 0.18;
+const MARKER_RING_OUTER = 0.24;
+/** 輪の周の分割数（滑らかに見える程度） */
+const MARKER_RING_SEGMENTS = 48;
 
-/** 見え方の調整用の十字と円．部屋の壁より奥にあるため，深度を無視して最前面に描く */
+/** 見え方の調整用の丸（輪）．部屋の壁より奥にあるため，深度を無視して最前面に描く */
 export function createAlignmentMarker(): AlignmentMarker {
   const group = new THREE.Group();
   group.name = "lobby-alignment-marker";
@@ -463,21 +470,18 @@ export function createAlignmentMarker(): AlignmentMarker {
     depthWrite: false,
     side: THREE.DoubleSide,
   });
-  const barGeometry = new THREE.PlaneGeometry(MARKER_ARM, MARKER_THICKNESS);
-  const ringGeometry = new THREE.RingGeometry(MARKER_ARM * 0.32, MARKER_ARM * 0.32 + 0.04, 48);
-  const horizontal = new THREE.Mesh(barGeometry, material);
-  const vertical = new THREE.Mesh(barGeometry, material);
-  vertical.rotation.z = Math.PI / 2;
+  const ringGeometry = new THREE.RingGeometry(
+    MARKER_RING_INNER,
+    MARKER_RING_OUTER,
+    MARKER_RING_SEGMENTS,
+  );
   const ring = new THREE.Mesh(ringGeometry, material);
-  for (const mesh of [horizontal, vertical, ring]) {
-    mesh.position.z = -MARKER_DISTANCE;
-    mesh.renderOrder = 1000;
-    group.add(mesh);
-  }
+  ring.position.z = -MARKER_DISTANCE;
+  ring.renderOrder = 1000;
+  group.add(ring);
   return {
     object: group,
     dispose() {
-      barGeometry.dispose();
       ringGeometry.dispose();
       material.dispose();
     },

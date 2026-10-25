@@ -13,7 +13,12 @@ import {
 } from "./calibration";
 import { describeBriefing, skipBriefingPage, startBriefing } from "./drillBriefing";
 import { createLobbyProps } from "./lobbyProps";
-import { createLobbyPanel, createLobbyRoom, PANEL_TEXT_LAYOUT } from "./lobbyRoom";
+import {
+  createAlignmentMarker,
+  createLobbyPanel,
+  createLobbyRoom,
+  PANEL_TEXT_LAYOUT,
+} from "./lobbyRoom";
 import { describeCalibration, describeStartGate, type LobbyInstruction } from "./lobbyScript";
 import { fitText, type MeasureText } from "./textFit";
 
@@ -268,5 +273,74 @@ describe("PANEL_TEXT_LAYOUT", () => {
     expect(fitPart(captionOf(i), caption).truncated).toBe(false);
     expect(fitPart(i.title, title).truncated).toBe(false);
     expect(fitPart(i.body, body).truncated).toBe(false);
+  });
+});
+
+describe("createAlignmentMarker（見え方の調整の丸．Issue #174）", () => {
+  /** 印の中の Mesh（子孫を含む）を集める */
+  function meshesOf(object: THREE.Object3D): THREE.Mesh[] {
+    const meshes: THREE.Mesh[] = [];
+    object.traverse((o) => {
+      if (o instanceof THREE.Mesh) meshes.push(o);
+    });
+    return meshes;
+  }
+
+  it("緑の輪（RingGeometry）が 1 つだけで，十字の棒（PlaneGeometry 等）は無い", () => {
+    const marker = createAlignmentMarker();
+    expect(marker.object.name).toBe("lobby-alignment-marker");
+    expect(marker.object.children).toHaveLength(1);
+    const meshes = meshesOf(marker.object);
+    expect(meshes).toHaveLength(1);
+    const ring = meshes[0];
+    expect(ring.geometry).toBeInstanceOf(THREE.RingGeometry);
+    expect(meshes.some((m) => m.geometry instanceof THREE.PlaneGeometry)).toBe(false);
+    const material = ring.material as THREE.MeshBasicMaterial;
+    expect(material.color.getHex()).toBe(0x3dff8a);
+    marker.dispose();
+  });
+
+  it("輪の内側の半径は 0.18 m，外側は 0.24 m，周の分割は 48（塗りつぶしの円ではない）", () => {
+    const marker = createAlignmentMarker();
+    const ring = meshesOf(marker.object)[0];
+    const params = (ring.geometry as THREE.RingGeometry).parameters;
+    expect(params.innerRadius).toBeCloseTo(0.18);
+    expect(params.outerRadius).toBeCloseTo(0.24);
+    expect(params.innerRadius).toBeGreaterThan(0);
+    expect(params.outerRadius).toBeGreaterThan(params.innerRadius);
+    expect(params.thetaSegments).toBe(48);
+    marker.dispose();
+  });
+
+  it("目から 10 m 先の視野の中心（x = 0，y = 0，z = -10）に置く", () => {
+    const marker = createAlignmentMarker();
+    const ring = meshesOf(marker.object)[0];
+    const world = new THREE.Vector3();
+    marker.object.updateMatrixWorld(true);
+    ring.getWorldPosition(world);
+    expect(world.x).toBeCloseTo(0);
+    expect(world.y).toBeCloseTo(0);
+    expect(world.z).toBeCloseTo(-10);
+    marker.dispose();
+  });
+
+  it("壁より奥でも見えるよう，深度を無視して最前面（renderOrder 1000）に描く", () => {
+    const marker = createAlignmentMarker();
+    const ring = meshesOf(marker.object)[0];
+    const material = ring.material as THREE.Material;
+    expect(material.depthTest).toBe(false);
+    expect(material.depthWrite).toBe(false);
+    expect(ring.renderOrder).toBe(1000);
+    marker.dispose();
+  });
+
+  it("dispose で輪のジオメトリとマテリアルを解放する", () => {
+    const marker = createAlignmentMarker();
+    const ring = meshesOf(marker.object)[0];
+    const geometrySpy = vi.spyOn(ring.geometry, "dispose");
+    const materialSpy = vi.spyOn(ring.material as THREE.Material, "dispose");
+    marker.dispose();
+    expect(geometrySpy).toHaveBeenCalledTimes(1);
+    expect(materialSpy).toHaveBeenCalledTimes(1);
   });
 });

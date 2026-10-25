@@ -1,6 +1,6 @@
 // ロビー（lobby，VR 表示）．学校の防災学習室で開始ボタンを待ち，手のひらを 1 秒かざしたら（startGate.ts の
 // startMode: "hand"）見え方の調整（二眼の像が重なるようゴーグル側で合わせる．開始ボタンと同じ部品・同じ判定の
-// ボタン（十字の下）に手のひらを 1 秒かざして次へ．startMode が "auto" の時は一定時間で次へ）の後に指示を出して
+// ボタン（丸の下）に手のひらを 1 秒かざして次へ．startMode が "auto" の時は一定時間で次へ）の後に指示を出して
 // 正面 → 立つ → しゃがむ → しゃがみ歩き → 足踏み の順に行い（体験者には「練習」として見せる．各手順は
 // 指示の読み上げ → 3 秒の準備（3・2・1）→ 計測），正面（yawOffset）と各手順の区間（segments．
 // 値の計算は input/ が行う）を CalibrationProfile として Session.calibration に書く．
@@ -95,7 +95,7 @@ import {
   startGateProgress,
 } from "./startGate";
 
-/** 指示の板に出している内容と，開始ボタン・見え方の調整の十字を出しているか（見守り画面へ送るため） */
+/** 指示の板に出している内容と，開始ボタン・見え方の調整の丸を出しているか（見守り画面へ送るため） */
 export interface LobbyPanelView {
   readonly title: string;
   readonly body: string;
@@ -103,7 +103,7 @@ export interface LobbyPanelView {
   readonly caption: string;
   /** 開始ボタンを出しているか */
   readonly startButton: boolean;
-  /** 見え方の調整の十字を出しているか */
+  /** 見え方の調整の丸を出しているか */
   readonly alignMarker: boolean;
 }
 
@@ -146,7 +146,7 @@ export interface LobbySceneOptions {
    */
   readonly isPaused?: () => boolean;
   /**
-   * 指示の板の内容・開始ボタン・十字の表示が変わった時に呼ぶ（省略可．app/ が見守りの中継へ送る）．
+   * 指示の板の内容・開始ボタン・丸の表示が変わった時に呼ぶ（省略可．app/ が見守りの中継へ送る）．
    * 読み取るだけで，ロビーの進み方には影響しない
    */
   readonly onPanelView?: (view: LobbyPanelView) => void;
@@ -213,7 +213,7 @@ export function createLobbyScene(options: LobbySceneOptions): Scene {
   const sources: StartGateSources = { gaze: debug };
   // 見え方の調整も，開始ボタンを手で押す設定の時は時間ではなくボタンで終える（制限時間は無い．開始ボタンと同じ）
   const alignByButton = gateConfig.startMode === "hand";
-  // 開始ボタンと同じ判定を，ボタンの位置だけ十字の下に差し替えて使う
+  // 開始ボタンと同じ判定を，ボタンの位置だけ丸の下に差し替えて使う
   const alignGateConfig: StartGateConfig = { ...gateConfig, buttonOffset: ALIGN_BUTTON_OFFSET };
   const prepCue = createPrepCueSound(options.audioContext ?? (() => null));
   let active: Active | null = null;
@@ -523,7 +523,7 @@ export function createLobbyScene(options: LobbySceneOptions): Scene {
       }
       const signal = prepSignal(before, a.state, config);
       if (signal !== null) prepCue.play(signal);
-      // 見え方の調整の間だけ，視野の中心（左右それぞれの目の画面の中心）に十字を出す
+      // 見え方の調整の間だけ，視野の中心（左右それぞれの目の画面の中心）に丸を出す
       a.marker.object.visible = a.state.phase === "align";
       const h = frame.input.head;
       a.marker.object.quaternion.set(h.x, h.y, h.z, h.w);

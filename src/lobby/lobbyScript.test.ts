@@ -430,3 +430,49 @@ describe("describeCalibration（見え方の調整をボタンで終える．ali
     }
   });
 });
+
+describe("describeCalibration（見え方の調整の文は「丸」．Issue #174）", () => {
+  const s = startCalibration(null);
+  const cases: [string, AlignButtonPrompt | null][] = [
+    ["時間で進む（auto）", null],
+    ["ボタンで終える", { gazeEnabled: false, handPrompt: null }],
+    ["ボタンで終える（debug の注視あり）", { gazeEnabled: true, handPrompt: null }],
+    ["手が見つからない案内", { gazeEnabled: false, handPrompt: 0 }],
+  ];
+
+  it.each(cases)("%s: 表示・読み上げに「十字」が残っていない", (_label, prompt) => {
+    const d = describeCalibration(s, DEFAULT_CALIBRATION_CONFIG, prompt);
+    expect(d.title).not.toContain("十字");
+    expect(d.body).not.toContain("十字");
+    expect(d.narration ?? "").not.toContain("十字");
+  });
+
+  it.each(cases)("%s: 表示の文で印を「丸」と呼ぶ", (_label, prompt) => {
+    const d = describeCalibration(s, DEFAULT_CALIBRATION_CONFIG, prompt);
+    expect(d.body).toContain("丸");
+  });
+
+  it("時間で進む時は，表示・読み上げとも丸が 1 つに重なるよう案内する", () => {
+    const d = describeCalibration(s);
+    expect(d.body).toContain("丸が 1 つに重なって");
+    expect(d.narration).toContain("丸が一つに重なって");
+  });
+
+  it("ボタンで終える時は，丸の下のボタンに手のひらをかざすよう表示し，読み上げも丸が重なるよう案内する", () => {
+    const d = describeCalibration(s, DEFAULT_CALIBRATION_CONFIG, {
+      gazeEnabled: false,
+      handPrompt: null,
+    });
+    expect(d.body).toContain("丸が 1 つに重なって");
+    expect(d.body).toContain("丸の下のボタン");
+    expect(d.narration).toContain("丸が一つに重なって");
+  });
+
+  it("手が見つからない案内でも，丸の下のボタンを案内する", () => {
+    const d = describeCalibration(s, DEFAULT_CALIBRATION_CONFIG, {
+      gazeEnabled: false,
+      handPrompt: 1,
+    });
+    expect(d.body).toContain("丸の下のボタン");
+  });
+});

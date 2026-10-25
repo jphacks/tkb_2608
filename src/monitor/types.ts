@@ -38,16 +38,16 @@ export interface MonitorLobbyView {
   readonly alignMarker: boolean;
 }
 
-/** 見守り画面で描くロビーの部屋と板（app/ が lobby/ の部屋・板・開始ボタン・十字から作る） */
+/** 見守り画面で描くロビーの部屋と板（app/ が lobby/ の部屋・板・開始ボタン・丸から作る） */
 export interface MonitorLobbyWorld {
   /** Scene に足す親（部屋と板．照明も含む） */
   readonly root: Object3D;
-  /** カメラの子にする物（見え方の調整の十字．視野の中心に固定する） */
+  /** カメラの子にする物（見え方の調整の丸．視野の中心に固定する） */
   readonly cameraAttachment: Object3D;
   readonly background: ColorRepresentation;
   /** 目の高さ（m．生徒のロビーと同じ値） */
   readonly eyeHeight: number;
-  /** 板の内容・開始ボタン・十字の表示を変える（変わった時だけ描き直す） */
+  /** 板の内容・開始ボタン・丸の表示を変える（変わった時だけ描き直す） */
   show(view: MonitorLobbyView): void;
   /**
    * 板を頭の向きに緩く追いつかせる（生徒のロビーと同じ速さ）．

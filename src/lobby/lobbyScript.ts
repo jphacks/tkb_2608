@@ -95,9 +95,9 @@ export interface AlignButtonPrompt {
 }
 
 const ALIGN_TEXT =
-  "画面の中の十字が 1 つに重なって，くっきり見えるように，スマホの位置やゴーグルのレンズの幅を合わせてください";
+  "画面の中の丸が 1 つに重なって，くっきり見えるように，スマホの位置やゴーグルのレンズの幅を合わせてください";
 const ALIGN_NARRATION =
-  "画面の中の十字が一つに重なって，くっきり見えるように，スマホの位置やゴーグルのレンズの幅を合わせてください";
+  "画面の中の丸が一つに重なって，くっきり見えるように，スマホの位置やゴーグルのレンズの幅を合わせてください";
 
 /** 見え方の調整をボタンで終える時の指示（残り秒数は出さない．制限時間は無い） */
 function describeAlignByButton(prompt: AlignButtonPrompt): LobbyInstruction {
@@ -109,7 +109,7 @@ function describeAlignByButton(prompt: AlignButtonPrompt): LobbyInstruction {
     return {
       key: `align:handPrompt:${prompt.handPrompt}`,
       title: "手が見つかりません",
-      body: `${text}．十字がくっきり見えたら，十字の下のボタンに手のひらを 1 秒かざしてください${debug}`,
+      body: `${text}．丸がくっきり見えたら，丸の下のボタンに手のひらを 1 秒かざしてください${debug}`,
       narration: `手が見つかりません．${text}`,
       progressLabel: null,
       remainingSeconds: null,
@@ -118,7 +118,7 @@ function describeAlignByButton(prompt: AlignButtonPrompt): LobbyInstruction {
   return {
     key: "align:button",
     title: "見え方を合わせてください",
-    body: `${ALIGN_TEXT}．くっきり見えたら，十字の下のボタンに手のひらを 1 秒かざしてください${debug}`,
+    body: `${ALIGN_TEXT}．くっきり見えたら，丸の下のボタンに手のひらを 1 秒かざしてください${debug}`,
     narration: `${ALIGN_NARRATION}．くっきり見えたら，ボタンに手をかざしてください`,
     progressLabel: null,
     remainingSeconds: null,
