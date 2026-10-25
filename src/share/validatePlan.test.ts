@@ -63,6 +63,16 @@ describe("validatePlan（正しい校舎）", () => {
         extraFires: [{ cell: at(14, 6), atSeconds: 12.5 }],
       }),
     ],
+    [
+      "煙の発生源（0 秒・小数の秒数）",
+      withSpread({
+        extraSmokes: [
+          { cell: at(6, 6), atSeconds: 0 },
+          { cell: at(3, 2), atSeconds: 7.5 },
+        ],
+      }),
+    ],
+    ["煙の発生源が空", withSpread({ extraSmokes: [] })],
     ["小数の制限時間", withDrill({ timeLimitSeconds: 0.1 })],
     ["使われていない教室がある", plan({ rooms: [...DEMO_SCHOOL.rooms, { name: "空き教室" }] })],
     [
@@ -126,6 +136,18 @@ describe("validatePlan（校舎全体の誤り）", () => {
     ["階が 1 つもない", plan({ floors: [] })],
   ])("%s は誤り", (_label, p) => {
     expect(validatePlan(p).length).toBeGreaterThan(0);
+  });
+
+  it("煙の発生源の誤りは，何番目の発生源かを理由に書く", () => {
+    const errors = validatePlan(
+      withSpread({
+        extraSmokes: [
+          { cell: at(6, 6), atSeconds: 0 },
+          { cell: at(6, 6), atSeconds: -5 },
+        ],
+      }),
+    );
+    expect(errors).toEqual(["煙の発生源 2 の煙が出始める時刻は 0 秒以上にしてください"]);
   });
 
   it("誤りの理由は空でない文字列", () => {
@@ -231,6 +253,17 @@ describe("validatePlan（訓練条件の誤り）", () => {
     [
       "追加の延焼箇所の時刻が NaN",
       withSpread({ extraFires: [{ cell: at(14, 6), atSeconds: Number.NaN }] }),
+    ],
+    ["煙の発生源がマス目の外", withSpread({ extraSmokes: [{ cell: at(19, 0), atSeconds: 10 }] })],
+    ["煙の発生源の階が無い", withSpread({ extraSmokes: [{ cell: at(0, 0, 1), atSeconds: 10 }] })],
+    ["煙の発生源の時刻が負", withSpread({ extraSmokes: [{ cell: at(6, 6), atSeconds: -1 }] })],
+    [
+      "煙の発生源の時刻が NaN",
+      withSpread({ extraSmokes: [{ cell: at(6, 6), atSeconds: Number.NaN }] }),
+    ],
+    [
+      "煙の発生源の時刻が Infinity",
+      withSpread({ extraSmokes: [{ cell: at(6, 6), atSeconds: Number.POSITIVE_INFINITY }] }),
     ],
     // 制限時間
     ["制限時間が 0", withDrill({ timeLimitSeconds: 0 })],
