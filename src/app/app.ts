@@ -20,6 +20,7 @@ import type { AcquiredDevices } from "../lobby/permissions";
 import { createStartScene } from "../lobby/startScene";
 import { TRAINING_BACKGROUND_CSS, TRAINING_BOX_CSS } from "../lobby/trainingTheme";
 import { createScreenWakeLock } from "../lobby/wakeLock";
+import { createHandMarkers } from "../scenes/common/handMarkers";
 import { createPlanFingerprintFromHash } from "../share/monitorIds";
 import { loadPlanFromHash } from "../share/planHash";
 import { DEMO_SCHOOL } from "../share/samples/demoSchool";
@@ -154,6 +155,7 @@ export function startApp(): void {
       }),
     lobby: () =>
       createLobbyScene({
+        createHandMarkers,
         debug,
         isPaused: () => orientationGuide.visible,
         // 見守り画面が同じロビーの板を描けるよう，板の内容が変わるたびに送る（送れなくてもロビーは変わらない）

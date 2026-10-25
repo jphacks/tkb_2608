@@ -45,7 +45,7 @@
 
 | 段階 | 内容 | 次へ進む条件 | 制限時間 |
 | --- | --- | --- | --- |
-| 開始ボタン | 目の前に 3D のボタンを出し，ゴーグルを付けて手のひらをかざすよう案内する．認識した手の位置に印を出す．待つ間はキャリブレーションの時間を数えず，センサーの値も捨てる．手が 10 秒続けて見つからない時は「手を目の前に出して，カメラに映るようにしてください」と案内し，15 秒ごとに読み直す（自動では始めない．`src/lobby/handPrompt.ts`） | 手のひらをボタンに 1 秒かざす（`startMode: "hand"`．input/ の `PlayerInput.hands`）．時間で始める方式（`"auto"`．15 秒）も設定で選べる | ― |
+| 開始ボタン | 目の前に 3D のボタンを出し，ゴーグルを付けて手のひらをかざすよう案内する．認識した手の位置に印を出す（校舎と共通の部品 `src/scenes/common/handMarkers.ts`．lobby/ は scenes/ を import しないため，app/ が `createLobbyScene` の `createHandMarkers` に渡す）．待つ間はキャリブレーションの時間を数えず，センサーの値も捨てる．手が 10 秒続けて見つからない時は「手を目の前に出して，カメラに映るようにしてください」と案内し，15 秒ごとに読み直す（自動では始めない．`src/lobby/handPrompt.ts`） | 手のひらをボタンに 1 秒かざす（`startMode: "hand"`．input/ の `PlayerInput.hands`）．時間で始める方式（`"auto"`．15 秒）も設定で選べる | ― |
 | 見え方の調整 | 左右それぞれの目の画面の中心に十字を出し，1 つに重なってくっきり見えるよう，スマホの位置やゴーグルのレンズの幅を合わせるよう案内する．値は作らない | 時間で進む | 15 秒 |
 | 導入 | これから行う手順を案内する | 時間で進む | 4 秒 |
 | 正面 | 正面を向いて止まる → `yawOffset` | 3 秒の間ずれが ±15° 以内 | 8 秒 |
@@ -206,6 +206,7 @@ relay/           #126 の担当: 見守りの中継（Cloudflare Worker と Dura
 - `sim/`・`share/` は `core/` だけを import する純粋な関数のライブラリで，どのモジュールからも import してよい（エディタのプレビューと VR が同じ計算を使うため）
 - `input/` は three.js のシーンを import しない（`PlayerInput` は素のデータ．`core/types.ts` の `Vec3`・`Quat` を使う）
 - `scenes/` はセンサー・カメラの API（`DeviceMotionEvent`・`getUserMedia` 等）に触れない．入力は `FrameInfo.input` だけから受け取る
+- 画面をまたいで使う 3D の部品（今は手の印 `scenes/common/handMarkers.ts`）は scenes/ に置き，他の画面を持つモジュールには app/ が作る関数を渡す（例: ロビーの `createHandMarkers`）．受け取る側は使う形だけを自分で型にする
 - `scenario/`・`sim/`・`share/` は three.js にもブラウザ API にも依存しない（純粋な TypeScript．`share/` の圧縮に使う `CompressionStream` と，見守りの ID・指紋を作る `crypto.getRandomValues`・`crypto.subtle.digest` だけは例外とし，テストは Node の同じ API で行う）
 - `core/` のうち three.js の型を使うのは `core/scene.ts` だけ（型だけの import なので実行時の依存は無い）．`input/`・`scenario/`・`sim/`・`share/` は `core/scene.ts` を import しない
 
