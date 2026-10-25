@@ -8,7 +8,7 @@ import { createEventBus } from "../core/event-bus";
 import type { AppEvent } from "../core/events";
 import type { Scene, SceneContext, SceneId, Session, Stage } from "../core/scene";
 import type { CalibrationProfile, Posture } from "../core/types";
-import { createDebriefScene } from "../debrief/debriefScene";
+import { createDebriefVrScene, isDebriefVrScene } from "../debrief/debriefVrScene";
 import { parseInputKind } from "../input/inputParam";
 import { createInputSource, type InputSource } from "../input/inputSource";
 import {
@@ -218,8 +218,16 @@ export function startApp(): void {
       drillScene = scene;
       return scene;
     },
+    // 結果画面は VR の中で見る（Issue #146）．手のボタンで「同じ訓練をもう一度」（そのままロビーへ）・「ホームへ」（外す案内を挟む）．
+    // 実機ではゴーグルを外して画面をタップすると HTML の結果画面に切り替わり（stereo() が false），その後の行き先には
+    // ゴーグルを外している前提で案内を挟む（下の goggleSwitchBetween に currentStereo() を渡す）
     debrief: () =>
-      createDebriefScene({
+      createDebriefVrScene({
+        createHandButton,
+        createHandMarkers,
+        handsUsable,
+        // mock はマウスで手を動かすため，タップで切り替えると手を動かしただけで切り替わってしまう
+        allowTap: inputKind === "device",
         theme: { backgroundCss: TRAINING_BACKGROUND_CSS, boxCss: TRAINING_BOX_CSS },
       }),
   };
@@ -391,9 +399,11 @@ export function startApp(): void {
       await next.enter(ctx);
       current = next;
       currentIsGuide = guideScene !== null;
-      // 案内は案内の側が決める（外す案内は 2 画面，付ける案内は読む間 1 画面でゴーグルに入れた後 2 画面）
+      // 案内は案内の側が決める（外す案内は 2 画面，付ける案内は読む間 1 画面でゴーグルに入れた後 2 画面）．
+      // 結果画面も画面の側が決める（スマホの画面に切り替えると 1 画面）
       const stereoScene = GOGGLE_SCENES.has(id);
-      currentStereo = guideScene === null ? () => stereoScene : () => guideScene.stereo();
+      const ownStereo = guideScene ?? (isDebriefVrScene(next) ? next : null);
+      currentStereo = ownStereo === null ? () => stereoScene : () => ownStereo.stereo();
       // 画面に入り終えてから知らせる（避難の画面の開始地点にカメラが置かれてから状態を送り始めるため）．
       // 案内の画面では知らせず，案内の後に本来の画面へ入った時に知らせる
       const phase = guide === null ? monitorPhaseOfScene(id) : null;
@@ -464,7 +474,7 @@ export function startApp(): void {
       // ゴーグルを付けて見る画面と外して見る画面の間では，付け外しの案内を挟む（案内からの切り替えには挟まない）
       const guide = currentIsGuide
         ? null
-        : (forcedGuide ?? goggleSwitchBetween(current?.id ?? null, id));
+        : (forcedGuide ?? goggleSwitchBetween(current?.id ?? null, id, currentStereo()));
       forcedGuide = null;
       void switchTo(id, guide);
     }

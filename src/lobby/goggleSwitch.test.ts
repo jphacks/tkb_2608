@@ -8,6 +8,10 @@ import {
   advanceNoHandSeconds,
   DEFAULT_GOGGLE_SWITCH_CONFIG,
   GOGGLE_HAND_PROMPT,
+  GOGGLE_OFF_BUTTON_LABEL,
+  GOGGLE_OFF_HOME_BUTTON_LABEL,
+  goggleOffButtonLabel,
+  goggleOffNarrates,
   goggleOffPanel,
   goggleOnCaption,
   goggleOnConfirmPanel,
@@ -25,13 +29,14 @@ import {
 
 describe("goggleSwitchBetween", () => {
   it.each<[SceneId | null, SceneId, ReturnType<typeof goggleSwitchBetween>]>([
-    ["scenario", "debrief", "takeOff"],
+    // 結果画面は VR の中で見る（Issue #146）ので，避難 → 結果・結果 → ロビーには挟まず，結果 → ホームで外す
+    ["scenario", "debrief", null],
+    ["debrief", "lobby", null],
+    ["debrief", "home", "takeOff"],
     ["lobby", "home", "takeOff"],
-    ["debrief", "lobby", "putOn"],
     ["home", "lobby", "putOn"],
     ["home", "scenario", "putOn"],
     ["lobby", "scenario", null],
-    ["debrief", "home", null],
     ["start", "home", null],
     ["start", "lobby", null],
     ["home", "start", null],
@@ -151,7 +156,49 @@ describe("付ける案内の秒数", () => {
   });
 });
 
+describe("goggleSwitchBetween の fromGoggles", () => {
+  it.each<[SceneId, SceneId, boolean, ReturnType<typeof goggleSwitchBetween>]>([
+    // 結果画面をスマホの画面（HTML）に切り替えた後は，ゴーグルを外している
+    ["debrief", "lobby", false, "putOn"],
+    ["debrief", "home", false, null],
+    // 左右 2 画面のまま
+    ["debrief", "lobby", true, null],
+    ["debrief", "home", true, "takeOff"],
+  ])("%s → %s（ゴーグル %s）は %s", (from, to, fromGoggles, expected) => {
+    expect(goggleSwitchBetween(from, to, fromGoggles)).toBe(expected);
+  });
+
+  it("start からは渡しても挟まない", () => {
+    expect(goggleSwitchBetween("start", "lobby", false)).toBeNull();
+    expect(goggleSwitchBetween(null, "lobby", false)).toBeNull();
+  });
+});
+
+describe("goggleOffButtonLabel・goggleOffNarrates", () => {
+  it("ホームへ進む時は結果画面の文を使わず，ナレーションも流さない", () => {
+    expect(goggleOffButtonLabel("home")).toBe(GOGGLE_OFF_HOME_BUTTON_LABEL);
+    expect(goggleOffNarrates("home")).toBe(false);
+  });
+
+  it("結果画面へ進む時は「結果を見る」とナレーション", () => {
+    expect(goggleOffButtonLabel("debrief")).toBe(GOGGLE_OFF_BUTTON_LABEL);
+    expect(goggleOffNarrates("debrief")).toBe(true);
+  });
+});
+
 describe("goggleOffPanel", () => {
+  it("ホームへ進む時はホームに戻ると伝える", () => {
+    const panel = goggleOffPanel(true, false, "home");
+    expect(panel.title).toContain("ホーム");
+    expect(panel.body).toContain("ボタン");
+    expect(panel.caption).toContain("タップ");
+    expect(goggleOffPanel(true, true, "home").caption).toBe(GOGGLE_HAND_PROMPT);
+    const noHands = goggleOffPanel(false, false, "home");
+    expect(noHands.body).not.toContain("ボタン");
+    expect(noHands.caption).toContain("ホーム");
+    expect(`${panel.title}${panel.body}`).not.toContain("結果");
+  });
+
   it("手が使える時はボタンをかざすよう案内し，タップでも進めると添える", () => {
     const panel = goggleOffPanel(true);
     expect(panel.body).toContain("ボタン");
