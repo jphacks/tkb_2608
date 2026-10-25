@@ -160,6 +160,8 @@ export function startApp(): void {
         isPaused: () => orientationGuide.visible,
         // 見守り画面が同じロビーの板を描けるよう，板の内容が変わるたびに送る（送れなくてもロビーは変わらない）
         onPanelView: (view) => monitor.notifyLobby(view),
+        // 見守り画面が PC の読み上げで同じ文を読めるよう，読み上げた文を送る
+        onNarrate: (text, rate) => monitor.notifySpeech(text, rate),
       }),
     scenario: () => createScenarioPlaceholder({ debug, isPaused: () => orientationGuide.visible }),
     debrief: () =>
@@ -237,6 +239,9 @@ export function startApp(): void {
     },
   };
 
+  // 見守り画面が同じ効果音・ナレーションを鳴らせるよう，バスに流れた Cue をそのまま送る（audio/ の購読とは別．送れなくても音は変わらない）
+  ctx.bus.on("cue", (event) => monitor.notifyCue(event.cue));
+
   const switchTo = async (id: SceneId): Promise<void> => {
     switching = true;
     try {
@@ -244,6 +249,8 @@ export function startApp(): void {
       current = null;
       // 前の画面の音は次の画面へ持ち越さない（購読は続けるので，次の画面の enter で流した cue は鳴る）
       drillAudio?.stopAll();
+      // 見守り画面でも前の画面の音と読み上げを止める
+      monitor.notifyAudioStop();
       // 中継へは許可を取った後（ホームに入る時）につなぐ．つながるのを待たない
       if (id === "home") monitor.start();
       if (id === "scenario") drillStartMs = performance.now();

@@ -65,7 +65,7 @@ import {
   SILENT_NARRATION,
   startNarrationTrack,
 } from "./narrationPacing";
-import { narrate, stopNarration } from "./narrator";
+import { NARRATION_RATE, narrate, stopNarration } from "./narrator";
 import { angleDifference, yawOfQuat } from "./orientation";
 import { approachHighlight, isGazingAtPanel } from "./panelGaze";
 import { createSensorFeed, type SensorFeed } from "./sensorFeed";
@@ -129,6 +129,11 @@ export interface LobbySceneOptions {
    * 読み取るだけで，ロビーの進み方には影響しない
    */
   readonly onPanelView?: (view: LobbyPanelView) => void;
+  /**
+   * 指示の文を読み上げ始めた時に，その文と速さ（SpeechSynthesisUtterance.rate）を渡して呼ぶ（省略可．app/ が見守りの中継へ送る）．
+   * 読み上げを始められなかった時は呼ばない．読み取るだけで，ロビーの進み方には影響しない
+   */
+  readonly onNarrate?: (text: string, rate: number) => void;
 }
 
 /** 指示の板が頭の向きに追いつく速さ（1/秒）．見回した時に一瞬遅れて追いつく様子が分かるよう緩めにする */
@@ -210,6 +215,9 @@ export function createLobbyScene(options: LobbySceneOptions): Scene {
         narrate(instruction.narration, () => {
           if (active === a) a.narration = markNarrationEnded(a.narration, id);
         });
+      if (spoken && instruction.narration !== null) {
+        options.onNarrate?.(instruction.narration, NARRATION_RATE);
+      }
       a.narration = startNarrationTrack(id, instruction.narration, spoken, pacingConfig);
     }
   };
