@@ -38,6 +38,7 @@ import { loadPlanFromHash } from "../share/planHash";
 import { DEMO_PITCH_SCHOOL } from "../share/samples/demoPitchSchool";
 import { DEMO_SCHOOL } from "../share/samples/demoSchool";
 import { createDrillScene, type DrillScene } from "./drillScene";
+import { createHomeHandStart } from "./homeHandStart";
 import { resolveDebug, resolveDemo, resolveStereo } from "./launchMode";
 import {
   type AppliedLobbyParams,
@@ -189,6 +190,12 @@ export function startApp(): void {
         audioContext,
         volumeCheckAlarm,
         wakeLock,
+        // 「スタート」を手をかざしても押せるようにする（手を認識できない時はタッチだけ．Issue #147）
+        handStart: createHomeHandStart({
+          kind: inputKind,
+          handsUsable: () => handsUsable(),
+          isPaused: () => orientationGuide.visible,
+        }),
       }),
     lobby: () =>
       createLobbyScene({

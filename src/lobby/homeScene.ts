@@ -2,9 +2,16 @@
 // タイトルと「スタート」「設定」を置き，ゴーグル装着の案内を出してロビーへ進む．
 // 「設定」では音量・画面の明るさ・画面の消灯を確かめる（ホームの中の表示の切り替え．画面（SceneId）は増やさない）．
 // 設定を一度も開いていない時に「スタート」を押すと，音量や明るさを確かめたかを聞く．
+// 「スタート」は，カメラで手を認識できる時は手をかざしても押せる（Issue #147．タッチでも押せるまま）．
 // 今後ここにシナリオの選択・遊び方の説明を足すため，表示する項目は sections で増やせるようにする
 
-import type { Scene, SceneContext } from "../core/scene";
+import type { FrameInfo, Scene, SceneContext } from "../core/scene";
+import {
+  type HomeHandPress,
+  type HomeHandStart,
+  handScreenPoints,
+  isAnyPointInRect,
+} from "./homeHandStart";
 import { createHomeMemory, type HomeMemory, shouldConfirmStart } from "./homeSettings";
 import {
   createHomeSettingsPanel,
@@ -36,6 +43,8 @@ export interface HomeSceneOptions {
   readonly volumeCheckAlarm?: VolumeCheckAlarm | null;
   /** 画面の消灯を止める処理．「スタート」「設定」のタップの中で request を呼ぶ */
   readonly wakeLock?: ScreenWakeLock | null;
+  /** 「スタート」を手で押す仕組み（app/ が渡す．無ければタッチだけで押す） */
+  readonly handStart?: HomeHandStart | null;
 }
 
 /** ホームのタイトルの既定値（名前は仮） */
@@ -43,6 +52,13 @@ export const DEFAULT_HOME_TITLE = "防災シミュレータ（仮）";
 
 /** 設定を開いていない時に「スタート」を押すと出す問い */
 export const HOME_START_CONFIRM = "音量や画面の明るさは大丈夫ですか？";
+
+/** 手で「スタート」を押せる時に出す案内 */
+export const HOME_HAND_START_HINT =
+  "スマホの後ろに手をかざし，画面の丸を「スタート」に重ねたまま 1 秒待っても押せます";
+
+/** 手の印が「スタート」に重なっているとみなす，ボタンの周りの余白（px）．手の位置は揺れるため少し広げる */
+export const HOME_HAND_START_MARGIN_PX = 16;
 
 /** 「スタート」の前後に出す，ゴーグル装着の案内 */
 export const HOME_GOGGLE_GUIDE: readonly string[] = [
@@ -71,6 +87,19 @@ const STYLE = `
 .lobby-home button:disabled { opacity: 0.5; }
 .lobby-home__actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 16px; }
 .lobby-home__confirm p { font-size: 1.2rem; margin: 0 0 8px; }
+.lobby-home button.lobby-home__start {
+  background: linear-gradient(to right, #ffd27a calc(var(--hand-progress, 0) * 100%), #ff8a3d 0);
+}
+.lobby-home__hand-hint { margin: 0 0 8px; color: #ffd27a; }
+.lobby-home__hand {
+  position: fixed; left: 0; top: 0; width: 44px; height: 44px; margin: -22px 0 0 -22px;
+  border: 4px solid #f2f4f8; border-radius: 50%; background: rgba(255, 210, 122, 0.35);
+  box-shadow: 0 0 12px rgba(0, 0, 0, 0.5); pointer-events: none; z-index: 2;
+}
+.lobby-home__hand.is-over { border-color: #ffd27a; background: rgba(255, 210, 122, 0.7); }
+.lobby-home.is-pointer-through, .lobby-home.is-pointer-through .lobby-home__box { pointer-events: none; }
+.lobby-home.is-pointer-through button { pointer-events: auto; }
+.lobby-home.is-pointer-through button.lobby-home__start { pointer-events: none; }
 ${HOME_SETTINGS_STYLE}
 `;
 
@@ -81,6 +110,8 @@ export function createHomeScene(options: HomeSceneOptions = {}): Scene {
   let root: HTMLDivElement | null = null;
   let style: HTMLStyleElement | null = null;
   let disposers: (() => void)[] = [];
+  // 手で押す「スタート」の毎フレームの処理（手で押せない時は null）
+  let handFrame: ((frame: FrameInfo) => void) | null = null;
 
   return {
     id: "home",
@@ -114,6 +145,15 @@ export function createHomeScene(options: HomeSceneOptions = {}): Scene {
       }
       box.appendChild(guide);
 
+      const handStart = options.handStart ?? null;
+      const handsUsable = handStart?.handsUsable() ?? false;
+      if (handsUsable) {
+        const hint = document.createElement("p");
+        hint.className = "lobby-home__hand-hint";
+        hint.textContent = HOME_HAND_START_HINT;
+        box.appendChild(hint);
+      }
+
       // ゴーグル装着前の操作なのでタップで進める．ゴーグルを着ける時間はロビーの開始ボタンで取る
       const buttons: HTMLButtonElement[] = [];
       const button = (text: string, secondary: boolean, onClick: () => void): HTMLButtonElement => {
@@ -125,7 +165,9 @@ export function createHomeScene(options: HomeSceneOptions = {}): Scene {
         buttons.push(b);
         return b;
       };
+      let leaving = false;
       const goLobby = (): void => {
+        leaving = true;
         for (const b of buttons) b.disabled = true;
         ctx.goTo("lobby");
       };
@@ -153,6 +195,8 @@ export function createHomeScene(options: HomeSceneOptions = {}): Scene {
         confirm.hidden = view !== "confirm";
         settings.element.hidden = view !== "settings";
         root?.scrollTo(0, 0);
+        // 最初の表示に戻るたびに数え直す（設定から戻った手でそのまま押さないため）
+        if (view === "main") resetHandPress();
       };
       const openSettings = (): void => {
         memory.settingsVisited = true;
@@ -163,16 +207,63 @@ export function createHomeScene(options: HomeSceneOptions = {}): Scene {
 
       const mainActions = document.createElement("div");
       mainActions.className = "lobby-home__actions";
-      mainActions.append(
-        button("スタート", false, () => {
-          // 体験の間に画面が消えないよう，タップの処理の中で頼む
-          options.wakeLock?.request();
-          if (shouldConfirmStart(memory)) showView("confirm");
-          else goLobby();
-        }),
-        button("設定", true, openSettings),
-      );
+      const start = (): void => {
+        // 体験の間に画面が消えないよう，タップの処理の中で頼む（手で押した時はタップの外なので，
+        // 取れない端末では開始画面のタップで取ったものに頼る）
+        options.wakeLock?.request();
+        if (shouldConfirmStart(memory)) showView("confirm");
+        else goLobby();
+      };
+      const startButton = button("スタート", false, start);
+      startButton.classList.add("lobby-home__start");
+      mainActions.append(startButton, button("設定", true, openSettings));
       main.appendChild(mainActions);
+
+      // 手で押す「スタート」（手を認識できる時だけ．タッチで押せるのは変わらない）
+      let press: HomeHandPress | null = null;
+      const resetHandPress = (): void => {
+        press = handStart !== null && handsUsable ? handStart.createPress() : null;
+        startButton.style.setProperty("--hand-progress", "0");
+      };
+      if (handStart !== null && handsUsable) {
+        if (handStart.pointerThrough === true) root.classList.add("is-pointer-through");
+        const marks = {
+          left: document.createElement("div"),
+          right: document.createElement("div"),
+        };
+        for (const mark of [marks.left, marks.right]) {
+          mark.className = "lobby-home__hand";
+          mark.hidden = true;
+          root.appendChild(mark);
+        }
+        handFrame = ({ dt, input }) => {
+          const width = window.innerWidth;
+          const height = window.innerHeight;
+          const points = handScreenPoints(input.hands, handStart.view, width, height);
+          // 押せるのは最初の表示（確認の問い・設定を出している間は押さない）
+          const active = !leaving && !main.hidden && !(handStart.isPaused?.() ?? false);
+          const over =
+            active &&
+            isAnyPointInRect(
+              points,
+              startButton.getBoundingClientRect(),
+              HOME_HAND_START_MARGIN_PX,
+            );
+          for (const side of ["left", "right"] as const) {
+            const point = points[side];
+            const mark = marks[side];
+            mark.hidden = !active || point === null;
+            if (point === null) continue;
+            mark.style.transform = `translate(${point.x}px, ${point.y}px)`;
+            mark.classList.toggle("is-over", over);
+          }
+          if (!active || press === null) return;
+          const pressed = press.advance(dt, over);
+          startButton.style.setProperty("--hand-progress", String(press.progress));
+          if (pressed) start();
+        };
+      }
+      resetHandPress();
 
       const question = document.createElement("p");
       question.textContent = HOME_START_CONFIRM;
@@ -191,11 +282,13 @@ export function createHomeScene(options: HomeSceneOptions = {}): Scene {
       ctx.stage.overlay.appendChild(root);
     },
 
-    update() {
-      // HTML の画面なので毎フレームの処理は無い
+    update(frame: FrameInfo) {
+      // 手で押す「スタート」の判定だけを毎フレーム行う（手で押せない時は何もしない）
+      handFrame?.(frame);
     },
 
     exit() {
+      handFrame = null;
       for (const dispose of disposers) dispose();
       disposers = [];
       root?.remove();
