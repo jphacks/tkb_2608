@@ -9,7 +9,7 @@
 | パス | 内容 |
 | --- | --- |
 | `src/main.ts` | URL パラメータで空間を選び，開始位置から一人称で描画する．確認用の仮の入力（ドラッグで視点・画面のボタンで歩く／しゃがむ／ドア）を `SpaceWalker` につなぎ，エリアの出入りをイベントバスに流す（`app/` ができるまでの暫定）．`?input=mock\|device` を付けた時は，ボタン・ドラッグの代わりに担当D の入力（`createInputSource()` の `PlayerInput`）を同じ `SpaceWalker` に渡す（どちらも当たり判定あり．rig・walker・確認用のドアの組み立ては `setupWalk()` で共通） |
-| `src/inputPreview.ts` | `?input=` を付けた時の入力の確認用の殻．`InputSource`（`src/input/inputSource.ts`）から `PlayerInput` を読み（`read()`），画面の左上に `PlayerInput` の中身と歩行の状態（位置・目の高さ・エリア・直前の出入り・近くのドア）を出す（`show()`）．`device` ではタップでセンサーの許可を取り，E キーで近くのドアを開閉する（確認用）．カメラ・移動には触れない |
+| `src/inputPreview.ts` | `?input=` を付けた時の入力の確認用の殻．`InputSource`（`src/input/inputSource.ts`）から `PlayerInput` を読み（`read()`），画面の左上に `PlayerInput` の中身と歩行の状態（位置・目の高さ・エリア・直前の出入り・近くのドア）を出す（`show()`）．`device` ではタップでセンサーとカメラの許可を取り（タップは描画の canvas に付けた click で受け取る．iOS の Safari は click の処理が無い要素へのタップを `window` まで届けないため），E キーで近くのドアを開閉する（確認用）．カメラ・移動には触れない |
 | `src/scenes/types.ts` | 空間の共通インターフェース（`Space`・`SpaceFactory`・`SpaceBuildOptions`） |
 | `src/scenes/index.ts` | 実装済みの空間の一覧（`SPACE_FACTORIES`・`AVAILABLE_SPACE_IDS`）と `createSpace()` |
 | `src/scenes/spaceParam.ts` | `?scene=` の解釈（`SpaceId`・`parseSpaceId()`・`resolveSpaceId()`） |
