@@ -6,6 +6,7 @@ import { DEMO_SCHOOL, DEMO_SCHOOL_ROWS } from "../share/samples/demoSchool";
 import { createFloorFromRows } from "../share/samples/floorFromRows";
 import { wallBetween } from "../sim/walls";
 import {
+  assemblyZones,
   canvasToCell,
   computeGridLayout,
   drillMarkers,
@@ -314,5 +315,81 @@ describe("drillMarkers", () => {
     expect(m.fireOrigins).toHaveLength(DEMO_SCHOOL.drill.fireOrigins.length);
     expect(m.start).toEqual({ x: DEMO_SCHOOL.drill.start.x, z: DEMO_SCHOOL.drill.start.z });
     expect(m.assembly).toHaveLength(DEMO_SCHOOL.drill.assembly.length);
+  });
+});
+
+describe("assemblyZones", () => {
+  const c = (x: number, z: number) => ({ x, z });
+  /** 辺を向きによらず比べられる文字列にする（並び順も問わない） */
+  const edgeSet = (edges: readonly GridEdge[]) =>
+    edges
+      .map((e) => {
+        const [a, b] = [`${e.x1},${e.z1}`, `${e.x2},${e.z2}`].sort();
+        return `${a}-${b}`;
+      })
+      .sort();
+
+  it("空なら何も無い", () => {
+    expect(assemblyZones([])).toEqual([]);
+  });
+
+  it("1 マスは 4 辺の枠と，そのマスの旗", () => {
+    const [zone, ...rest] = assemblyZones([c(2, 1)]);
+    expect(rest).toEqual([]);
+    expect(zone.cells).toEqual([c(2, 1)]);
+    expect(zone.flag).toEqual(c(2, 1));
+    expect(edgeSet(zone.edges)).toEqual(
+      edgeSet([
+        { x1: 2, z1: 1, x2: 3, z2: 1 },
+        { x1: 2, z1: 2, x2: 3, z2: 2 },
+        { x1: 2, z1: 1, x2: 2, z2: 2 },
+        { x1: 3, z1: 1, x2: 3, z2: 2 },
+      ]),
+    );
+  });
+
+  it("つながった矩形は 1 つのまとまりで，内側の辺を含まない外周だけを持つ", () => {
+    // 3 × 2 マスの矩形（順不同で渡す）
+    const cells = [c(3, 3), c(1, 2), c(2, 3), c(3, 2), c(1, 3), c(2, 2)];
+    const zones = assemblyZones(cells);
+    expect(zones).toHaveLength(1);
+    const [zone] = zones;
+    expect(zone.cells).toEqual([c(1, 2), c(2, 2), c(3, 2), c(1, 3), c(2, 3), c(3, 3)]);
+    expect(zone.flag).toEqual(c(1, 2));
+    // 外周の長さ = 2 × (3 + 2) = 10 辺
+    expect(zone.edges).toHaveLength(10);
+    // 内側の辺（(2, 2) と (2, 3) の間など）は含まない
+    expect(edgeSet(zone.edges)).not.toContain("2,3-3,3");
+    for (const e of zone.edges) {
+      const onBorder = e.x1 === e.x2 ? e.x1 === 1 || e.x1 === 4 : e.z1 === 2 || e.z1 === 4;
+      expect(onBorder).toBe(true);
+    }
+  });
+
+  it("離れたマス・斜めにだけ接するマスは別のまとまり（旗の位置が上・左の順）", () => {
+    const zones = assemblyZones([c(5, 0), c(1, 1), c(0, 0), c(6, 0)]);
+    expect(zones.map((z) => z.flag)).toEqual([c(0, 0), c(5, 0), c(1, 1)]);
+    expect(zones.map((z) => z.cells.length)).toEqual([1, 2, 1]);
+  });
+
+  it("L 字のまとまりの旗は最も上の行の最も左のマス", () => {
+    const zones = assemblyZones([c(0, 1), c(1, 1), c(2, 1), c(2, 0)]);
+    expect(zones).toHaveLength(1);
+    expect(zones[0].flag).toEqual(c(2, 0));
+    // 外周は 10 辺（4 マス × 4 辺 − 内側の 3 辺 × 2）
+    expect(zones[0].edges).toHaveLength(10);
+  });
+
+  it("穴のあるまとまりは穴の縁も辺に含む", () => {
+    const ring = [c(0, 0), c(1, 0), c(2, 0), c(0, 1), c(2, 1), c(0, 2), c(1, 2), c(2, 2)];
+    const [zone] = assemblyZones(ring);
+    // 外側 12 辺 + 穴の 4 辺
+    expect(zone.edges).toHaveLength(16);
+  });
+
+  it("同じマスが重なって入っていても 1 つとして数える", () => {
+    const [zone] = assemblyZones([c(1, 1), c(1, 1)]);
+    expect(zone.cells).toEqual([c(1, 1)]);
+    expect(zone.edges).toHaveLength(4);
   });
 });
