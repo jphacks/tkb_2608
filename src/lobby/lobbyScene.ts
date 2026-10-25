@@ -101,8 +101,16 @@ export interface LobbyPanelView {
 export interface LobbyHandMarkers {
   /** rig に足す（目の位置が原点） */
   readonly object: Object3D;
-  /** 認識している手の位置に印を出す（hands の position は頭の座標系）．visible が false なら隠す */
-  update(head: Quat, hands: Readonly<Record<Handedness, HandState>>, visible: boolean): void;
+  /**
+   * 認識している手の位置に印を出す（hands の position は頭の座標系）．visible が false なら隠す．
+   * dt（前のフレームからの秒数）は手の形の補間・見失った時のフェードに使う
+   */
+  update(
+    head: Quat,
+    hands: Readonly<Record<Handedness, HandState>>,
+    visible: boolean,
+    dt?: number,
+  ): void;
   dispose(): void;
 }
 
@@ -253,7 +261,7 @@ export function createLobbyScene(options: LobbySceneOptions): Scene {
     const handPrompt =
       gateConfig.startMode === "hand" ? handPromptIndex(a.handSearch, handPromptConfig) : null;
     if (a.gate.startedBy === null) {
-      a.handMarkers.update(frame.input.head, frame.input.hands, true);
+      a.handMarkers.update(frame.input.head, frame.input.hands, true, frame.dt);
       show(
         a,
         describeStartGate(
@@ -266,7 +274,7 @@ export function createLobbyScene(options: LobbySceneOptions): Scene {
       return false;
     }
     a.button.object.visible = false;
-    a.handMarkers.update(frame.input.head, frame.input.hands, false);
+    a.handMarkers.update(frame.input.head, frame.input.hands, false, frame.dt);
     return true;
   };
 

@@ -86,8 +86,8 @@ export interface HandReading {
   /** 人差し指の先（頭の座標系．m） */
   readonly indexTip: Vec3;
   /**
-   * 21 点（頭の座標系．m．番号は LM と同じ）．手のひらの中心からのずれをフィルタし，position に足したもの
-   * （認識の合間は手のひらの外挿に合わせて全体が動く）．まだ一度も認識していなければ null
+   * 描く用の 21 点（頭の座標系．m．番号は LM と同じ）．固定の奥行き（HandParams の skeletonDepthM）に置いた最後の認識の値で，
+   * フィルタ・外挿はしない（position・indexTip とは奥行きが違う）．まだ一度も認識していなければ null
    */
   readonly landmarks: readonly Vec3[] | null;
   /** 握り具合（0〜1．握った状態の間は gripOn 以上，開いた状態の間は gripOff 以下） */

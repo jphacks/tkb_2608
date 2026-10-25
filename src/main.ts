@@ -165,7 +165,7 @@ function stepAndApply(
   const { head } = input;
   camera.quaternion.set(head.x, head.y, head.z, head.w);
   // 見失った手（tracked が false）は隠す．?input=mock ではマウスが右手になる
-  walk.handMarkers.update(head, input.hands, true);
+  walk.handMarkers.update(head, input.hands, true, dt);
   walk.updateSpace(dt, input.posture);
 }
 

@@ -14,6 +14,8 @@ export const TEST_HAND_PARAMS: HandParams = {
   cameraOffsetXM: 0,
   cameraOffsetYM: 0,
   cameraOffsetZM: -0.08,
+  skeletonDepthM: 1.2,
+  skeletonDepthScale: 1.5,
 
   oneEuroMinCutoffHz: 1.0,
   oneEuroBeta: 1.5,
@@ -25,6 +27,7 @@ export const TEST_HAND_PARAMS: HandParams = {
   trackAppearCount: 2,
   trackLostMs: 300,
   gripHoldMs: 800,
+  skeletonHoldMs: 120,
 
   fingerOpenRatio: 1.6,
   fingerClosedRatio: 0.8,
@@ -35,6 +38,8 @@ export const TEST_HAND_PARAMS: HandParams = {
   pointIndexMaxCurl: 0.35,
   pointOthersMinCurl: 0.55,
   pointConfirmCount: 2,
+
+  recognizeWidthPx: 640,
 
   rateLevelsHz: [15, 10, 7],
   rateDownFps: 30,

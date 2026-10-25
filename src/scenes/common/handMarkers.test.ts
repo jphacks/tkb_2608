@@ -5,8 +5,10 @@ import {
   createHandMarkers,
   HAND_BONES,
   HAND_COLORS,
+  HAND_FADE_SEC,
   HAND_JOINT_COUNT,
   HAND_MARKER_RADIUS,
+  HAND_SMOOTHING_SEC,
   isDrawableLandmarks,
 } from "./handMarkers";
 
@@ -93,7 +95,7 @@ describe("isDrawableLandmarks", () => {
 });
 
 describe("createHandMarkers", () => {
-  it("左右それぞれ関節 21 個・骨 21 本・手のひらの球を持ち，形は共有し，色は左右で分け，最初は隠れている", () => {
+  it("左右それぞれ関節 21 個・骨 21 本・手のひらの球を持ち，形は共有し，見た目は左右で分けて色は同じ，最初は隠れている", () => {
     const markers = createHandMarkers();
     const left = view(markers.object, "left");
     const right = view(markers.object, "right");
@@ -111,7 +113,12 @@ describe("createHandMarkers", () => {
     expect(lm).not.toBe(rm);
     expect(lm.color.getHex()).toBe(HAND_COLORS.left);
     expect(rm.color.getHex()).toBe(HAND_COLORS.right);
-    expect(HAND_COLORS.left).not.toBe(HAND_COLORS.right);
+    // 左右の振り分けが入れ替わっても色が変わらないよう，左右とも同じ青
+    expect(HAND_COLORS.left).toBe(0x9cc8ff);
+    expect(HAND_COLORS.right).toBe(0x9cc8ff);
+    // 見失った時の濃さを片手ずつ変えるため半透明の扱い
+    expect(lm.transparent).toBe(true);
+    expect(rm.transparent).toBe(true);
     expect(left.bones.material).toBe(lm);
     expect(left.palm.material).toBe(lm);
     expect(left.group.visible).toBe(false);
@@ -196,7 +203,15 @@ describe("createHandMarkers", () => {
     expect(p.x).toBeCloseTo(-0.5);
     expect(p.y).toBeCloseTo(0);
     expect(p.z).toBeCloseTo(0);
-    markers.update(head, hands(hand({ position })), true);
+    markers.dispose();
+  });
+
+  it("頭の向きで手のひらの球も rig の座標に直す", () => {
+    const markers = createHandMarkers();
+    const left = view(markers.object, "left");
+    const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2);
+    const head: Quat = { x: q.x, y: q.y, z: q.z, w: q.w };
+    markers.update(head, hands(hand({ position: { x: 0, y: 0, z: -0.5 } })), true);
     markers.object.updateMatrixWorld(true);
     const palm = left.palm.getWorldPosition(new THREE.Vector3());
     expect(palm.x).toBeCloseTo(-0.5);
@@ -263,5 +278,229 @@ describe("createHandMarkers", () => {
     ].map((o) => vi.spyOn(o, "dispose"));
     markers.dispose();
     for (const s of spies) expect(s).toHaveBeenCalledTimes(1);
+  });
+});
+
+/** 関節の見た目の濃さ */
+function opacity(v: View): number {
+  return (v.joints.material as THREE.MeshBasicMaterial).opacity;
+}
+
+/** 21 点をすべて p に置いた手 */
+function handAtPoint(p: Vec3): HandState {
+  return hand({ position: p, landmarks: Array.from({ length: HAND_JOINT_COUNT }, () => p) });
+}
+
+describe("createHandMarkers（補間とフェード）", () => {
+  it("仕様の値: 寄せる時定数 0.05 秒・薄くして消すまで 0.15 秒", () => {
+    expect(HAND_SMOOTHING_SEC).toBe(0.05);
+    expect(HAND_FADE_SEC).toBe(0.15);
+  });
+
+  it("現れた直後（dt あり）は補間せず目標にそのまま置く", () => {
+    const markers = createHandMarkers();
+    const right = view(markers.object, "right");
+    const p = { x: 0.2, y: -0.1, z: -1.2 };
+    markers.update(FRONT, hands(UNTRACKED_HAND, handAtPoint(p)), true, 0.016);
+    const j = jointInRig(markers, right, 5);
+    expect(j.x).toBeCloseTo(0.2, 6);
+    expect(j.y).toBeCloseTo(-0.1, 6);
+    expect(j.z).toBeCloseTo(-1.2, 6);
+    expect(opacity(right)).toBe(1);
+    markers.dispose();
+  });
+
+  it.each([0.016, 0.05, 0.1])(
+    "dt = %s 秒の時，21 点を目標へ k = 1 - exp(-dt / 0.05) だけ寄せる",
+    (dt) => {
+      const markers = createHandMarkers();
+      const right = view(markers.object, "right");
+      markers.update(FRONT, hands(UNTRACKED_HAND, handAtPoint({ x: 0, y: 0, z: -1 })), true, dt);
+      markers.update(
+        FRONT,
+        hands(UNTRACKED_HAND, handAtPoint({ x: 0.1, y: 0.2, z: -1.3 })),
+        true,
+        dt,
+      );
+      const k = 1 - Math.exp(-dt / HAND_SMOOTHING_SEC);
+      for (const i of [0, 8, 20]) {
+        const j = jointInRig(markers, right, i);
+        expect(j.x).toBeCloseTo(0.1 * k, 6);
+        expect(j.y).toBeCloseTo(0.2 * k, 6);
+        expect(j.z).toBeCloseTo(-1 - 0.3 * k, 6);
+      }
+      markers.dispose();
+    },
+  );
+
+  it("dt = 0 なら動かさない", () => {
+    const markers = createHandMarkers();
+    const right = view(markers.object, "right");
+    markers.update(FRONT, hands(UNTRACKED_HAND, handAtPoint({ x: 0, y: 0, z: -1 })), true, 0.016);
+    markers.update(FRONT, hands(UNTRACKED_HAND, handAtPoint({ x: 0.5, y: 0, z: -1 })), true, 0);
+    expect(jointInRig(markers, right, 0).x).toBeCloseTo(0, 6);
+    markers.dispose();
+  });
+
+  it("同じ目標を描き続けると目標に近づいていく", () => {
+    const markers = createHandMarkers();
+    const right = view(markers.object, "right");
+    markers.update(FRONT, hands(UNTRACKED_HAND, handAtPoint({ x: 0, y: 0, z: -1 })), true, 0.016);
+    const target = handAtPoint({ x: 0.3, y: 0, z: -1 });
+    let prev = 0;
+    for (let i = 0; i < 30; i++) {
+      markers.update(FRONT, hands(UNTRACKED_HAND, target), true, 0.016);
+      const x = jointInRig(markers, right, 0).x;
+      expect(x).toBeGreaterThan(prev);
+      expect(x).toBeLessThanOrEqual(0.3 + 1e-12);
+      prev = x;
+    }
+    expect(prev).toBeCloseTo(0.3, 3);
+    markers.dispose();
+  });
+
+  it("dt を省くと補間せず即座に目標に置く", () => {
+    const markers = createHandMarkers();
+    const right = view(markers.object, "right");
+    markers.update(FRONT, hands(UNTRACKED_HAND, handAtPoint({ x: 0, y: 0, z: -1 })), true, 0.016);
+    markers.update(FRONT, hands(UNTRACKED_HAND, handAtPoint({ x: 0.4, y: 0, z: -1 })), true);
+    expect(jointInRig(markers, right, 0).x).toBeCloseTo(0.4, 6);
+    markers.dispose();
+  });
+
+  it("見失った（tracked が false）手は最後の形のまま dt / 0.15 ずつ薄くし，0 になったら隠す", () => {
+    const markers = createHandMarkers();
+    const right = view(markers.object, "right");
+    const shown = handAtPoint({ x: 0.1, y: 0, z: -1 });
+    markers.update(FRONT, hands(UNTRACKED_HAND, shown), true, 0.016);
+    const lost = { ...handAtPoint({ x: 0.9, y: 0.9, z: -0.3 }), tracked: false };
+    markers.update(FRONT, hands(UNTRACKED_HAND, lost), true, 0.05);
+    expect(right.group.visible).toBe(true);
+    expect(right.joints.visible).toBe(true);
+    expect(right.palm.visible).toBe(false);
+    expect(opacity(right)).toBeCloseTo(1 - 0.05 / HAND_FADE_SEC, 9);
+    // 形は最後に描いた所のまま（見失った手の値には寄せない）
+    expect(jointInRig(markers, right, 0).x).toBeCloseTo(0.1, 6);
+    markers.update(FRONT, hands(UNTRACKED_HAND, lost), true, 0.05);
+    expect(right.group.visible).toBe(true);
+    expect(opacity(right)).toBeCloseTo(1 - 0.1 / HAND_FADE_SEC, 9);
+    markers.update(FRONT, hands(UNTRACKED_HAND, lost), true, 0.06);
+    expect(right.group.visible).toBe(false);
+    markers.dispose();
+  });
+
+  it("薄くしている途中にまた現れたら濃さを 1 に戻し，補間を続ける", () => {
+    const markers = createHandMarkers();
+    const right = view(markers.object, "right");
+    markers.update(FRONT, hands(UNTRACKED_HAND, handAtPoint({ x: 0, y: 0, z: -1 })), true, 0.016);
+    markers.update(FRONT, hands(UNTRACKED_HAND, UNTRACKED_HAND), true, 0.05);
+    markers.update(FRONT, hands(UNTRACKED_HAND, handAtPoint({ x: 0.2, y: 0, z: -1 })), true, 0.05);
+    expect(opacity(right)).toBe(1);
+    const k = 1 - Math.exp(-0.05 / HAND_SMOOTHING_SEC);
+    expect(jointInRig(markers, right, 0).x).toBeCloseTo(0.2 * k, 6);
+    markers.dispose();
+  });
+
+  it("消えきった後にまた現れた手は，前の形から滑らず目標にそのまま置く", () => {
+    const markers = createHandMarkers();
+    const right = view(markers.object, "right");
+    markers.update(FRONT, hands(UNTRACKED_HAND, handAtPoint({ x: 0, y: 0, z: -1 })), true, 0.016);
+    markers.update(FRONT, hands(UNTRACKED_HAND, UNTRACKED_HAND), true, 0.2);
+    expect(right.group.visible).toBe(false);
+    markers.update(FRONT, hands(UNTRACKED_HAND, handAtPoint({ x: 0.5, y: 0, z: -1 })), true, 0.016);
+    expect(right.group.visible).toBe(true);
+    expect(opacity(right)).toBe(1);
+    expect(jointInRig(markers, right, 0).x).toBeCloseTo(0.5, 6);
+    markers.dispose();
+  });
+
+  it("手のひらの位置が有限でなくなった手も見失ったとして薄くする", () => {
+    const markers = createHandMarkers();
+    const right = view(markers.object, "right");
+    markers.update(FRONT, hands(UNTRACKED_HAND, handAtPoint({ x: 0, y: 0, z: -1 })), true, 0.016);
+    const bad = { ...handAtPoint({ x: 0, y: 0, z: -1 }), position: { x: Number.NaN, y: 0, z: 0 } };
+    markers.update(FRONT, hands(UNTRACKED_HAND, bad), true, 0.05);
+    expect(right.group.visible).toBe(true);
+    expect(opacity(right)).toBeLessThan(1);
+    markers.dispose();
+  });
+
+  it("21 点を描いた手は，tracked のまま 21 点が無くなっても球にせず薄くする", () => {
+    const markers = createHandMarkers();
+    const right = view(markers.object, "right");
+    markers.update(FRONT, hands(UNTRACKED_HAND, handAtPoint({ x: 0, y: 0, z: -1 })), true, 0.016);
+    markers.update(FRONT, hands(UNTRACKED_HAND, hand()), true, 0.05);
+    expect(right.group.visible).toBe(true);
+    expect(right.palm.visible).toBe(false);
+    expect(right.joints.visible).toBe(true);
+    expect(opacity(right)).toBeCloseTo(1 - 0.05 / HAND_FADE_SEC, 9);
+    markers.update(FRONT, hands(UNTRACKED_HAND, hand()), true, 0.2);
+    expect(right.group.visible).toBe(false);
+    // 消えた後も 21 点の無い手を球にしない
+    markers.update(FRONT, hands(UNTRACKED_HAND, hand()), true, 0.016);
+    expect(right.group.visible).toBe(false);
+    markers.dispose();
+  });
+
+  it("21 点を描いた手は dt を省くと，21 点が無くなった時にすぐ隠す（球にしない）", () => {
+    const markers = createHandMarkers();
+    const right = view(markers.object, "right");
+    markers.update(FRONT, hands(UNTRACKED_HAND, handWithShape()), true);
+    markers.update(FRONT, hands(UNTRACKED_HAND, hand()), true);
+    expect(right.group.visible).toBe(false);
+    markers.dispose();
+  });
+
+  it("21 点を一度も受け取っていない手は，dt があっても手のひらの球を濃さ 1 で出す", () => {
+    const markers = createHandMarkers();
+    const right = view(markers.object, "right");
+    markers.update(FRONT, hands(UNTRACKED_HAND, hand()), true, 0.016);
+    expect(right.group.visible).toBe(true);
+    expect(right.palm.visible).toBe(true);
+    expect(right.joints.visible).toBe(false);
+    expect(opacity(right)).toBe(1);
+    markers.dispose();
+  });
+
+  it("球だけの手は見失ったら dt があってもすぐ隠す", () => {
+    const markers = createHandMarkers();
+    const right = view(markers.object, "right");
+    markers.update(FRONT, hands(UNTRACKED_HAND, hand()), true, 0.016);
+    markers.update(FRONT, hands(UNTRACKED_HAND, UNTRACKED_HAND), true, 0.016);
+    expect(right.group.visible).toBe(false);
+    markers.dispose();
+  });
+
+  it("dt を省くと見失った手はすぐ隠す", () => {
+    const markers = createHandMarkers();
+    const right = view(markers.object, "right");
+    markers.update(FRONT, hands(UNTRACKED_HAND, handWithShape()), true, 0.016);
+    markers.update(FRONT, hands(UNTRACKED_HAND, UNTRACKED_HAND), true);
+    expect(right.group.visible).toBe(false);
+    markers.dispose();
+  });
+
+  it("visible が false の時は dt があってもすぐ隠し，次に出す時は補間せず目標に置く", () => {
+    const markers = createHandMarkers();
+    const right = view(markers.object, "right");
+    markers.update(FRONT, hands(UNTRACKED_HAND, handAtPoint({ x: 0, y: 0, z: -1 })), true, 0.016);
+    markers.update(FRONT, hands(UNTRACKED_HAND, handAtPoint({ x: 0, y: 0, z: -1 })), false, 0.016);
+    expect(right.group.visible).toBe(false);
+    markers.update(FRONT, hands(UNTRACKED_HAND, handAtPoint({ x: 0.3, y: 0, z: -1 })), true, 0.016);
+    expect(right.group.visible).toBe(true);
+    expect(jointInRig(markers, right, 0).x).toBeCloseTo(0.3, 6);
+    markers.dispose();
+  });
+
+  it("濃さは片手ずつ変える（片手が薄くなっても他の手は濃いまま）", () => {
+    const markers = createHandMarkers();
+    const left = view(markers.object, "left");
+    const right = view(markers.object, "right");
+    const h = handAtPoint({ x: 0, y: 0, z: -1 });
+    markers.update(FRONT, hands(h, h), true, 0.016);
+    markers.update(FRONT, hands(h, UNTRACKED_HAND), true, 0.05);
+    expect(opacity(left)).toBe(1);
+    expect(opacity(right)).toBeLessThan(1);
+    markers.dispose();
   });
 });

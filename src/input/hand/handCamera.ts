@@ -3,7 +3,7 @@
 // 例外は外に投げない（認識が使えない時は両手とも未認識のまま．歩き・しゃがみには影響させない．experiment_山﨑/09）
 import { type Handedness, type HandState, UNTRACKED_HAND } from "../../core/types";
 import { type HandAssetUrls, resolveHandAssetUrls } from "./handAssets";
-import { assignHands } from "./handedness";
+import { assignHands, type HandAnchors, rememberHandAnchors } from "./handedness";
 import { DEFAULT_HAND_PARAMS, type HandParams, mergeHandParams } from "./handParams";
 import { HandRecognizer, type RecognizerBackend, type RecognizerStatus } from "./handRecognizer";
 import {
@@ -70,6 +70,8 @@ export class HandCamera {
     left: createHandTrack(),
     right: createHandTrack(),
   };
+  /** 左右の振り分けに使う，各側の手が最後にいた画像の上の位置 */
+  private anchors: HandAnchors = {};
   private rate: RateControlState = INITIAL_RATE_CONTROL;
   private appliedRateHz = Number.NaN;
   private inferMs = Number.NaN;
@@ -109,12 +111,14 @@ export class HandCamera {
     this.attachedStream = stream;
     resetHandTrack(this.tracks.left);
     resetHandTrack(this.tracks.right);
+    this.anchors = {};
     if (stream === null) return;
     try {
       this.recognizer = new HandRecognizer({
         stream,
         urls: this.options.urls ?? resolveHandAssetUrls(import.meta.env.BASE_URL, location.href),
         useWorker: this.options.useWorker,
+        width: this.params.recognizeWidthPx,
         onResult: (r) => this.onResult(r),
       });
       this.appliedRateHz = Number.NaN;
@@ -131,7 +135,8 @@ export class HandCamera {
       const dt = r.t - this.lastResultT;
       if (dt > 0 && dt < 1000) this.resultHz = ema(this.resultHz, 1000 / dt);
       this.lastResultT = r.t;
-      const assigned = assignHands(r.hands, false);
+      const assigned = assignHands(r.hands, false, this.anchors, r.t);
+      this.anchors = rememberHandAnchors(this.anchors, assigned, r.t);
       for (const side of ["left", "right"] as const) {
         observeHand(this.tracks[side], assigned[side] ?? null, r.t, r.width, r.height, this.params);
       }

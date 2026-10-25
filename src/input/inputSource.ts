@@ -5,7 +5,7 @@
 import { type CalibrationProfile, IDLE_PLAYER_INPUT, type PlayerInput } from "../core/types";
 import { DeviceTracker } from "./deviceTracker";
 import { HandCamera } from "./hand/handCamera";
-import type { HandParams } from "./hand/handParams";
+import { type HandParams, handParamsFromSearch } from "./hand/handParams";
 import { MockInput } from "./mock/mockInput";
 import {
   DEFAULT_INPUT_PARAMS,
@@ -97,7 +97,13 @@ export interface InputSource {
 function createDeviceSource(options: InputSourceOptions): InputSource {
   const tracker = new DeviceTracker({ calibration: options.calibration, params: options.params });
   // 手の認識は体の判定と分け，壊れても歩き・しゃがみに影響させない（experiment_山﨑/09）
-  const hands = new HandCamera({ params: options.handParams });
+  // 手のしきい値は URL でも上書きできる（例: ?recognizeWidthPx=320．hands.html と同じ名前）．渡された値を優先する．
+  // ?worker=0 でメインスレッドで認識する（Worker との比べ用）
+  const search = typeof location === "undefined" ? "" : location.search;
+  const hands = new HandCamera({
+    params: { ...handParamsFromSearch(search), ...options.handParams },
+    useWorker: new URLSearchParams(search).get("worker") !== "0",
+  });
   if (options.camera) hands.attach(options.camera);
   const observer = options.observer;
   const stopSensors = startSensors({

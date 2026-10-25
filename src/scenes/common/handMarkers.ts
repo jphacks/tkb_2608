@@ -11,9 +11,17 @@ export interface HandMarkers {
   /**
    * 認識している手の形（21 点）を描く．hands の位置は頭の座標系なので，頭の向き head で rig の座標に直す．
    * 21 点が無い手（古い入力・記録の再生等）は手のひらの中心に球だけ出す．
-   * tracked が false の手と，visible が false の時は隠す
+   * tracked が false の手と，visible が false の時は隠す．
+   * dt（前のフレームからの秒数）を渡すと，21 点を目標へ指数的に寄せ（時定数 HAND_SMOOTHING_SEC），
+   * 見失った手の形は HAND_FADE_SEC で薄くして消す．省くと寄せずに目標に置き，見失ったらすぐ隠す．
+   * 一度 21 点を描いた手は，tracked のまま 21 点が無くなっても球にせず，同じように薄くして消す
    */
-  update(head: Quat, hands: Readonly<Record<Handedness, HandState>>, visible: boolean): void;
+  update(
+    head: Quat,
+    hands: Readonly<Record<Handedness, HandState>>,
+    visible: boolean,
+    dt?: number,
+  ): void;
   /** 形と見た目を解放する（rig から外すのは足した側が行う） */
   dispose(): void;
 }
@@ -24,6 +32,10 @@ export const HAND_MARKER_RADIUS = 0.022;
 export const HAND_JOINT_RADIUS = 0.008;
 /** 骨の円柱の半径（m） */
 export const HAND_BONE_RADIUS = 0.005;
+/** 21 点を目標へ寄せる時定数（秒）．描くフレームごとに k = 1 - exp(-dt / これ) だけ寄せる */
+export const HAND_SMOOTHING_SEC = 0.05;
+/** 見失った手の形を薄くして消すまでの秒数 */
+export const HAND_FADE_SEC = 0.15;
 /** 手の 21 点の数（MediaPipe の HandLandmarker と同じ） */
 export const HAND_JOINT_COUNT = 21;
 
@@ -55,9 +67,12 @@ export const HAND_BONES: readonly (readonly [number, number])[] = [
   [19, 20],
 ];
 
-/** 左右の色（取り違えに気付きやすいよう変える．右は今までの手の印と同じ青，左は緑） */
+/**
+ * 左右の色．左右の振り分けが入れ替わった時に色が変わって気になるため，左右とも今までの手の印と同じ青にする
+ * （見失った時の濃さは片手ずつ変えるため，見た目は左右で分けて持つ）
+ */
 export const HAND_COLORS: Readonly<Record<Handedness, number>> = {
-  left: 0x9cf0b0,
+  left: 0x9cc8ff,
   right: 0x9cc8ff,
 };
 
@@ -92,6 +107,13 @@ interface HandView {
   readonly joints: THREE.InstancedMesh;
   readonly bones: THREE.InstancedMesh;
   readonly palm: THREE.Mesh;
+  readonly material: THREE.Material;
+  /** 補間した 21 点（頭の座標系） */
+  readonly current: THREE.Vector3[];
+  /** 形の濃さ（0〜1）．0 なら形を出していない（次に現れた時は補間せず目標に置く） */
+  presence: number;
+  /** 一度でも 21 点を描いたか．描いた手は 21 点が無くなっても球に切り替えず，最後の形のまま薄くして消す */
+  hadSkeleton: boolean;
 }
 
 interface Shared {
@@ -116,7 +138,8 @@ function createHandView(side: Handedness, shared: Shared, material: THREE.Materi
   joints.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   bones.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   group.add(joints, bones, palm);
-  return { group, joints, bones, palm };
+  const current = Array.from({ length: HAND_JOINT_COUNT }, () => new THREE.Vector3());
+  return { group, joints, bones, palm, material, current, presence: 0, hadSkeleton: false };
 }
 
 /** 21 点の位置に関節の球を，骨の両端の間に円柱（高さ 1 の円柱を伸ばして向ける）を置く */
@@ -145,24 +168,73 @@ function placeSkeleton(view: HandView, landmarks: readonly Vec3[]): void {
   view.bones.instanceMatrix.needsUpdate = true;
 }
 
-function placeHand(view: HandView, head: Quat, hand: HandState, visible: boolean): void {
-  view.group.visible = visible && hand.tracked && isFiniteVec3(hand.position);
-  if (!view.group.visible) return;
+/** 使える dt（0 以上の有限の秒数）か．使えなければ null（寄せない・すぐ隠す） */
+function usableDt(dt: number | undefined): number | null {
+  return dt !== undefined && Number.isFinite(dt) && dt >= 0 ? dt : null;
+}
+
+function hideHand(view: HandView): void {
+  view.group.visible = false;
+  view.presence = 0;
+}
+
+/** 21 点を目標 target へ寄せる．形を出していなかった時・dt が無い時は寄せずに目標に置く */
+function approachSkeleton(view: HandView, target: readonly Vec3[], dt: number | undefined): void {
+  const step = usableDt(dt);
+  const k = view.presence > 0 && step !== null ? 1 - Math.exp(-step / HAND_SMOOTHING_SEC) : 1;
+  for (let i = 0; i < HAND_JOINT_COUNT; i++) {
+    const c = view.current[i];
+    const p = target[i];
+    c.set(c.x + (p.x - c.x) * k, c.y + (p.y - c.y) * k, c.z + (p.z - c.z) * k);
+  }
+}
+
+function placeHand(
+  view: HandView,
+  head: Quat,
+  hand: HandState,
+  visible: boolean,
+  dt: number | undefined,
+): void {
+  if (!visible) {
+    hideHand(view);
+    return;
+  }
+  const live = hand.tracked && isFiniteVec3(hand.position);
+  const skeleton = live && isDrawableLandmarks(hand.landmarks);
+  // 21 点を描いたことのある手は，tracked のまま 21 点が無くなっても（直近の認識で見えなかった）球にしない
+  if (!skeleton && (!live || view.hadSkeleton)) {
+    // 形を出していた手は，最後の形のまま薄くして消す（球だけの手・dt が無い時はすぐ隠す）
+    const step = usableDt(dt);
+    view.presence = view.presence > 0 && step !== null ? view.presence - step / HAND_FADE_SEC : 0;
+    if (view.presence <= 0) {
+      hideHand(view);
+      return;
+    }
+    view.material.opacity = view.presence;
+    view.group.quaternion.set(head.x, head.y, head.z, head.w);
+    return;
+  }
+  view.group.visible = true;
+  view.material.opacity = 1;
   view.group.quaternion.set(head.x, head.y, head.z, head.w);
-  const skeleton = isDrawableLandmarks(hand.landmarks);
   view.joints.visible = skeleton;
   view.bones.visible = skeleton;
   view.palm.visible = !skeleton;
   if (skeleton && hand.landmarks !== undefined) {
-    placeSkeleton(view, hand.landmarks);
+    approachSkeleton(view, hand.landmarks, dt);
+    view.presence = 1;
+    view.hadSkeleton = true;
+    placeSkeleton(view, view.current);
   } else {
+    view.presence = 0;
     view.palm.position.set(hand.position.x, hand.position.y, hand.position.z);
   }
 }
 
 /**
  * 左右の手の形（関節の球 21 個と骨の円柱 21 本を InstancedMesh で 1 つずつ）を作る．
- * 形は左右で共有し，見た目（色）は左右で分ける
+ * 形は左右で共有し，見た目は左右で分ける（色は同じ．見失った時の濃さを片手ずつ変えるため）
  */
 export function createHandMarkers(): HandMarkers {
   const root = new THREE.Group();
@@ -174,8 +246,9 @@ export function createHandMarkers(): HandMarkers {
     palmGeometry: new THREE.SphereGeometry(HAND_MARKER_RADIUS, 12, 8),
   };
   const materials: Record<Handedness, THREE.MeshBasicMaterial> = {
-    left: new THREE.MeshBasicMaterial({ color: HAND_COLORS.left }),
-    right: new THREE.MeshBasicMaterial({ color: HAND_COLORS.right }),
+    // 見失った時に薄くして消すため，最初から半透明の扱いにしておく（濃さは update で opacity を変える）
+    left: new THREE.MeshBasicMaterial({ color: HAND_COLORS.left, transparent: true }),
+    right: new THREE.MeshBasicMaterial({ color: HAND_COLORS.right, transparent: true }),
   };
   const views: Record<Handedness, HandView> = {
     left: createHandView("left", shared, materials.left),
@@ -191,9 +264,9 @@ export function createHandMarkers(): HandMarkers {
 
   return {
     object: root,
-    update(head, hands, visible) {
-      placeHand(views.left, head, hands.left, visible);
-      placeHand(views.right, head, hands.right, visible);
+    update(head, hands, visible, dt) {
+      placeHand(views.left, head, hands.left, visible, dt);
+      placeHand(views.right, head, hands.right, visible, dt);
     },
     dispose() {
       for (const v of [views.left, views.right]) {
