@@ -68,7 +68,14 @@ export const EDITOR_COLORS = {
   spreadFire: "rgba(229, 57, 53, 0.55)",
   /** 延焼のプレビューで煙だけが着いているマスに重ねる色（結果画面の煙の帯（smokeStanding）と同じ灰色） */
   spreadSmoke: "rgba(70, 76, 90, 0.55)",
+  /** 正解経路の線と向きの矢印（結果画面の正解経路（src/debrief/mapStyle.ts の correctRoute）と同じ緑） */
+  route: "#21a95a",
+  /** 正解経路のうち，壁をまたぐ・隣り合わない等で置けない一歩（結果画面の外れた区間（offRoute）と同じ橙） */
+  routeBadStep: "#ff8a1f",
 } as const;
+
+/** 道具箱の経路の道具の名前 */
+export const ROUTE_TOOL_LABEL = "経路を引く";
 
 /** 道具箱に出す訓練条件の道具の順番・名前・色見本 */
 export const MARKER_TOOLS: readonly {

@@ -148,10 +148,13 @@ function validateRef(plan: SchoolPlan, ref: CellRef, label: string): string[] {
   return [];
 }
 
-/** 正解経路の検査（開始地点から始まり，集合場所で終わり，同じ階で上下左右に隣り合う，人が入れるマスの列） */
+/**
+ * 正解経路の検査（開始地点から始まり，集合場所で終わり，同じ階で上下左右に隣り合う，人が入れるマスの列）．
+ * 空は誤りにしない．空なら生徒側で proposeRoute() の提案を使う（SPEC_01「結果の評価」）ので，検査をすべて飛ばす
+ */
 function validateRoute(plan: SchoolPlan): string[] {
   const { route, start, assembly } = plan.drill;
-  if (route.length === 0) return ["正解経路が空です"];
+  if (route.length === 0) return [];
 
   const errors: string[] = [];
   route.forEach((ref, i) => {

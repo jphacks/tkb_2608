@@ -6,12 +6,16 @@ import type { CellKind, CellRef, DrillSetup, Floor, Room, SchoolPlan } from "../
 import { DEMO_SCHOOL } from "../share/samples/demoSchool";
 import { createFloorFromRows } from "../share/samples/floorFromRows";
 import { validatePlan } from "../share/validatePlan";
+import { canPersonStep, computeSpread, proposeRoute, type SpreadMap } from "../sim";
 import type { CellXZ } from "../sim/grid";
 import {
   addRoom,
+  beginRouteStroke,
   beginStroke,
   canRedo,
   canUndo,
+  clearRoute,
+  continueRouteStroke,
   continueStroke,
   createEditorState,
   EDIT_FLOOR,
@@ -25,6 +29,7 @@ import {
   facingOfYaw,
   HISTORY_LIMIT,
   isMarkerTool,
+  isRouteTool,
   isValidSeconds,
   MARKER_REASONS,
   MAX_GRID_SIZE,
@@ -33,6 +38,7 @@ import {
   paintCell,
   placeMarker,
   placeStart,
+  ROUTE_EDIT_REASONS,
   redo,
   renameRoom,
   resizeGrid,
@@ -43,11 +49,13 @@ import {
   setStartFacing,
   setTimeLimit,
   startBlank,
+  suggestRoute,
   toggleAssembly,
   toggleFireOrigin,
   undo,
   yawToGridDirection,
 } from "./editorState";
+import { checkRoute, ROUTE_REASONS } from "./routeCheck";
 
 /** 入れ子のオブジェクト・配列をすべて凍らせる（書き換えようとすると strict mode で例外になる） */
 function deepFreeze<T>(value: T): T {
@@ -1706,5 +1714,467 @@ describe("setTimeLimit", () => {
     expect(next.past).toHaveLength(2);
     expect(next.past[0]).toBe(before);
     expect(undo(next).plan.drill.timeLimitSeconds).toBe(150);
+  });
+});
+
+// ---- 正解経路の提案と手での修正（Issue #133・PLAN_04 E5・SPEC_01「経路の提案」「結果の評価」・SPEC_02 の DrillSetup.route） ----
+// 経路のテスト用のマス目（5 × 5）:
+//   z=0: 教室 教室 教室 廊下 廊下
+//   z=1: 教室 教室 教室 ドア 廊下
+//   z=2: 廊下 廊下 廊下 廊下 廊下
+//   z=3: 柱   出口 柱   柱   何もない
+//   z=4: 屋外 屋外 屋外 屋外 屋外
+const ROUTE_ROWS = ["000hh", "000dh", "hhhhh", "#e##.", "ooooo"];
+const ROUTE_TOOL: EditorTool = { kind: "route" };
+
+/** 教室のドア → 廊下 → 出口 → 集合場所（壁をまたがない） */
+const FULL_ROUTE: readonly CellRef[] = [
+  ref(1, 1),
+  ref(2, 1),
+  ref(3, 1), // ドア
+  ref(3, 2),
+  ref(2, 2),
+  ref(1, 2),
+  ref(1, 3), // 出口
+  ref(1, 4),
+  ref(2, 4),
+  ref(3, 4), // 集合場所
+];
+
+const ROUTE_DRILL: DrillSetup = {
+  ...TEST_DRILL,
+  fireOrigins: [ref(4, 0)],
+  start: ref(1, 1),
+  assembly: [ref(3, 4)],
+  route: FULL_ROUTE,
+};
+
+/** 経路のテスト用の校舎で状態を作る（既定は経路の道具を選んだ状態．凍らせてある） */
+function routeState(
+  drill: Partial<DrillSetup> = {},
+  options: { rows?: readonly string[]; tool?: EditorTool } = {},
+): EditorState {
+  const s = createEditorState(
+    plan({
+      rows: options.rows ?? ROUTE_ROWS,
+      rooms: [{ name: "1年1組" }],
+      overrides: { drill: { ...ROUTE_DRILL, ...drill } },
+    }),
+  );
+  return selectTool(s, options.tool ?? ROUTE_TOOL);
+}
+
+const demoState = (drill: Partial<DrillSetup> = {}): EditorState =>
+  selectTool(
+    createEditorState(deepFreeze({ ...DEMO_SCHOOL, drill: { ...DEMO_SCHOOL.drill, ...drill } })),
+    ROUTE_TOOL,
+  );
+
+const sameCell = (a: CellRef, b: CellRef): boolean =>
+  a.floor === b.floor && a.x === b.x && a.z === b.z;
+
+/** 経路が開始地点から集合場所まで，人が一歩ずつ進める列か */
+function expectWalkableRoute(p: SchoolPlan): void {
+  const { route, start, assembly } = p.drill;
+  const f = p.floors[p.drill.start.floor];
+  expect(route.length).toBeGreaterThan(1);
+  expect(sameCell(route[0], start)).toBe(true);
+  expect(assembly.some((a) => sameCell(a, route[route.length - 1]))).toBe(true);
+  for (let i = 1; i < route.length; i++) {
+    expect(canPersonStep(f, route[i - 1], route[i])).toBe(true);
+  }
+}
+
+/** ドラッグを begin → continue（順に）→ endStroke で行う */
+function dragRoute(s: EditorState, cells: readonly CellXZ[]): EditorState {
+  let next = beginRouteStroke(s, cells[0]).state;
+  for (const c of cells.slice(1)) next = continueRouteStroke(next, c).state;
+  return endStroke(next);
+}
+
+describe("経路のテスト用データ", () => {
+  it("経路のテスト用の校舎は validatePlan の誤りが無く，経路の確かめでも問題なし", () => {
+    const s = routeState();
+    expect(validatePlan(s.plan)).toEqual([]);
+    expect(checkRoute(s.plan.drill, 0, editingFloor(s)).problems).toEqual([]);
+  });
+});
+
+describe("isRouteTool", () => {
+  it("経路の道具だけ true", () => {
+    expect(isRouteTool(ROUTE_TOOL)).toBe(true);
+  });
+
+  it.each<EditorTool>([
+    { kind: "classroom", room: 0 },
+    { kind: "corridor" },
+    { kind: "fireOrigin" },
+    { kind: "start" },
+    { kind: "assembly" },
+  ])("%o は false", (tool) => {
+    expect(isRouteTool(tool)).toBe(false);
+  });
+
+  it("経路の道具は置く道具ではない", () => {
+    expect(isMarkerTool(ROUTE_TOOL)).toBe(false);
+  });
+});
+
+describe("selectTool（経路の道具）", () => {
+  it("経路の道具を選べ，校舎は変わらない", () => {
+    const before = routeState({}, { tool: { kind: "classroom", room: 0 } });
+    const after = selectTool(before, ROUTE_TOOL);
+    expect(after.tool).toEqual(ROUTE_TOOL);
+    expect(after.plan).toBe(before.plan);
+  });
+});
+
+describe("suggestRoute", () => {
+  const spreadOf = (p: SchoolPlan): SpreadMap => computeSpread(p);
+
+  it("デモの校舎で，理科室の火の側（防火シャッターより東・東の昇降口）を通らない経路が入る", () => {
+    const before = demoState({ route: [] });
+    const { state: after, reason } = suggestRoute(before, spreadOf);
+    expect(reason).toBeNull();
+    expectWalkableRoute(after.plan);
+    // 防火シャッターは x = 12．火元の理科室・東の昇降口 (16, 7) はその東
+    expect(after.plan.drill.route.every((r) => r.x < 12)).toBe(true);
+    expect(after.plan.drill.route.some((r) => r.x === 16 && r.z === 7)).toBe(false);
+    // 1年1組のドア (4, 5) と西の昇降口 (2, 7) を通る
+    expect(after.plan.drill.route.some((r) => r.x === 4 && r.z === 5)).toBe(true);
+    expect(after.plan.drill.route.some((r) => r.x === 2 && r.z === 7)).toBe(true);
+  });
+
+  it("入る経路は proposeRoute() の提案そのもので，validatePlan・経路の確かめとも誤りなし", () => {
+    const before = demoState({ route: [] });
+    const after = suggestRoute(before, spreadOf).state;
+    expect(after.plan.drill.route).toEqual(proposeRoute(before.plan, computeSpread(before.plan)));
+    expect(validatePlan(after.plan)).toEqual([]);
+    expect(checkRoute(after.plan.drill, 0, editingFloor(after)).problems).toEqual([]);
+  });
+
+  it("経路以外は変えず，履歴が 1 つ増える．元に戻すと前の経路に戻る", () => {
+    const before = demoState();
+    const after = suggestRoute(before, spreadOf).state;
+    expect(after.plan.drill.route).not.toEqual(before.plan.drill.route);
+    expectDrillOthersKept(before.plan, after.plan, ["route"]);
+    expect(after.past).toHaveLength(before.past.length + 1);
+    expect(undo(after).plan.drill.route).toEqual(before.plan.drill.route);
+  });
+
+  it("延焼は渡した spreadOf で引く（今の校舎を渡す）", () => {
+    const before = demoState({ route: [] });
+    const seen: SchoolPlan[] = [];
+    suggestRoute(before, (p) => {
+      seen.push(p);
+      return computeSpread(p);
+    });
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.every((p) => p === before.plan)).toBe(true);
+  });
+
+  it("もう一度押しても提案が同じなら同じ参照（履歴に積まない）", () => {
+    const once = suggestRoute(demoState({ route: [] }), spreadOf).state;
+    const twice = suggestRoute(once, spreadOf);
+    expect(twice.reason).toBeNull();
+    expect(twice.state.plan).toBe(once.plan);
+    expect(twice.state.past).toEqual(once.past);
+  });
+
+  it("テスト用の校舎でも，ドアと出口を通る経路が入る", () => {
+    const after = suggestRoute(routeState({ route: [] }), spreadOf);
+    expect(after.reason).toBeNull();
+    expectWalkableRoute(after.state.plan);
+  });
+
+  it("同じ階に集合場所が無い時は理由を出し，校舎を変えない", () => {
+    const before = routeState({ assembly: [] });
+    expectRejected(before, suggestRoute(before, spreadOf), ROUTE_EDIT_REASONS.noAssembly);
+  });
+
+  it("集合場所が別の階にしか無い時も同じ階に無い理由", () => {
+    const before = routeState({ assembly: [ref(3, 4, 1)] }, { rows: ROUTE_ROWS });
+    expectRejected(before, suggestRoute(before, spreadOf), ROUTE_EDIT_REASONS.noAssembly);
+  });
+
+  it.each<CellRef>([ref(-1, 0), ref(5, 0), ref(0, 5), ref(1, 1, 3)])(
+    "開始地点がマス目の外（%o）の時は理由を出し，校舎を変えない",
+    (start) => {
+      const before = routeState({ start });
+      expectRejected(before, suggestRoute(before, spreadOf), ROUTE_EDIT_REASONS.startOutside);
+    },
+  );
+
+  it("閉じ込められて集合場所にたどり着けない時は理由を出し，校舎を変えない", () => {
+    const before = routeState({}, { rows: ["000hh", "000dh", "hhhhh", "####.", "ooooo"] });
+    expectRejected(before, suggestRoute(before, spreadOf), ROUTE_EDIT_REASONS.unreachable);
+  });
+
+  it("ドラッグの途中なら先に終えてから提案する（ドラッグとは別の履歴）", () => {
+    const mid = beginRouteStroke(routeState({ route: [] }), at(1, 1)).state;
+    const after = suggestRoute(mid, spreadOf).state;
+    expect(after.stroke).toBeNull();
+    expectWalkableRoute(after.plan);
+  });
+});
+
+describe("clearRoute", () => {
+  it("経路を空にし，経路以外は変えない．履歴が 1 増え，元に戻せる", () => {
+    const before = routeState();
+    const after = clearRoute(before);
+    expect(after.plan.drill.route).toEqual([]);
+    expectDrillOthersKept(before.plan, after.plan, ["route"]);
+    expect(after.past).toHaveLength(before.past.length + 1);
+    expect(undo(after).plan.drill.route).toEqual(FULL_ROUTE);
+  });
+
+  it("空にした校舎も validatePlan の誤りにならない（空なら生徒側で提案を使う）", () => {
+    expect(validatePlan(clearRoute(routeState()).plan)).toEqual([]);
+  });
+
+  it("もう空なら何もしない（同じ参照・履歴は変わらない）", () => {
+    const before = routeState({ route: [] });
+    const after = clearRoute(before);
+    expect(after.plan).toBe(before.plan);
+    expect(after.past).toEqual(before.past);
+  });
+});
+
+describe("beginRouteStroke / continueRouteStroke / endStroke", () => {
+  it("経路が空の時，開始地点を押すと開始地点だけの経路になる", () => {
+    const r = beginRouteStroke(routeState({ route: [] }), at(1, 1));
+    expect(r.reason).toBeNull();
+    expect(endStroke(r.state).plan.drill.route).toEqual([ref(1, 1)]);
+  });
+
+  it("経路が空の時，開始地点の隣（一歩で進める）を押すと開始地点とそのマスになる", () => {
+    const r = beginRouteStroke(routeState({ route: [] }), at(2, 1));
+    expect(r.reason).toBeNull();
+    expect(endStroke(r.state).plan.drill.route).toEqual([ref(1, 1), ref(2, 1)]);
+  });
+
+  it("経路が空の時，開始地点から離れたマスを押すと理由を出し，経路は変えない", () => {
+    const before = routeState({ route: [] });
+    const r = beginRouteStroke(before, at(3, 2));
+    expect(r.reason).toBe(ROUTE_REASONS.startNotNext(ref(1, 1)));
+    const done = endStroke(r.state);
+    expect(done.plan).toBe(before.plan);
+    expect(done.past).toEqual(before.past);
+  });
+
+  it("経路が空の時，開始地点の隣でも壁の向こう（ドアを通らない廊下）なら理由を出し，経路は変えない", () => {
+    const before = routeState({ route: [] });
+    const r = beginRouteStroke(before, at(1, 2));
+    expect(r.reason).toBe(ROUTE_REASONS.wall(at(1, 1), at(1, 2)));
+    expect(endStroke(r.state).plan).toBe(before.plan);
+  });
+
+  it("経路が空で開始地点がマス目の外なら理由を出し，経路は変えない", () => {
+    const before = routeState({ route: [], start: ref(9, 9) });
+    const r = beginRouteStroke(before, at(1, 1));
+    expect(r.reason).toBe(ROUTE_REASONS.startOutside);
+    expect(endStroke(r.state).plan).toBe(before.plan);
+  });
+
+  it("開始地点から 1 マスずつドラッグして集合場所まで引ける（1 回のドラッグが 1 回分の履歴）", () => {
+    const before = routeState({ route: [] });
+    const after = dragRoute(before, FULL_ROUTE);
+    expect(after.plan.drill.route).toEqual(FULL_ROUTE);
+    expect(after.past).toHaveLength(before.past.length + 1);
+    expect(validatePlan(after.plan)).toEqual([]);
+    // 1 回の元に戻すで空に戻る
+    const undone = undo(after);
+    expect(undone.plan.drill.route).toEqual([]);
+    expect(redo(undone).plan.drill.route).toEqual(FULL_ROUTE);
+  });
+
+  it("ドラッグの途中は経路が伸びていき，終わるまで履歴は積まない", () => {
+    const before = routeState({ route: [] });
+    let s = beginRouteStroke(before, at(1, 1)).state;
+    s = continueRouteStroke(s, at(2, 1)).state;
+    expect(s.plan.drill.route).toEqual([ref(1, 1), ref(2, 1)]);
+    expect(s.past).toEqual(before.past);
+    s = continueRouteStroke(s, at(3, 1)).state;
+    expect(s.plan.drill.route).toEqual([ref(1, 1), ref(2, 1), ref(3, 1)]);
+  });
+
+  it("マウスが速く動いて飛ばしたマスも順に埋める（直線）", () => {
+    const before = routeState({ route: [ref(1, 1), ref(2, 1), ref(3, 1), ref(3, 2)] });
+    // (3, 2) から (0, 2) へ一度に動く: (2, 2)・(1, 2)・(0, 2) を足す
+    const after = dragRoute(before, [at(3, 2), at(0, 2)]);
+    expect(after.plan.drill.route).toEqual([
+      ref(1, 1),
+      ref(2, 1),
+      ref(3, 1),
+      ref(3, 2),
+      ref(2, 2),
+      ref(1, 2),
+      ref(0, 2),
+    ]);
+  });
+
+  it("飛ばしたマスを埋める時，できた経路は上下左右に隣り合う（斜めの動きでも）", () => {
+    const before = routeState({ route: [ref(1, 1), ref(2, 1), ref(3, 1), ref(3, 2)] });
+    // (3, 2) → (1, 4) は斜め．間の柱で止まることはあるが，できた経路は人が一歩ずつ進める
+    const after = dragRoute(before, [at(3, 2), at(1, 4)]);
+    const route = after.plan.drill.route;
+    const f = editingFloor(after);
+    for (let i = 1; i < route.length; i++) {
+      expect(canPersonStep(f, route[i - 1], route[i])).toBe(true);
+    }
+  });
+
+  it("人の入れないマス（柱）の手前でドラッグは止まり，理由を出す", () => {
+    const route = [ref(1, 1), ref(2, 1), ref(3, 1), ref(3, 2), ref(2, 2)];
+    const before = routeState({ route });
+    let s = beginRouteStroke(before, at(2, 2)).state;
+    // (2, 2) から (2, 4) へ: 間の (2, 3) は柱
+    const r = continueRouteStroke(s, at(2, 4));
+    expect(r.reason).toBe(ROUTE_REASONS.notWalkable(at(2, 3)));
+    s = endStroke(r.state);
+    expect(s.plan.drill.route).toEqual(route);
+  });
+
+  it("壁をまたぐ一歩（ドアを通らず廊下から教室へ）は足さずに理由を出す", () => {
+    // 経路の最後は廊下の (0, 2)．真上の (0, 1) は教室で，間に壁がある
+    const before = routeState({
+      route: [ref(1, 1), ref(2, 1), ref(3, 1), ref(3, 2), ref(2, 2), ref(1, 2), ref(0, 2)],
+    });
+    const r = beginRouteStroke(before, at(0, 1));
+    expect(r.reason).toBe(ROUTE_REASONS.wall(at(0, 2), at(0, 1)));
+    const done = endStroke(r.state);
+    expect(done.plan).toBe(before.plan);
+    expect(done.past).toEqual(before.past);
+  });
+
+  it("経路の最後と隣り合わないマスを押すと理由を出し，経路は変えない", () => {
+    const route = [ref(1, 1), ref(2, 1)];
+    const before = routeState({ route });
+    const r = beginRouteStroke(before, at(4, 0));
+    expect(r.reason).toBe(ROUTE_REASONS.notAdjacent(at(2, 1)));
+    expect(endStroke(r.state).plan).toBe(before.plan);
+  });
+
+  it("経路の途中のマスを押すと，そこまでに切り詰める（1 回分の履歴．元に戻せる）", () => {
+    const before = routeState();
+    const after = endStroke(beginRouteStroke(before, at(3, 1)).state);
+    expect(after.plan.drill.route).toEqual(FULL_ROUTE.slice(0, 3));
+    expect(after.past).toHaveLength(before.past.length + 1);
+    expect(undo(after).plan.drill.route).toEqual(FULL_ROUTE);
+  });
+
+  it("開始地点を押すと開始地点だけに切り詰める", () => {
+    const after = endStroke(beginRouteStroke(routeState(), at(1, 1)).state);
+    expect(after.plan.drill.route).toEqual([ref(1, 1)]);
+  });
+
+  it("ドラッグで経路を戻ると切り詰める", () => {
+    const before = routeState();
+    const after = dragRoute(before, [at(3, 4), at(1, 4)]);
+    expect(after.plan.drill.route).toEqual(FULL_ROUTE.slice(0, 8));
+  });
+
+  it("切り詰めた後に別の向きへ伸ばせる（1 マスずつ直せる）", () => {
+    const before = routeState();
+    // (3, 2) まで戻ってから (4, 2) へ
+    const after = dragRoute(before, [at(3, 2), at(4, 2)]);
+    expect(after.plan.drill.route).toEqual([...FULL_ROUTE.slice(0, 4), ref(4, 2)]);
+    expect(after.past).toHaveLength(before.past.length + 1);
+  });
+
+  it("最後のマスを押しただけなら何もしない（同じ参照・履歴に積まない）", () => {
+    const before = routeState();
+    const after = endStroke(beginRouteStroke(before, at(3, 4)).state);
+    expect(after.plan).toBe(before.plan);
+    expect(after.past).toEqual(before.past);
+  });
+
+  it("ドラッグで伸ばしてから元の最後のマスに戻ると，ドラッグ前と同じ参照で履歴に積まない", () => {
+    const route = [ref(1, 1), ref(2, 1)];
+    const before = routeState({ route });
+    let s = beginRouteStroke(before, at(2, 1)).state;
+    s = continueRouteStroke(s, at(3, 1)).state;
+    expect(s.plan.drill.route).toEqual([...route, ref(3, 1)]);
+    s = continueRouteStroke(s, at(2, 1)).state;
+    expect(s.plan).toBe(before.plan);
+    const done = endStroke(s);
+    expect(done.plan).toBe(before.plan);
+    expect(done.past).toEqual(before.past);
+  });
+
+  it("同じマスへの continueRouteStroke は何もしない", () => {
+    const s = beginRouteStroke(routeState({ route: [] }), at(1, 1)).state;
+    const r = continueRouteStroke(s, at(1, 1));
+    expect(r.state).toBe(s);
+    expect(r.reason).toBeNull();
+  });
+
+  it("ドラッグの途中でなければ continueRouteStroke は何もしない", () => {
+    const before = routeState({ route: [ref(1, 1)] });
+    const r = continueRouteStroke(before, at(2, 1));
+    expect(r.state).toBe(before);
+    expect(r.reason).toBeNull();
+  });
+
+  it.each<EditorTool>([{ kind: "classroom", room: 0 }, { kind: "corridor" }, { kind: "start" }])(
+    "経路の道具でない（%o）時は経路を変えない",
+    (tool) => {
+      const before = routeState({ route: [ref(1, 1)] }, { tool });
+      const r = beginRouteStroke(before, at(2, 1));
+      expect(r.reason).toBeNull();
+      expect(r.state.plan.drill.route).toEqual([ref(1, 1)]);
+      const c = continueRouteStroke(r.state, at(3, 1));
+      expect(endStroke(c.state).plan.drill.route).toEqual([ref(1, 1)]);
+    },
+  );
+
+  it("経路の操作はマス目を変えない", () => {
+    const before = routeState({ route: [] });
+    const after = dragRoute(before, FULL_ROUTE);
+    expect(after.plan.floors).toBe(before.plan.floors);
+    expectDrillOthersKept(before.plan, after.plan, ["route"]);
+  });
+
+  it("集合場所を過ぎても伸ばせる（確かめは checkRoute で出す）", () => {
+    const before = routeState();
+    const after = dragRoute(before, [at(3, 4), at(4, 4)]);
+    expect(after.plan.drill.route).toEqual([...FULL_ROUTE, ref(4, 4)]);
+    expect(checkRoute(after.plan.drill, 0, editingFloor(after)).endsAtAssembly).toBe(false);
+  });
+});
+
+describe("経路の道具の時の塗る操作", () => {
+  it("paintCell は経路の道具では塗らない（同じ参照）", () => {
+    const before = routeState();
+    for (const c of [at(0, 0), at(3, 2), at(4, 4)]) {
+      expect(paintCell(before, c).plan).toBe(before.plan);
+    }
+  });
+
+  it("beginStroke / continueStroke は経路の道具では塗らない", () => {
+    const before = routeState();
+    const after = endStroke(continueStroke(beginStroke(before, at(0, 0)), at(4, 4)));
+    expect(after.plan).toBe(before.plan);
+    expect(after.past).toEqual(before.past);
+  });
+});
+
+describe("訓練条件の操作と正解経路", () => {
+  it("開始地点を動かしても経路は変えない", () => {
+    const before = routeState({}, { tool: { kind: "start" } });
+    const after = placeStart(before, at(0, 0));
+    expect(after.reason).toBeNull();
+    expect(after.state.plan.drill.start).toEqual(ref(0, 0));
+    expect(after.state.plan.drill.route).toEqual(FULL_ROUTE);
+  });
+
+  it("集合場所を足し・外しても経路は変えない", () => {
+    const before = routeState({}, { tool: { kind: "assembly" } });
+    const added = toggleAssembly(before, at(0, 4));
+    expect(added.reason).toBeNull();
+    expect(added.state.plan.drill.route).toEqual(FULL_ROUTE);
+    const removed = toggleAssembly(added.state, at(3, 4));
+    expect(removed.reason).toBeNull();
+    expect(removed.state.plan.drill.route).toEqual(FULL_ROUTE);
   });
 });

@@ -23,6 +23,7 @@ import { createScreenWakeLock } from "../lobby/wakeLock";
 import { loadPlanFromHash } from "../share/planHash";
 import { resolveDebug, resolveStereo } from "./launchMode";
 import { createScenarioPlaceholder } from "./placeholderScenes";
+import { withResolvedRoute } from "./resolvedRoute";
 import { yawOnly } from "./yawOnlyCalibration";
 
 /** 左右 2 画面で描く画面（ゴーグル装着中の画面） */
@@ -145,7 +146,8 @@ export function startApp(): void {
   // 想定外の例外で読めなくても開始画面へは進む（plan・planLoadError は null のまま）
   loadPlanFromHash(window.location.hash)
     .then((loaded) => {
-      session.plan = loaded.plan;
+      // 教員が経路を決めていない校舎は，ここで提案の経路を入れる（床の矢印・結果画面・評価が同じ経路を使うように）
+      session.plan = loaded.plan === null ? null : withResolvedRoute(loaded.plan);
       session.planLoadError = loaded.planLoadError;
     })
     .catch((error: unknown) => {

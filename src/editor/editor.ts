@@ -9,9 +9,12 @@ import { drawEditorGrid } from "./editorCanvas";
 import { canvasToCell, computeGridLayout, drillMarkers, type GridLayout } from "./editorLayout";
 import {
   addRoom,
+  beginRouteStroke,
   beginStroke,
   canRedo,
   canUndo,
+  clearRoute,
+  continueRouteStroke,
   continueStroke,
   createEditorState,
   EDIT_FLOOR,
@@ -22,6 +25,7 @@ import {
   FACINGS,
   facingOfYaw,
   isMarkerTool,
+  isRouteTool,
   MAX_GRID_SIZE,
   type MarkerKind,
   placeMarker,
@@ -34,18 +38,23 @@ import {
   setStartFacing,
   setTimeLimit,
   startBlank,
+  suggestRoute,
   undo,
 } from "./editorState";
 import {
   CELL_COLORS,
   CELL_KIND_LABELS,
   DRILL_MODES,
+  EDITOR_COLORS,
   FACING_LABELS,
   MARKER_LABELS,
   MARKER_TOOLS,
   PART_TOOLS,
+  ROUTE_TOOL_LABEL,
   roomColor,
 } from "./editorStyle";
+import { checkRoute, isEmptyRouteUnreachable, type RouteCheck } from "./routeCheck";
+import { createRoutePanel } from "./routePanel";
 import { createSharePanel } from "./sharePanel";
 import { createSpreadPanel } from "./spreadPanel";
 import { countSpreadAt, createSpreadCache } from "./spreadPreview";
@@ -216,6 +225,24 @@ export function startEditor(initialPlan: SchoolPlan = DEMO_SCHOOL): void {
     "クリックで置く．火元・集合場所はもう一度クリックで外す．開始地点は 1 つだけで，置き直すと移る．開始時の向きは上のボタンで選ぶ";
   side.append(heading("開始時の向き"), facingRow, markerHint);
 
+  /** 延焼の計算結果（校舎が変わった時だけ計算し直す．延焼のプレビューと E5 の経路の提案で同じものを使う） */
+  const spreadOf = createSpreadCache();
+
+  // 正解経路（E5）．通知の帯はこの後に作るので，呼ばれた時に引く
+  const routePanel = createRoutePanel(
+    {
+      onSelectTool: () => update(selectTool(state, { kind: "route" })),
+      onSuggest: () => {
+        const result = suggestRoute(state, spreadOf);
+        update(result.state);
+        if (result.reason !== null) showNotice(result.reason);
+      },
+      onClear: () => update(clearRoute(state)),
+    },
+    toolButton(ROUTE_TOOL_LABEL, EDITOR_COLORS.route),
+  );
+  side.appendChild(routePanel.element);
+
   side.append(heading("モード"));
   const modeRow = el("div", "editor__modes");
   modeRow.setAttribute("role", "group");
@@ -239,8 +266,6 @@ export function startEditor(initialPlan: SchoolPlan = DEMO_SCHOOL): void {
     notify: (message) => showNotice(message),
   });
   side.appendChild(spreadPanel.element);
-  /** 延焼の計算結果（校舎が変わった時だけ計算し直す．E5 の経路の提案でも使う） */
-  const spreadOf = createSpreadCache();
 
   side.append(heading("生徒用の QR コード"));
   const shareButton = button("QR コードを出す");
@@ -342,12 +367,22 @@ export function startEditor(initialPlan: SchoolPlan = DEMO_SCHOOL): void {
       return;
     }
     canvas.setPointerCapture(e.pointerId);
+    if (isRouteTool(state.tool)) {
+      const result = beginRouteStroke(state, cell);
+      update(result.state);
+      if (result.reason !== null) showNotice(result.reason);
+      return;
+    }
     update(beginStroke(state, cell));
   });
   canvas.addEventListener("pointermove", (e) => {
     const cell = cellAt(e);
     hover = cell;
-    if (cell !== null && state.stroke !== null) update(continueStroke(state, cell));
+    if (cell !== null && state.stroke !== null && isRouteTool(state.tool)) {
+      const result = continueRouteStroke(state, cell);
+      update(result.state);
+      if (result.reason !== null) showNotice(result.reason);
+    } else if (cell !== null && state.stroke !== null) update(continueStroke(state, cell));
     else render();
   });
   const finish = () => {
@@ -415,6 +450,12 @@ export function startEditor(initialPlan: SchoolPlan = DEMO_SCHOOL): void {
 
   /** 最後に誤りを検査した校舎 */
   let checkedPlan: SchoolPlan | null = null;
+  /** 正解経路の確かめの結果（経路・訓練条件・マス目が変わった時だけ確かめ直す．ドラッグ中も線の色に使う） */
+  let routeCheck: RouteCheck | null = null;
+  let routeCheckedPlan: SchoolPlan | null = null;
+  /** 経路が空で自動の提案でもたどり着けないか（延焼と探索が要るので，塗っている途中は確かめず前の結果を使う） */
+  let routeUnreachable = false;
+  let unreachableCheckedPlan: SchoolPlan | null = null;
 
   function render(): void {
     const floor = editingFloor(state);
@@ -436,6 +477,22 @@ export function startEditor(initialPlan: SchoolPlan = DEMO_SCHOOL): void {
     }
     modeHint.textContent =
       DRILL_MODES.find((m) => m.mode === state.plan.drill.mode)?.hint ?? "モードを選んでください";
+    if (routeCheck === null || routeCheckedPlan !== state.plan) {
+      routeCheck = checkRoute(state.plan.drill, EDIT_FLOOR, floor);
+      routeCheckedPlan = state.plan;
+    }
+    if (state.stroke === null && unreachableCheckedPlan !== state.plan) {
+      unreachableCheckedPlan = state.plan;
+      routeUnreachable =
+        state.plan.drill.route.length === 0 &&
+        isEmptyRouteUnreachable(state.plan, spreadOf(state.plan));
+    }
+    routePanel.sync(
+      isRouteTool(state.tool),
+      state.plan.drill.route.length,
+      routeCheck,
+      routeUnreachable,
+    );
     undoButton.disabled = !canUndo(state);
     redoButton.disabled = !canRedo(state);
     // 入力中の値は書き換えない
@@ -474,6 +531,7 @@ export function startEditor(initialPlan: SchoolPlan = DEMO_SCHOOL): void {
         spread === null || previewSeconds === null
           ? null
           : { spread, floorIndex: EDIT_FLOOR, atSeconds: previewSeconds },
+        { cells: state.plan.drill.route, badSteps: routeCheck.badSteps },
       );
     }
 
@@ -485,6 +543,11 @@ export function startEditor(initialPlan: SchoolPlan = DEMO_SCHOOL): void {
       const roomName = kind === "classroom" ? state.plan.rooms[floor.roomOf[i]]?.name : undefined;
       hoverBox.hidden = false;
       const marks = markersAt(state, hover).map((m) => `・${MARKER_LABELS[m]}`);
+      const { x: hx, z: hz } = hover;
+      const routeAt = state.plan.drill.route.findIndex(
+        (r) => r.floor === EDIT_FLOOR && r.x === hx && r.z === hz,
+      );
+      if (routeAt >= 0) marks.push(`・経路 ${routeAt + 1} マス目`);
       const ref = { floor: EDIT_FLOOR, x: hover.x, z: hover.z };
       const arrival =
         spread === null

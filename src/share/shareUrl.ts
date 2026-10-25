@@ -31,6 +31,17 @@ export type ShareLinkResult =
   | { readonly ok: true; readonly url: string }
   | { readonly ok: false; readonly reasons: readonly string[] };
 
+/** スマホからは開けない，自分の PC だけを指す host の名前（URL の hostname の形．IPv6 は角括弧つきも受ける） */
+const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+
+/**
+ * hostname（`location.hostname`・`URL#hostname` の値）が自分の PC だけを指す名前か（localhost・127.0.0.1・::1）．
+ * その配信先で作った生徒用の URL はスマホから開けないため，エディタが注意を出すのに使う．大文字・小文字は区別しない
+ */
+export function isLoopbackHost(hostname: string): boolean {
+  return LOOPBACK_HOSTS.has(hostname.toLowerCase());
+}
+
 /** 配信先とフラグメントの値から，生徒用の URL（`<baseUrl>?app#p=...`）を作る */
 export function buildShareUrl(baseUrl: string, fragment: ShareFragment): string {
   const hash = new URLSearchParams({ [PLAN_HASH_KEY]: fragment.plan });
