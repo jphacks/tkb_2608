@@ -198,7 +198,7 @@ export function startEditor(demoPlan: SchoolPlan = DEMO_SCHOOL, options: EditorO
   const style = document.createElement("style");
   style.textContent = STYLE;
   document.head.appendChild(style);
-  document.title = "校舎エディタ | 防災体験VR（仮称）";
+  document.title = "校舎エディタ | ひなんクラフトVR";
 
   const storage = browserPlanStorage();
   const saved = loadSavedPlan(storage);

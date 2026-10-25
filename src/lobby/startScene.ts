@@ -70,7 +70,7 @@ export function createStartScene(options: StartSceneOptions = {}): Scene {
       root.className = "lobby-start";
       root.innerHTML = `
         <div class="lobby-start__box">
-          <h1>防災体験VR</h1>
+          <h1>ひなんクラフトVR</h1>
           <ul>
             <li>周りに 1〜2 m の広さがあり，ぶつかる物が無いことを確かめてください</li>
             <li>センサー・カメラ・音の許可を求められたら「許可」を選んでください</li>
