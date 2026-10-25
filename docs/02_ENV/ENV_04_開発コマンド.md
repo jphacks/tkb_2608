@@ -214,6 +214,19 @@ PR を作る前に，以下がすべて通ることを確認する．
 - Biome の対象は `src/`・`scripts/`・`relay/src/`・`relay/scripts/`・`functions/`・`vite.config.ts` と設定ファイル（`biome.json`・`tsconfig.json`・`package.json`・`relay/tsconfig.json`）だけに絞っている（`biome.json` の `files.includes`）．Biome は Markdown も整形できるため，対象を広げると `docs/`・`.claude/` のフロントマターや表が書き換えられてルールが壊れる（実際に起きた）．対象を広げない
 - ビルド時の「500 kB を超えるチャンクがある」という警告は three.js 等の大きさによるもので，現時点では無視してよい（必要になったら分割する）
 
+### ブラウザでの自動検証 (Browser Verification)
+
+`/verify` と `/implement` の Phase 1b で verifier が使う．ヘッドレスの Chromium（Playwright）でローカルの開発サーバーを開いて操作し，スクリーンショットと結果を残す．手順・規約は [.claude/verify-profile.md](../../.claude/verify-profile.md)．
+
+| コマンド | 内容 |
+| --- | --- |
+| `npx playwright install chromium-headless-shell` | 検証用のブラウザを入れる（初回だけ．`~/.cache/ms-playwright/` に入る） |
+| `node scripts/verify/run.mjs scripts/verify/smoke` | 共通のスモーク（主な画面が開くか・体験の流れがロビーから訓練の説明まで進むか．約 2 分）．結果は `.verify/smoke/<名前>/run-<日時>/` |
+| `node scripts/verify/run.mjs <シナリオ.mjs>` | 1 本のシナリオを実行する．結果はシナリオの隣の `run-<日時>/` |
+
+- 開発サーバー（`127.0.0.1:5173`）が動いていればそれを使い，無ければ自分で起動して終わったら止める
+- ローカルの開発サーバー以外への通信（本番・staging・中継・Gemini・`/api/`・外部の CDN）はすべて止める（`scripts/verify/guard.mjs`）
+
 ## デプロイ (Deployment)
 
 Cloudflare Pages に GitHub Actions が配信する（準備は [ENV_03](ENV_03_管理者用環境構築手順.md)「Cloudflare Pages の準備」）．手元からデプロイのコマンドは打たない．
