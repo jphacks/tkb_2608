@@ -2,12 +2,14 @@
 // 開発サーバーでは ?debrief で結果画面だけを，デモの校舎と手で作った記録で表示する（?debrief=late・?debrief=nosmoke で記録を変える）．
 // 開発サーバーでは ?audio で避難の音（src/audio/）だけを鳴らして確かめる．
 // ?editor で教員用のエディタ（src/editor/．Canvas 2D の上から見た図）を起動する．
+// ?monitor で教員用の見守り画面（src/monitor/．中継から届いた生徒の状態で校舎を描き直す）を起動する．
 // 付けなければ，URL パラメータ（?scene=room 等）で選んだ空間を一人称で表示する PC 確認用のビューア．
 // ビューアはドラッグで視点を回し，画面のボタンで歩く・しゃがむ・ドアを開閉できる（VR 表示は後の Issue で足す）
 // ?input=mock|device を付けると，ボタン・ドラッグの代わりに担当D の入力（足踏み・しゃがみ・頭の向き）で歩く
 import * as THREE from "three";
 import { startApp } from "./app/app";
 import { resolveLaunchMode } from "./app/launchMode";
+import { startMonitorApp } from "./app/monitorMain";
 import { devPlayerInput } from "./controls/devInput";
 import { DragLook } from "./controls/dragLook";
 import { type DoorButtonTarget, WalkButtons } from "./controls/walkButtons";
@@ -220,6 +222,9 @@ if (launchMode === "app") {
 } else if (launchMode === "editor") {
   // 教員用のエディタ（three.js の描画は立ち上げない）
   startEditor();
+} else if (launchMode === "monitor") {
+  // 見守り画面（校舎の読み込みを待ってから描き始める）
+  void startMonitorApp();
 } else {
   startViewer();
 }

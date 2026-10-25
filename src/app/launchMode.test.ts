@@ -131,3 +131,38 @@ describe("resolveLaunchMode（避難の音の単独起動 ?audio）", () => {
     expect(resolveLaunchMode("?audio=0&editor")).toBe("editor");
   });
 });
+
+describe("resolveLaunchMode（教員用の見守り画面 ?monitor）", () => {
+  it.each(["?monitor", "?monitor=1", "?monitor=true", "?scene=room&monitor"])(
+    "%s は見守り画面",
+    (search) => {
+      expect(resolveLaunchMode(search)).toBe("monitor");
+    },
+  );
+
+  it.each(["?monitor=0", "?monitor=false", "?monitor=FALSE"])("%s はビューア", (search) => {
+    expect(resolveLaunchMode(search)).toBe("viewer");
+  });
+
+  it.each<[string, string]>([
+    ["?app&monitor", "app"],
+    ["?monitor&app=1", "app"],
+    ["?debrief&monitor", "debrief"],
+    ["?monitor&debrief=late", "debrief"],
+    ["?editor&monitor", "editor"],
+    ["?monitor&editor", "editor"],
+    ["?app&debrief&editor&monitor", "app"],
+    ["?audio&monitor", "audio"],
+    ["?monitor&audio=1", "audio"],
+    ["?audio=0&monitor", "monitor"],
+  ])("%s は ?app・?debrief・?audio・?editor が優先されて %s", (search, expected) => {
+    expect(resolveLaunchMode(search)).toBe(expected);
+  });
+
+  it("?app=0・?debrief=0・?editor=0 なら ?monitor が効く", () => {
+    expect(resolveLaunchMode("?app=0&monitor")).toBe("monitor");
+    expect(resolveLaunchMode("?debrief=0&monitor")).toBe("monitor");
+    expect(resolveLaunchMode("?editor=false&monitor")).toBe("monitor");
+    expect(resolveLaunchMode("?app=0&debrief=0&editor=0&monitor")).toBe("monitor");
+  });
+});

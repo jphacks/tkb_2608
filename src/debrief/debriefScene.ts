@@ -21,6 +21,8 @@ export interface DebriefTheme {
 export interface DebriefSceneOptions {
   /** 見た目（無ければ単色の背景） */
   readonly theme?: DebriefTheme;
+  /** 「同じ訓練をもう一度」「ホームへ」のボタンを出すか（既定 true．見守り画面では画面を移れないので出さない） */
+  readonly showActions?: boolean;
 }
 
 /** 結果画面から同じ訓練（同じ校舎・同じ条件）を繰り返すボタンの文字（ロビーの短い手順の後に同じ避難へ進む） */
@@ -144,13 +146,15 @@ export function createDebriefScene(options: DebriefSceneOptions = {}): Scene {
         side.appendChild(createLegend(MAP_LEGEND));
       }
 
-      side.appendChild(
-        createActions([
-          // キャリブレーション（Session.calibration）は消さない．ロビーは前回の値を保ったまま正面だけを取り直す
-          { text: DEBRIEF_RETRY_LABEL, secondary: false, onClick: () => ctx.goTo("lobby") },
-          { text: DEBRIEF_HOME_LABEL, secondary: true, onClick: () => ctx.goTo("home") },
-        ]),
-      );
+      if (options.showActions ?? true) {
+        side.appendChild(
+          createActions([
+            // キャリブレーション（Session.calibration）は消さない．ロビーは前回の値を保ったまま正面だけを取り直す
+            { text: DEBRIEF_RETRY_LABEL, secondary: false, onClick: () => ctx.goTo("lobby") },
+            { text: DEBRIEF_HOME_LABEL, secondary: true, onClick: () => ctx.goTo("home") },
+          ]),
+        );
+      }
       main.appendChild(side);
       root.appendChild(main);
       ctx.stage.overlay.appendChild(root);
