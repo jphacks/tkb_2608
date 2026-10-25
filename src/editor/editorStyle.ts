@@ -61,6 +61,8 @@ export const EDITOR_COLORS = {
   start: "#1d4fd8",
   /** 集合場所の枠と旗 */
   assembly: "#18a34a",
+  /** 集合場所のまとまりと，ドラッグ中の範囲の淡い塗り（下の屋外の色が透けるよう半透明） */
+  assemblyFill: "rgba(24, 163, 74, 0.22)",
   /**
    * 延焼のプレビューで火が着いているマスに重ねる色（結果画面の火元のマス（src/debrief/mapStyle.ts の fireOrigin）と同じ赤．
    * 下のマスの種類が透けるよう半透明）
