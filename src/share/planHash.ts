@@ -19,14 +19,17 @@ export interface PlanFromHash {
  * フラグメント（`location.hash` の形．先頭の `#` はあっても無くてもよい）から校舎を決める．
  * - `#p=<埋め込みデータ>`: decodePlan の結果（失敗した時は plan を null にし，理由を planLoadError に入れる）
  * - `#p=`（中身が空）: QR の読み取りが途中で切れた等の壊れたデータとして失敗にする（decodePlan が corrupted を返す）
- * - `#p=` が無い（フラグメントが空・別の値だけ）: 同梱のデモの校舎
+ * - `#p=` が無い（フラグメントが空・別の値だけ）: fallback（既定は同梱のデモの校舎．`&demo` の時は発表のデモ用の校舎を渡す）
  *
  * フラグメントは `a=1&p=...` のようにほかの値と並べてもよい（URLSearchParams で読む．base64url の `-`・`_` はそのまま通る）
  */
-export async function loadPlanFromHash(hash: string): Promise<PlanFromHash> {
+export async function loadPlanFromHash(
+  hash: string,
+  fallback: SchoolPlan = DEMO_SCHOOL,
+): Promise<PlanFromHash> {
   const params = new URLSearchParams(hash.startsWith("#") ? hash.slice(1) : hash);
   const encoded = params.get(PLAN_HASH_KEY);
-  if (encoded === null) return { plan: DEMO_SCHOOL, planLoadError: null };
+  if (encoded === null) return { plan: fallback, planLoadError: null };
 
   const decoded = await decodePlan(encoded);
   if (decoded.ok) return { plan: decoded.plan, planLoadError: null };
