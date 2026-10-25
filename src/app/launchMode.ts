@@ -44,3 +44,11 @@ export function resolveDebug(search: string): boolean {
   const value = new URLSearchParams(search).get("debug");
   return value !== null && value !== "0" && value.toLowerCase() !== "false";
 }
+
+/**
+ * デモ用の起動（?app&demo）．開始画面の後，ホーム・ロビー・① 授業中の教室を飛ばし，
+ * 付ける案内（カウントダウン）を挟んで ② 非常ベルと校内放送から訓練を始める（?app の時だけ意味を持つ）
+ */
+export function resolveDemo(search: string): boolean {
+  return isOn(new URLSearchParams(search).get("demo"));
+}

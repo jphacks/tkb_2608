@@ -11,7 +11,13 @@ import type { CalibrationProfile, Posture } from "../core/types";
 import { createDebriefScene } from "../debrief/debriefScene";
 import { parseInputKind } from "../input/inputParam";
 import { createInputSource, type InputSource } from "../input/inputSource";
-import { GOGGLE_SCENES, type GoggleSwitch, goggleSwitchBetween } from "../lobby/goggleSwitch";
+import {
+  DEFAULT_GOGGLE_SWITCH_CONFIG,
+  GOGGLE_ON_DEMO_LINES,
+  GOGGLE_SCENES,
+  type GoggleSwitch,
+  goggleSwitchBetween,
+} from "../lobby/goggleSwitch";
 import { createGoggleOffScene, createGoggleOnScene } from "../lobby/goggleSwitchScenes";
 import { resolveSceneRequest } from "../lobby/homeFlow";
 import { createHomeScene } from "../lobby/homeScene";
@@ -27,7 +33,7 @@ import { createPlanFingerprintFromHash } from "../share/monitorIds";
 import { loadPlanFromHash } from "../share/planHash";
 import { DEMO_SCHOOL } from "../share/samples/demoSchool";
 import { createDrillScene, type DrillScene } from "./drillScene";
-import { resolveDebug, resolveStereo } from "./launchMode";
+import { resolveDebug, resolveDemo, resolveStereo } from "./launchMode";
 import {
   type AppliedLobbyParams,
   createMotionSampleBuffer,
@@ -44,7 +50,17 @@ import {
   monitorYawOfDirection,
 } from "./monitorSender";
 import { withResolvedRoute } from "./resolvedRoute";
+import {
+  browserCalibrationStorage,
+  describeSavedCalibration,
+  loadCalibrationOverrides,
+  type SavedCalibrationOverrides,
+  saveCalibrationOverrides,
+} from "./savedCalibration";
 import { yawOnly } from "./yawOnlyCalibration";
+
+/** デモ用の起動で，開始画面の後にゴーグルに入れるのを待つ秒数（s） */
+const DEMO_PUT_ON_SECONDS = 5;
 
 /** 1 フレームの dt の上限（タブが裏に回った後等に大きく飛ばないため） */
 const MAX_DT = 0.1;
@@ -74,6 +90,8 @@ export function startApp(): void {
   );
 
   const debug = resolveDebug(window.location.search);
+  // デモ用の起動（?app&demo）．開始画面の後，付ける案内を挟んで ② 非常ベルと校内放送から始める
+  const demo = resolveDemo(window.location.search);
 
   const overlay = document.createElement("div");
   overlay.style.cssText = "position:fixed;inset:0;pointer-events:none;z-index:1;";
@@ -185,7 +203,12 @@ export function startApp(): void {
         debug,
         isPaused: () => orientationGuide.visible,
         // ?debug の時，ロビーの練習から求めた判定の値を左上に出す
-        debugInfo: () => describeLobbyParams(lobbyParams),
+        // デモの起動でロビーを通っていない間は，保存から読み込んだ値を出す
+        debugInfo: () =>
+          demoStarted && lobbyParams === null
+            ? describeSavedCalibration(demoOverrides)
+            : describeLobbyParams(lobbyParams),
+        skipClassroom: demo,
       });
       drillScene = scene;
       return scene;
@@ -205,6 +228,14 @@ export function startApp(): void {
   // 見守りへ送る値のうち，カメラから取れないもの（避難の画面の非常ベルからの秒数・階と最新の姿勢）
   let drillScene: DrillScene | null = null;
   let latestPosture: Posture = "standing";
+  // デモ用の起動の状態．開始画面からの 1 回だけホーム・ロビーを飛ばす（結果画面の後は普通の流れ）
+  let demoStarted = false;
+  // 次の切り替えで goggleSwitchBetween の代わりに挟む案内（開始画面 → 避難は通常は挟まないため）
+  let forcedGuide: GoggleSwitch | null = null;
+  // 付ける案内が終わって避難の画面に入る時に，その時の向きを正面にするか
+  let demoRecenterPending = false;
+  // デモの起動で保存から読み込んだしきい値（?debug の表示用．null は保存が無い・読めない）
+  let demoOverrides: SavedCalibrationOverrides | null = null;
 
   // 見守りの中継へ送る（#p= の後ろの room= と，ビルドの VITE_MONITOR_RELAY_URL がある時だけ．無ければ何もしない）．
   // 体験の流れはこの送信を待たず，送信の失敗も体験に影響しない（SPEC_01「見守り」の「体験との約束」）
@@ -266,9 +297,31 @@ export function startApp(): void {
         // 見守り画面が同じ結果画面を出せるよう，その回の記録を送る（評価は見守り画面が求め直す）
         if (session.drill !== null) monitor.sendTrack(session.drill.track);
       }
+      // デモ用の起動: 開始画面が許可を取り終えてホームへ進む所を，付ける案内 → 避難の画面に替える
+      if (demo && !demoStarted && current?.id === "start" && next === "home") {
+        startDemo();
+        forcedGuide = "putOn";
+        pending = "scenario";
+        return;
+      }
       // 許可の画面は起動直後の 1 回だけ（許可・カメラ・AudioContext は取り直さない）
       pending = resolveSceneRequest(next, devices.current !== null);
     },
+  };
+
+  // デモの起動の準備．ホームを通らないため中継へはここでつなぎ，保存したしきい値があれば判定に使う
+  // （正面は付け直すたびにずれるため保存せず，案内の終わりに取り直す）
+  const startDemo = (): void => {
+    demoStarted = true;
+    demoRecenterPending = true;
+    monitor.start();
+    demoOverrides = loadCalibrationOverrides(browserCalibrationStorage());
+    // mock はしきい値を使わない（tracker が無い）
+    const tracker = input.tracker;
+    if (tracker !== null && demoOverrides !== null && Object.keys(demoOverrides).length > 0) {
+      tracker.setParams(demoOverrides);
+      tracker.reset();
+    }
   };
 
   // 見守り画面が同じ効果音・ナレーションを鳴らせるよう，バスに流れた Cue をそのまま送る（audio/ の購読とは別．送れなくても音は変わらない）
@@ -278,7 +331,15 @@ export function startApp(): void {
   const createGuide = (kind: GoggleSwitch, next: SceneId): Scene =>
     kind === "takeOff"
       ? createGoggleOffScene({ next })
-      : createGoggleOnScene({ next, isPaused: () => orientationGuide.visible });
+      : next === "scenario"
+        ? // 付ける案内から避難の画面へ進むのはデモの起動だけ（ロビーの案内でなく，避難が始まる旨を出す）
+          createGoggleOnScene({
+            next,
+            isPaused: () => orientationGuide.visible,
+            guideLines: GOGGLE_ON_DEMO_LINES,
+            config: { ...DEFAULT_GOGGLE_SWITCH_CONFIG, putOnSeconds: DEMO_PUT_ON_SECONDS },
+          })
+        : createGoggleOnScene({ next, isPaused: () => orientationGuide.visible });
 
   const switchTo = async (id: SceneId, guide: GoggleSwitch | null): Promise<void> => {
     switching = true;
@@ -298,6 +359,11 @@ export function startApp(): void {
       // 中継へは許可を取った後（ホームに入る時）につなぐ．つながるのを待たない
       // （案内の画面は id が行き先の画面なので，案内に入る時は数えない）
       if (guide === null && id === "home") monitor.start();
+      // デモの起動: ゴーグルに入れ終えた今の向きを正面にする（ロビーの正面合わせの代わり）
+      if (guide === null && id === "scenario" && demoRecenterPending) {
+        demoRecenterPending = false;
+        input.recenter();
+      }
       const factory = guide === null ? factories[id] : () => createGuide(guide, id);
       if (factory === undefined) {
         console.warn(`未実装の画面です: ${id}`);
@@ -346,6 +412,10 @@ export function startApp(): void {
         replacingOverrides(lobbyParams?.result.overrides ?? null, next.result.overrides),
       );
       lobbyParams = next;
+      // デモ用の起動で使えるよう端末に保存する．何も求められなかった時は，前に保存した値を消さない
+      if (Object.keys(next.result.overrides).length > 0) {
+        saveCalibrationOverrides(browserCalibrationStorage(), next.result.overrides);
+      }
     }
     // 体の判定の途中の状態を捨て，姿勢を立ちに戻す（頭の向きは保つ）．ロビーの間は既定のしきい値で判定しており，
     // しゃがみ歩きから止まらずに立つ場面を「しゃがんでいる」と誤ったまま避難の画面に持ち越すと，本当のしゃがみが
@@ -373,7 +443,10 @@ export function startApp(): void {
       const id = pending;
       pending = null;
       // ゴーグルを付けて見る画面と外して見る画面の間では，付け外しの案内を挟む（案内からの切り替えには挟まない）
-      const guide = currentIsGuide ? null : goggleSwitchBetween(current?.id ?? null, id);
+      const guide = currentIsGuide
+        ? null
+        : (forcedGuide ?? goggleSwitchBetween(current?.id ?? null, id));
+      forcedGuide = null;
       void switchTo(id, guide);
     }
 

@@ -471,6 +471,38 @@ describe("buildDrillScenario", () => {
       expect(buildDrillScenario(DEMO_SCHOOL)).toEqual(buildDrillScenario(DEMO_SCHOOL));
     });
   });
+
+  describe("skipClassroom（デモ用の起動．Issue #181）", () => {
+    it("① classroom が無く，alarm → evacuate → ending の順", () => {
+      const def = buildDrillScenario(DEMO_SCHOOL, { skipClassroom: true });
+      expect(def.steps.map((s) => s.id)).toEqual(["alarm", "evacuate", "ending"]);
+      expect(validateScenario(def)).toEqual([]);
+    });
+
+    it("始めると最初の場面は alarm", () => {
+      const def = buildDrillScenario(DEMO_SCHOOL, { skipClassroom: true });
+      const { state } = startScenario(def);
+      expect(state.stepId).toBe("alarm");
+    });
+
+    it("alarm 以降の場面は既定と同じ内容", () => {
+      const full = buildDrillScenario(DEMO_SCHOOL);
+      const skipped = buildDrillScenario(DEMO_SCHOOL, { skipClassroom: true });
+      expect(skipped.steps).toEqual(full.steps.slice(1));
+      expect(skipped.id).toBe(full.id);
+      expect(skipped.title).toBe(full.title);
+    });
+
+    it("オプション無し・skipClassroom: false は今までどおり classroom から", () => {
+      for (const def of [
+        buildDrillScenario(DEMO_SCHOOL),
+        buildDrillScenario(DEMO_SCHOOL, {}),
+        buildDrillScenario(DEMO_SCHOOL, { skipClassroom: false }),
+      ]) {
+        expect(def.steps.map((s) => s.id)).toEqual(["classroom", "alarm", "evacuate", "ending"]);
+      }
+    });
+  });
 });
 
 describe("fireOriginName", () => {

@@ -42,6 +42,8 @@ export interface DrillSceneOptions {
   readonly isPaused?: () => boolean;
   /** debug の時，左上の表示の最後に足す文字列（ロビーの練習から求めた判定の値等．app/ が渡す） */
   readonly debugInfo?: () => string;
+  /** true なら ① 授業中の教室を飛ばし，② 非常ベルと校内放送から始める（デモ用の起動．app/ が渡す） */
+  readonly skipClassroom?: boolean;
 }
 
 /** 避難の画面．見守りの送信が読む値も返す */
@@ -77,10 +79,10 @@ interface DrillSetup {
  * 組み立てた校舎から正解経路・シナリオを求める（SPEC_01「毎フレームの処理」の前の準備）．
  * 延焼は校舎が求めた space.spread を使い，赤い表示の判定・評価・正解経路を見た目と同じ値にそろえる
  */
-function prepareDrill(space: SchoolSpace): DrillSetup {
+function prepareDrill(space: SchoolSpace, skipClassroom: boolean): DrillSetup {
   const { plan, spread } = space;
   const { route } = resolveReferenceRoute(plan, spread);
-  return { plan, spread, route, definition: buildDrillScenario(plan) };
+  return { plan, spread, route, definition: buildDrillScenario(plan, { skipClassroom }) };
 }
 
 export function createDrillScene(options: DrillSceneOptions): DrillScene {
@@ -168,7 +170,7 @@ export function createDrillScene(options: DrillSceneOptions): DrillScene {
       // 赤い表示は app/ が判定して setActive で指示する（autoRedEdge は使わない）
       const built = createSchoolScene({ maxAnisotropy: options.maxAnisotropy }, plan);
       space = built;
-      const drill = prepareDrill(built);
+      const drill = prepareDrill(built, options.skipClassroom === true);
       setup = drill;
       scenarioState = null;
       pendingEvents = [];

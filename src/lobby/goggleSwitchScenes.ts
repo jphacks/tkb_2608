@@ -91,6 +91,8 @@ export interface GoggleOnSceneOptions {
   readonly startGateConfig?: StartGateConfig;
   /** true の間は時間を数えない（縦向きの案内が出ている間は，この案内が読めないため．app/ が渡す） */
   readonly isPaused?: () => boolean;
+  /** 案内の箇条書きを差し替える（デモ用の起動で，ロビーでなく避難が始まる旨を伝える．無ければロビーへの案内） */
+  readonly guideLines?: readonly string[];
 }
 
 const GOGGLE_ON_STYLE = `
@@ -140,7 +142,7 @@ export function createGoggleOnScene(options: GoggleOnSceneOptions): Scene {
       const heading = document.createElement("h1");
       heading.textContent = GOGGLE_ON_TITLE;
       const list = document.createElement("ul");
-      for (const text of goggleOnGuideLines(gate)) {
+      for (const text of options.guideLines ?? goggleOnGuideLines(gate)) {
         const item = document.createElement("li");
         item.textContent = text;
         list.appendChild(item);
