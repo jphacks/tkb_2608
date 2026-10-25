@@ -401,3 +401,418 @@ describe("parseMonitorNotice: track", () => {
     expect(parseMonitorNotice(trackJson(overrides))).toBeNull();
   });
 });
+
+// ---- 音の知らせ（cue・speech・stopAudio）．仕様: SPEC_01「見守り」段階 1「知らせ」の表と「音」 ----
+
+import {
+  fitsMonitorNotice,
+  isMonitorSpeechRate,
+  isMonitorSpeechText,
+  MONITOR_NOTICE_MAX_BYTES,
+  readMonitorAudioCue,
+} from "./monitorNotice";
+
+/** 知らせの JSON のテキストを作る（既定は studentId: 1） */
+const noticeText = (body: Record<string, unknown>): string =>
+  JSON.stringify({ studentId: 1, ...body });
+
+/** id を n 文字にした sound の cue */
+const soundCue = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
+  type: "sound",
+  id: "fire-bell",
+  action: "play",
+  ...overrides,
+});
+
+/** n 個の params（かぎ k0, k1, ...） */
+const manyParams = (n: number): Record<string, string> =>
+  Object.fromEntries(Array.from({ length: n }, (_, i) => [`k${i}`, "v"]));
+
+describe("parseMonitorNotice: 音の知らせの仕様の例", () => {
+  it("cue・speech・stopAudio の例を読める", () => {
+    expect(
+      parseMonitorNotice(
+        '{ "type": "cue", "studentId": 3141592653, "cue": { "type": "narration", "id": "fire-announcement", "params": { "roomName": "3年1組" } } }',
+      ),
+    ).toEqual({
+      type: "cue",
+      studentId: 3141592653,
+      cue: { type: "narration", id: "fire-announcement", params: { roomName: "3年1組" } },
+    });
+    expect(
+      parseMonitorNotice(
+        '{ "type": "speech", "studentId": 3141592653, "text": "体の正面を向いて，そのまま動かないでください", "rate": 1.05 }',
+      ),
+    ).toEqual({
+      type: "speech",
+      studentId: 3141592653,
+      text: "体の正面を向いて，そのまま動かないでください",
+      rate: 1.05,
+    });
+    expect(parseMonitorNotice('{ "type": "stopAudio", "studentId": 3141592653 }')).toEqual({
+      type: "stopAudio",
+      studentId: 3141592653,
+    });
+  });
+});
+
+describe("stringifyMonitorNotice・parseMonitorNotice: 音の知らせの往復", () => {
+  it.each<MonitorNotice>([
+    { type: "cue", studentId: 1, cue: { type: "narration", id: "evac-start" } },
+    {
+      type: "cue",
+      studentId: 4294967295,
+      cue: {
+        type: "narration",
+        id: "fire",
+        params: { roomName: "3年1組", floor: 2, urgent: true },
+      },
+    },
+    { type: "cue", studentId: 7, cue: { type: "sound", id: "bell", action: "play" } },
+    {
+      type: "cue",
+      studentId: 7,
+      cue: { type: "sound", id: "fire-crackle", action: "play", loop: true, anchorId: "fire-0" },
+    },
+    { type: "cue", studentId: 7, cue: { type: "sound", id: "bell", action: "stop", loop: false } },
+    { type: "speech", studentId: 9, text: "しゃがんでください", rate: 1 },
+    { type: "speech", studentId: 9, text: "a", rate: 0.1 },
+    { type: "speech", studentId: 9, text: "a", rate: 10 },
+    { type: "stopAudio", studentId: 3141592653 },
+  ])("$type は JSON にして戻すと元に戻る", (notice) => {
+    expect(parseMonitorNotice(stringifyMonitorNotice(notice))).toEqual(notice);
+  });
+
+  it("stringify は型に無い項目を送らない（cue の中・speech・stopAudio とも）", () => {
+    const cue = {
+      type: "cue",
+      studentId: 1,
+      cue: { type: "sound", id: "bell", action: "play", extra: "x" },
+      extra: 1,
+    } as unknown as MonitorNotice;
+    expect(JSON.parse(stringifyMonitorNotice(cue))).toEqual({
+      type: "cue",
+      studentId: 1,
+      cue: { type: "sound", id: "bell", action: "play" },
+    });
+    const speech = {
+      type: "speech",
+      studentId: 1,
+      text: "a",
+      rate: 1,
+      voice: "x",
+    } as MonitorNotice;
+    expect(JSON.parse(stringifyMonitorNotice(speech))).toEqual({
+      type: "speech",
+      studentId: 1,
+      text: "a",
+      rate: 1,
+    });
+    const stop = { type: "stopAudio", studentId: 1, reason: "x" } as MonitorNotice;
+    expect(JSON.parse(stringifyMonitorNotice(stop))).toEqual({ type: "stopAudio", studentId: 1 });
+  });
+});
+
+describe("parseMonitorNotice: cue", () => {
+  it("知らない項目は落とす（知らせ・cue の両方）", () => {
+    expect(
+      parseMonitorNotice(
+        noticeText({ type: "cue", extra: 1, cue: { ...soundCue({ loop: true }), volume: 0.5 } }),
+      ),
+    ).toEqual({
+      type: "cue",
+      studentId: 1,
+      cue: { type: "sound", id: "fire-bell", action: "play", loop: true },
+    });
+    expect(
+      parseMonitorNotice(
+        noticeText({ type: "cue", cue: { type: "narration", id: "n", action: "play" } }),
+      ),
+    ).toEqual({ type: "cue", studentId: 1, cue: { type: "narration", id: "n" } });
+  });
+
+  it("id・anchorId は 64 文字まで受け取る", () => {
+    const id = "a".repeat(64);
+    expect(
+      parseMonitorNotice(noticeText({ type: "cue", cue: soundCue({ id, anchorId: id }) })),
+    ).toEqual({
+      type: "cue",
+      studentId: 1,
+      cue: { type: "sound", id, action: "play", anchorId: id },
+    });
+    expect(parseMonitorNotice(noticeText({ type: "cue", cue: { type: "narration", id } }))).toEqual(
+      { type: "cue", studentId: 1, cue: { type: "narration", id } },
+    );
+  });
+
+  it("params は 8 個・かぎ 32 文字・文字の値 100 文字まで受け取る", () => {
+    const params = { ...manyParams(7), ["k".repeat(32)]: "あ".repeat(100) };
+    expect(
+      parseMonitorNotice(noticeText({ type: "cue", cue: { type: "narration", id: "n", params } })),
+    ).toEqual({ type: "cue", studentId: 1, cue: { type: "narration", id: "n", params } });
+  });
+
+  it("params の値は文字・有限の数・真偽値を受け取る（空の文字も可）", () => {
+    const params = { a: "", b: 0, c: -1.5, d: false, e: true };
+    expect(
+      parseMonitorNotice(noticeText({ type: "cue", cue: { type: "narration", id: "n", params } })),
+    ).toEqual({ type: "cue", studentId: 1, cue: { type: "narration", id: "n", params } });
+  });
+
+  it("params が空のオブジェクトでも受け取る", () => {
+    expect(
+      parseMonitorNotice(
+        noticeText({ type: "cue", cue: { type: "narration", id: "n", params: {} } }),
+      ),
+    ).toEqual({ type: "cue", studentId: 1, cue: { type: "narration", id: "n", params: {} } });
+  });
+
+  it("日本語で上限まで使っても UTF-8 で 4 KiB に収まる", () => {
+    const params = Object.fromEntries(
+      Array.from({ length: 8 }, (_, i) => [`${"か".repeat(31)}${i}`, "あ".repeat(100)]),
+    );
+    const notice: MonitorNotice = {
+      type: "cue",
+      studentId: 4294967295,
+      cue: { type: "narration", id: "い".repeat(64), params },
+    };
+    const text = stringifyMonitorNotice(notice);
+    expect(new TextEncoder().encode(text).length).toBeLessThanOrEqual(4096);
+    expect(fitsMonitorNotice(text)).toBe(true);
+    expect(parseMonitorNotice(text)).toEqual(notice);
+  });
+
+  it.each<[string, unknown]>([
+    ["happening", { type: "happening", id: "smoke" }],
+    ["happening（params 付き）", { type: "happening", id: "shake", params: { strength: 1 } }],
+    ["知らない type", { type: "video", id: "x" }],
+    ["type が無い", { id: "x" }],
+    ["cue が無い", undefined],
+    ["cue が null", null],
+    ["cue が文字", "narration"],
+    ["cue が配列", [{ type: "narration", id: "x" }]],
+    ["narration の id が無い", { type: "narration" }],
+    ["narration の id が空", { type: "narration", id: "" }],
+    ["narration の id が 65 文字", { type: "narration", id: "a".repeat(65) }],
+    ["narration の id が数", { type: "narration", id: 1 }],
+    ["sound の id が 65 文字", soundCue({ id: "a".repeat(65) })],
+    ["sound の id が空", soundCue({ id: "" })],
+    ["sound の action が無い", soundCue({ action: undefined })],
+    ["sound の action が不正", soundCue({ action: "pause" })],
+    ["sound の action が真偽値", soundCue({ action: true })],
+    ["loop が文字", soundCue({ loop: "true" })],
+    ["loop が数", soundCue({ loop: 1 })],
+    ["loop が null", soundCue({ loop: null })],
+    ["anchorId が 65 文字", soundCue({ anchorId: "a".repeat(65) })],
+    ["anchorId が空", soundCue({ anchorId: "" })],
+    ["anchorId が数", soundCue({ anchorId: 3 })],
+    ["params が 9 個", { type: "narration", id: "n", params: manyParams(9) }],
+    ["params のかぎが 33 文字", { type: "narration", id: "n", params: { ["k".repeat(33)]: "v" } }],
+    ["params のかぎが空", { type: "narration", id: "n", params: { "": "v" } }],
+    [
+      "params の文字の値が 101 文字",
+      { type: "narration", id: "n", params: { a: "あ".repeat(101) } },
+    ],
+    ["params の値がオブジェクト", { type: "narration", id: "n", params: { a: { b: 1 } } }],
+    ["params の値が配列", { type: "narration", id: "n", params: { a: [1] } }],
+    ["params の値が null", { type: "narration", id: "n", params: { a: null } }],
+    ["params が配列", { type: "narration", id: "n", params: ["a"] }],
+    ["params が文字", { type: "narration", id: "n", params: "a" }],
+    ["params が null", { type: "narration", id: "n", params: null }],
+  ])("%s は捨てる", (_label, cue) => {
+    expect(parseMonitorNotice(noticeText({ type: "cue", cue }))).toBeNull();
+  });
+
+  it("studentId が無い・範囲外の cue は捨てる", () => {
+    const cue = { type: "narration", id: "n" };
+    expect(parseMonitorNotice(JSON.stringify({ type: "cue", cue }))).toBeNull();
+    expect(parseMonitorNotice(noticeText({ type: "cue", studentId: 0, cue }))).toBeNull();
+  });
+});
+
+describe("readMonitorAudioCue", () => {
+  it("narration・sound はそのままの形で返す", () => {
+    expect(readMonitorAudioCue({ type: "narration", id: "n", params: { a: 1 } })).toEqual({
+      type: "narration",
+      id: "n",
+      params: { a: 1 },
+    });
+    expect(readMonitorAudioCue(soundCue({ loop: true, anchorId: "fire-0" }))).toEqual({
+      type: "sound",
+      id: "fire-bell",
+      action: "play",
+      loop: true,
+      anchorId: "fire-0",
+    });
+  });
+
+  it("任意の項目が無ければ足さない", () => {
+    const narration = readMonitorAudioCue({ type: "narration", id: "n" });
+    expect(narration).toEqual({ type: "narration", id: "n" });
+    expect(narration !== null && "params" in narration).toBe(false);
+    const sound = readMonitorAudioCue(soundCue());
+    expect(sound !== null && "loop" in sound).toBe(false);
+    expect(sound !== null && "anchorId" in sound).toBe(false);
+  });
+
+  it("仕様の項目だけを並べ直す（知らない項目を落とす）", () => {
+    expect(readMonitorAudioCue({ ...soundCue(), volume: 1 })).toEqual({
+      type: "sound",
+      id: "fire-bell",
+      action: "play",
+    });
+  });
+
+  it.each<[string, unknown]>([
+    ["happening", { type: "happening", id: "smoke" }],
+    ["params の数が NaN", { type: "narration", id: "n", params: { a: Number.NaN } }],
+    [
+      "params の数が Infinity",
+      { type: "narration", id: "n", params: { a: Number.POSITIVE_INFINITY } },
+    ],
+    [
+      "params の数が -Infinity",
+      { type: "narration", id: "n", params: { a: Number.NEGATIVE_INFINITY } },
+    ],
+    ["params の値が undefined", { type: "narration", id: "n", params: { a: undefined } }],
+    ["null", null],
+    ["undefined", undefined],
+    ["数", 1],
+  ])("%s は null", (_label, value) => {
+    expect(readMonitorAudioCue(value)).toBeNull();
+  });
+});
+
+describe("parseMonitorNotice: speech", () => {
+  it("文は 1〜500 文字を受け取る", () => {
+    for (const text of ["a", "あ".repeat(500)]) {
+      expect(parseMonitorNotice(noticeText({ type: "speech", text, rate: 1 }))).toEqual({
+        type: "speech",
+        studentId: 1,
+        text,
+        rate: 1,
+      });
+    }
+  });
+
+  it("500 文字の日本語でも UTF-8 で 4 KiB に収まる", () => {
+    const text = stringifyMonitorNotice({
+      type: "speech",
+      studentId: 4294967295,
+      text: "あ".repeat(500),
+      rate: 1.05,
+    });
+    expect(fitsMonitorNotice(text)).toBe(true);
+  });
+
+  it("知らない項目は落とす", () => {
+    expect(
+      parseMonitorNotice(noticeText({ type: "speech", text: "a", rate: 1, voice: "x" })),
+    ).toEqual({
+      type: "speech",
+      studentId: 1,
+      text: "a",
+      rate: 1,
+    });
+  });
+
+  it.each<[string, Record<string, unknown>]>([
+    ["文が 501 文字", { text: "あ".repeat(501), rate: 1 }],
+    ["文が空", { text: "", rate: 1 }],
+    ["文が無い", { rate: 1 }],
+    ["文が数", { text: 1, rate: 1 }],
+    ["文が null", { text: null, rate: 1 }],
+    ["速さが 0.09", { text: "a", rate: 0.09 }],
+    ["速さが 10.01", { text: "a", rate: 10.01 }],
+    ["速さが 0", { text: "a", rate: 0 }],
+    ["速さが負", { text: "a", rate: -1 }],
+    ["速さが無い", { text: "a" }],
+    ["速さが文字", { text: "a", rate: "1" }],
+    ["速さが null", { text: "a", rate: null }],
+  ])("%s は捨てる", (_label, body) => {
+    expect(parseMonitorNotice(noticeText({ type: "speech", ...body }))).toBeNull();
+  });
+
+  it("速さが 1e999（読むと Infinity）は捨てる", () => {
+    expect(
+      parseMonitorNotice('{"type":"speech","studentId":1,"text":"a","rate":1e999}'),
+    ).toBeNull();
+  });
+
+  it("studentId が無い speech は捨てる", () => {
+    expect(parseMonitorNotice('{"type":"speech","text":"a","rate":1}')).toBeNull();
+  });
+});
+
+describe("parseMonitorNotice: stopAudio", () => {
+  it("知らない項目は落とす", () => {
+    expect(parseMonitorNotice(noticeText({ type: "stopAudio", reason: "x" }))).toEqual({
+      type: "stopAudio",
+      studentId: 1,
+    });
+  });
+
+  it.each([
+    '{"type":"stopAudio"}',
+    '{"type":"stopAudio","studentId":0}',
+    '{"type":"stopAudio","studentId":"1"}',
+    '{"type":"stopAudio","studentId":4294967296}',
+  ])("%s は捨てる", (text) => {
+    expect(parseMonitorNotice(text)).toBeNull();
+  });
+});
+
+describe("isMonitorSpeechText", () => {
+  it.each<[unknown, boolean]>([
+    ["a", true],
+    ["あ".repeat(500), true],
+    ["あ".repeat(501), false],
+    ["", false],
+    [1, false],
+    [null, false],
+    [undefined, false],
+  ])("%s → %s", (value, expected) => {
+    expect(isMonitorSpeechText(value)).toBe(expected);
+  });
+});
+
+describe("isMonitorSpeechRate", () => {
+  it.each<[unknown, boolean]>([
+    [0.1, true],
+    [1, true],
+    [1.05, true],
+    [10, true],
+    [0.09, false],
+    [10.01, false],
+    [0, false],
+    [-1, false],
+    [Number.NaN, false],
+    [Number.POSITIVE_INFINITY, false],
+    [Number.NEGATIVE_INFINITY, false],
+    ["1", false],
+    [null, false],
+    [undefined, false],
+  ])("%s → %s", (value, expected) => {
+    expect(isMonitorSpeechRate(value)).toBe(expected);
+  });
+});
+
+describe("fitsMonitorNotice", () => {
+  it("上限は 4096 バイト", () => {
+    expect(MONITOR_NOTICE_MAX_BYTES).toBe(4096);
+  });
+
+  it.each<[string, string, boolean]>([
+    ["ASCII 4096 バイト", "a".repeat(4096), true],
+    ["ASCII 4097 バイト", "a".repeat(4097), false],
+    ["日本語 1365 文字（4095 バイト）", "あ".repeat(1365), true],
+    ["日本語 1365 文字 + 1 バイト（4096 バイト）", `${"あ".repeat(1365)}a`, true],
+    ["日本語 1365 文字 + 2 バイト（4097 バイト）", `${"あ".repeat(1365)}ab`, false],
+    ["日本語 1366 文字（4098 バイト）", "あ".repeat(1366), false],
+    ["絵文字 1024 個（4096 バイト）", "😀".repeat(1024), true],
+    ["絵文字 1025 個（4100 バイト）", "😀".repeat(1025), false],
+    ["空", "", true],
+  ])("%s → %s", (_label, text, expected) => {
+    expect(fitsMonitorNotice(text)).toBe(expected);
+  });
+});

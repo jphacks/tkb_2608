@@ -1,11 +1,14 @@
 // ロビー（lobby，VR 表示）．学校の防災学習室で開始ボタンを待ち，手のひらを 1 秒かざしたら（startGate.ts の
-// startMode: "hand"）見え方の調整（二眼の像が重なるようゴーグル側で合わせる．一定時間で次へ）の後に指示を出して
-// 正面 → 立つ → しゃがむ → しゃがみ歩き → 足踏み の順に行い，正面（yawOffset）と各手順の区間（segments．
+// startMode: "hand"）見え方の調整（二眼の像が重なるようゴーグル側で合わせる．開始ボタンと同じ部品・同じ判定の
+// ボタン（十字の下）に手のひらを 1 秒かざして次へ．startMode が "auto" の時は一定時間で次へ）の後に指示を出して
+// 正面 → 立つ → しゃがむ → しゃがみ歩き → 足踏み の順に行い（体験者には「練習」として見せる．各手順は
+// 指示の読み上げ → 3 秒の準備（3・2・1）→ 計測），正面（yawOffset）と各手順の区間（segments．
 // 値の計算は input/ が行う）を CalibrationProfile として Session.calibration に書く．
 // 続けて訓練の説明（今日の訓練の内容と避難の注意．drillBriefing.ts）を時間で進めてからシナリオへ進む．
 // ゴーグル装着中なので画面のタッチは使わない（各手順は制限時間で既定値に進むため詰まらない）．
-// 開始ボタンを待つ間に手がしばらく見つからなければ，手を目の前に出すよう案内する（自動では始めない．handPrompt.ts）．
-// debug が有効な時だけ，注視での開始と Enter / Space による飛ばしを使える（デバッグ用）
+// 開始ボタン・見え方の調整のボタンを待つ間に手がしばらく見つからなければ，手を目の前に出すよう案内する
+// （自動では進まない．handPrompt.ts）．
+// debug が有効な時だけ，注視での開始と Enter / Space による飛ばしを使える（デバッグ用．見え方の調整のボタンも同じ）
 
 import type { Object3D } from "three";
 import type { FrameInfo, Scene, SceneContext } from "../core/scene";
@@ -15,8 +18,10 @@ import {
   type CalibrationConfig,
   type CalibrationState,
   DEFAULT_CALIBRATION_CONFIG,
+  finishAlignment,
   isCalibrationFinished,
   type OrientationSample,
+  prepSignal,
   restartCalibrationStep,
   skipCalibrationStep,
   startCalibration,
@@ -53,7 +58,12 @@ import {
   type LobbyPanel,
   type StartButtonView,
 } from "./lobbyRoom";
-import { describeCalibration, describeStartGate, type LobbyInstruction } from "./lobbyScript";
+import {
+  type AlignButtonPrompt,
+  describeCalibration,
+  describeStartGate,
+  type LobbyInstruction,
+} from "./lobbyScript";
 import {
   advanceNarrationTrack,
   DEFAULT_NARRATION_PACING_CONFIG,
@@ -65,11 +75,14 @@ import {
   SILENT_NARRATION,
   startNarrationTrack,
 } from "./narrationPacing";
-import { narrate, stopNarration } from "./narrator";
+import { NARRATION_RATE, narrate, stopNarration } from "./narrator";
 import { angleDifference, yawOfQuat } from "./orientation";
 import { approachHighlight, isGazingAtPanel } from "./panelGaze";
+import { createPrepCueSound } from "./prepCueSound";
 import { createSensorFeed, type SensorFeed } from "./sensorFeed";
 import {
+  ALIGN_BUTTON_ARM_SECONDS,
+  ALIGN_BUTTON_OFFSET,
   advanceStartGate,
   autoStartRemainingSeconds,
   DEFAULT_START_GATE_CONFIG,
@@ -137,6 +150,15 @@ export interface LobbySceneOptions {
    * 読み取るだけで，ロビーの進み方には影響しない
    */
   readonly onPanelView?: (view: LobbyPanelView) => void;
+  /**
+   * 指示の文を読み上げ始めた時に，その文と速さ（SpeechSynthesisUtterance.rate）を渡して呼ぶ（省略可．app/ が見守りの中継へ送る）．
+   * 読み上げを始められなかった時は呼ばない．読み取るだけで，ロビーの進み方には影響しない
+   */
+  readonly onNarrate?: (text: string, rate: number) => void;
+  /**
+   * 準備の合図（3・2・1 と計測の始まり）の短い音を鳴らす AudioContext（省略可．無い・null の時は音を出さず，指示板の数字だけ）
+   */
+  readonly audioContext?: () => AudioContext | null;
 }
 
 /** 指示の板が頭の向きに追いつく速さ（1/秒）．見回した時に一瞬遅れて追いつく様子が分かるよう緩めにする */
@@ -147,13 +169,19 @@ interface Active {
   readonly ctx: SceneContext;
   readonly panel: LobbyPanel;
   readonly button: StartButtonView;
+  /** 見え方の調整を終えるボタン（開始ボタンと同じ部品．startMode が "hand" の時だけ出す） */
+  readonly alignButton: StartButtonView;
   readonly marker: AlignmentMarker;
   readonly handMarkers: LobbyHandMarkers;
   readonly feed: SensorFeed;
   readonly dispose: () => void;
   gate: StartGateState;
+  /** 見え方の調整を終えるボタンの判定（開始ボタンと同じ判定．startMode が "hand" の時だけ進める） */
+  alignGate: StartGateState;
+  /** 見え方の調整に入ってからの秒数（ALIGN_BUTTON_ARM_SECONDS で頭打ち．ボタンを出すまでの待ち） */
+  alignWaited: number;
   state: CalibrationState;
-  /** 開始ボタンを待つ間に，手が見つからない時間 */
+  /** 開始ボタン・見え方の調整のボタンを待つ間に，手が見つからない時間 */
   handSearch: HandSearchState;
   /** 訓練の説明．キャリブレーションを終えるまでは null */
   briefing: BriefingState | null;
@@ -183,25 +211,36 @@ export function createLobbyScene(options: LobbySceneOptions): Scene {
   const debug = options.debug ?? false;
   // 注視はデバッグ用．本実装は input/ の PlayerInput.hands（手と自動開始は gateConfig.startMode で決まる）
   const sources: StartGateSources = { gaze: debug };
+  // 見え方の調整も，開始ボタンを手で押す設定の時は時間ではなくボタンで終える（制限時間は無い．開始ボタンと同じ）
+  const alignByButton = gateConfig.startMode === "hand";
+  // 開始ボタンと同じ判定を，ボタンの位置だけ十字の下に差し替えて使う
+  const alignGateConfig: StartGateConfig = { ...gateConfig, buttonOffset: ALIGN_BUTTON_OFFSET };
+  const prepCue = createPrepCueSound(options.audioContext ?? (() => null));
   let active: Active | null = null;
 
   const show = (a: Active, instruction: LobbyInstruction): void => {
+    const hold = instruction.holdSeconds ?? null;
     const caption = [
       instruction.progressLabel,
       instruction.remainingSeconds === null ? null : `残り ${instruction.remainingSeconds} 秒`,
+      hold === null ? null : `そのまま あと ${hold} 秒`,
     ]
       .filter((s) => s !== null)
       .join("　");
-    a.panel.show({ title: instruction.title, body: instruction.body, caption });
+    const countdown = instruction.countdown ?? null;
+    a.panel.show({ title: instruction.title, body: instruction.body, caption, countdown });
     if (options.onPanelView) {
       const startButton = a.gate.startedBy === null;
+      // 見え方の調整のボタンは見守り画面に送らない（見守り画面は開始ボタンの位置にしかボタンを描けないため）
       const alignMarker = !startButton && a.briefing === null && a.state.phase === "align";
-      const signature = `${instruction.title}\n${instruction.body}\n${caption}\n${startButton}\n${alignMarker}`;
+      // 見守りの画面には板の真ん中の数字を描けないため，前と同じく本文の後ろに付けて送る
+      const body = countdown === null ? instruction.body : `${instruction.body}\n\n${countdown}`;
+      const signature = `${instruction.title}\n${body}\n${caption}\n${startButton}\n${alignMarker}`;
       if (signature !== a.lastPanelView) {
         a.lastPanelView = signature;
         options.onPanelView({
           title: instruction.title,
-          body: instruction.body,
+          body,
           caption,
           startButton,
           alignMarker,
@@ -218,6 +257,9 @@ export function createLobbyScene(options: LobbySceneOptions): Scene {
         narrate(instruction.narration, () => {
           if (active === a) a.narration = markNarrationEnded(a.narration, id);
         });
+      if (spoken && instruction.narration !== null) {
+        options.onNarrate?.(instruction.narration, NARRATION_RATE);
+      }
       a.narration = startNarrationTrack(id, instruction.narration, spoken, pacingConfig);
     }
   };
@@ -275,7 +317,52 @@ export function createLobbyScene(options: LobbySceneOptions): Scene {
     }
     a.button.object.visible = false;
     a.handMarkers.update(frame.input.head, frame.input.hands, false, frame.dt);
+    // 見え方の調整のボタンを待つ間の案内は数え直す
+    a.handSearch = INITIAL_HAND_SEARCH;
     return true;
+  };
+
+  /**
+   * 見え方の調整を終えるボタンを待つ（startMode が "hand" の時）．押したら true．
+   * 開始ボタンと同じ判定・手の印・手が見つからない時の案内を使う．かざしっぱなしの手ですぐ押されないよう，
+   * ALIGN_BUTTON_ARM_SECONDS たつまでボタンを出さず，判定も手の案内も数えない
+   */
+  const updateAlignGate = (
+    a: Active,
+    frame: FrameInfo,
+    orientation: OrientationSample[],
+  ): boolean => {
+    a.lastOrientation = orientation[orientation.length - 1] ?? a.lastOrientation;
+    const dt = Number.isFinite(frame.dt) && frame.dt > 0 ? frame.dt : 0;
+    const armed = a.alignWaited >= ALIGN_BUTTON_ARM_SECONDS;
+    if (armed) {
+      a.alignGate = advanceStartGate(
+        a.alignGate,
+        {
+          dt,
+          sources,
+          head: frame.input.head,
+          hands: frame.input.hands,
+          buttonYaw: a.panel.object.rotation.y,
+          deviceLevel:
+            a.lastOrientation === null ? null : isDeviceLevel(a.lastOrientation, alignGateConfig),
+        },
+        alignGateConfig,
+      );
+      a.handSearch = advanceHandSearch(a.handSearch, dt, isAnyHandTracked(frame.input.hands));
+    } else {
+      a.alignWaited = Math.min(ALIGN_BUTTON_ARM_SECONDS, a.alignWaited + dt);
+    }
+    if (a.skipRequested) {
+      a.skipRequested = false;
+      stopNarration();
+      a.alignGate = skipStartGate(a.alignGate);
+    }
+    const pressed = a.alignGate.startedBy !== null;
+    a.alignButton.object.visible = armed && !pressed;
+    a.alignButton.setProgress(startGateProgress(a.alignGate, alignGateConfig));
+    a.handMarkers.update(frame.input.head, frame.input.hands, !pressed, frame.dt);
+    return pressed;
   };
 
   /** 訓練の説明を進める．終えたらシナリオへ */
@@ -303,6 +390,9 @@ export function createLobbyScene(options: LobbySceneOptions): Scene {
       const panel = createLobbyPanel();
       const button = createStartButton(gateConfig.buttonOffset);
       panel.object.add(button.object);
+      const alignButton = createStartButton(alignGateConfig.buttonOffset);
+      alignButton.object.visible = false;
+      panel.object.add(alignButton.object);
       const marker = createAlignmentMarker();
       marker.object.visible = false;
       ctx.stage.rig.add(marker.object);
@@ -325,10 +415,13 @@ export function createLobbyScene(options: LobbySceneOptions): Scene {
         ctx,
         panel,
         button,
+        alignButton,
         marker,
         handMarkers,
         feed,
         gate: INITIAL_START_GATE,
+        alignGate: INITIAL_START_GATE,
+        alignWaited: 0,
         state: startCalibration(ctx.session.calibration),
         handSearch: INITIAL_HAND_SEARCH,
         briefing: null,
@@ -348,6 +441,7 @@ export function createLobbyScene(options: LobbySceneOptions): Scene {
           room.dispose();
           panel.dispose();
           button.dispose();
+          alignButton.dispose();
           ctx.stage.rig.remove(marker.object);
           marker.dispose();
           ctx.stage.rig.remove(handMarkers.object);
@@ -370,10 +464,12 @@ export function createLobbyScene(options: LobbySceneOptions): Scene {
       const nowMs = performance.now();
       if (a.wasPaused) {
         a.wasPaused = false;
-        // 手順の途中で止めた時は，止める前後の値が区間に混ざらないよう，その手順を最初からやり直す（指示も読み直す）
+        // 手順の途中で止めた時は，止める前後の値が区間に混ざらないよう，その手順を最初からやり直す（指示を読み直し，準備から）
         if (a.gate.startedBy !== null && a.state.phase === "step") {
           a.state = restartCalibrationStep(a.state, nowMs);
           a.lastNarrationKey = "";
+          // 読み直しをこのフレームで始め，前の（済んだ）読み上げのまま準備を数え始めないようにする
+          show(a, describeCalibration(a.state, config));
         }
         // 説明の途中で止めた時も，聞けていないためそのページを最初から読み直す
         if (a.briefing !== null) {
@@ -392,8 +488,29 @@ export function createLobbyScene(options: LobbySceneOptions): Scene {
         updateBriefing(a, a.briefing, frame);
         return;
       }
-      // 読み上げが済むまで，時間で進む段階は次へ進めず，測る手順は制限時間を数えない（サンプルは貯める）
+      // 見え方の調整をボタンで終える時は，押されるまで時間で進めない（制限時間は無い）
+      if (alignByButton && a.state.phase === "align") {
+        const pressed = updateAlignGate(a, frame, samples.orientation);
+        if (!pressed) {
+          a.marker.object.visible = true;
+          const h = frame.input.head;
+          a.marker.object.quaternion.set(h.x, h.y, h.z, h.w);
+          const prompt: AlignButtonPrompt = {
+            gazeEnabled: sources.gaze,
+            handPrompt:
+              a.alignWaited >= ALIGN_BUTTON_ARM_SECONDS
+                ? handPromptIndex(a.handSearch, handPromptConfig)
+                : null,
+          };
+          show(a, describeCalibration(a.state, config, prompt));
+          return;
+        }
+        // 押したフレームから導入へ進める（下の時間で進む処理に続ける）
+        a.state = finishAlignment(a.state);
+      }
+      // 読み上げが済むまで，時間で進む段階は次へ進めず，測る手順は準備も制限時間も数えない（準備の間のサンプルは捨てる）
       const dt = pacedCalibrationDt(a.state, frame.dt, isNarrationSettled(a.narration), config);
+      const before = a.state;
       a.state = advanceCalibration(
         a.state,
         { dt, nowMs, motion: samples.motion, orientation: samples.orientation },
@@ -404,6 +521,8 @@ export function createLobbyScene(options: LobbySceneOptions): Scene {
         stopNarration();
         a.state = skipCalibrationStep(a.state, config);
       }
+      const signal = prepSignal(before, a.state, config);
+      if (signal !== null) prepCue.play(signal);
       // 見え方の調整の間だけ，視野の中心（左右それぞれの目の画面の中心）に十字を出す
       a.marker.object.visible = a.state.phase === "align";
       const h = frame.input.head;

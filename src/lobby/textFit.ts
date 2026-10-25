@@ -118,3 +118,43 @@ export function fitText(text: string, options: FitTextOptions, measure: MeasureT
   if (truncated && last !== undefined) kept[keep - 1] = ellipsize(last, maxWidth, px, measure);
   return { fontPx: px, lines: kept, lineHeightPx, truncated };
 }
+
+/** 文字を置く枠（px．左上の位置と幅・高さ） */
+export interface FitBox {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+export interface CenteredText {
+  /** 文字の中心の位置（px．textAlign "center"・textBaseline "middle" で描く） */
+  readonly x: number;
+  readonly y: number;
+  /** 決めた文字の大きさ（px） */
+  readonly fontPx: number;
+}
+
+/**
+ * 短い 1 行（カウントダウンの数字等）を枠の真ん中に大きく置く位置と大きさを決める．
+ * 文字の大きさは maxFontPx を上限に，枠の高さ × heightRatio（既定 0.9）以下，かつ幅に収まる大きさにする（1 px 未満にはしない）
+ */
+export function centerTextInBox(
+  text: string,
+  box: FitBox,
+  maxFontPx: number,
+  measure: MeasureText,
+  heightRatio = 0.9,
+): CenteredText {
+  const width = positive(box.width, 1);
+  const height = positive(box.height, 1);
+  const ratio = positive(heightRatio, 0.9);
+  let fontPx = Math.min(positive(maxFontPx, height), height * ratio);
+  const measured = measure(text, fontPx);
+  if (Number.isFinite(measured) && measured > width) fontPx *= width / measured;
+  return {
+    x: box.x + width / 2,
+    y: box.y + height / 2,
+    fontPx: Math.max(1, Math.floor(fontPx)),
+  };
+}

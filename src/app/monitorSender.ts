@@ -1,17 +1,22 @@
-// 生徒の端末から見守りの中継へ，状態（1 秒に 20 回）と知らせ（hello・phase・door）を送る（SPEC_01「見守り」の段階 1）．
+// 生徒の端末から見守りの中継へ，状態（1 秒に 20 回）と知らせ（hello・phase・door・lobby・track・音の合図）を送る（SPEC_01「見守り」の段階 1）．
 // 見守りは付け足しなので，つながらない・切れた・住所が未設定でも体験に影響させない（例外を外へ投げず，接続を待たない）
 
+import type { Cue } from "../core/cue";
 import type { DrillTrack } from "../core/drill";
 import type { SceneId } from "../core/scene";
 import type { CellRef, DrillMode } from "../core/schoolPlan";
 import type { Posture } from "../core/types";
 import { createStudentId, getRoomIdFromHash, parseStudentId } from "../share/monitorIds";
 import {
+  fitsMonitorNotice,
+  isMonitorSpeechRate,
+  isMonitorSpeechText,
   MONITOR_NOTICE_VERSION,
   type MonitorLobbyNotice,
   type MonitorNotice,
   type MonitorPhase,
   type MonitorTrackNotice,
+  readMonitorAudioCue,
   stringifyMonitorNotice,
 } from "../share/monitorNotice";
 import {
@@ -110,6 +115,15 @@ export interface MonitorSender {
    * つなぎ直した時も，phase が goal・result の間は送り直す（lobby・drill に移ったら忘れる）
    */
   sendTrack(track: DrillTrack): void;
+  /**
+   * イベントバスに Cue が流れた時に呼ぶ（見守り画面が同じ音を鳴らすため）．音の Cue（narration・sound）だけを送り，
+   * happening・形に合わないもの・大きすぎるものは捨てる．つながっていない間は捨て，つなぎ直しても送り直さない
+   */
+  notifyCue(cue: Cue): void;
+  /** ロビーが文を読み上げた時に呼ぶ（文が長すぎる・速さが範囲外なら捨てる．送り直さない） */
+  notifySpeech(text: string, rate: number): void;
+  /** 画面を切り替えて体験の音を止める時に呼ぶ（見守り画面でも鳴っている音と読み上げを止める．送り直さない） */
+  notifyAudioStop(): void;
   /** 接続とタイマーを片付ける */
   dispose(): void;
 }
@@ -191,6 +205,9 @@ const NOOP_SENDER: MonitorSender = {
   notifyDoor() {},
   notifyLobby() {},
   sendTrack() {},
+  notifyCue() {},
+  notifySpeech() {},
+  notifyAudioStop() {},
   dispose() {},
 };
 
@@ -257,7 +274,12 @@ export function createMonitorSender(options: MonitorSenderOptions): MonitorSende
 
   const sendNotice = (notice: MonitorNotice): void => {
     // 知らせは小さいので bufferedAmount を見ずに送る．つながっていない間は捨てる（段階 1 は送り直さない）
-    openSocket()?.send(stringifyMonitorNotice(notice));
+    const ws = openSocket();
+    if (ws === null) return;
+    const text = stringifyMonitorNotice(notice);
+    // 中継の上限を超えるものは中継で捨てられるので，送らない（形を決めた知らせは収まる）
+    if (!fitsMonitorNotice(text)) return;
+    ws.send(text);
   };
 
   const sendState = (): void => {
@@ -391,6 +413,22 @@ export function createMonitorSender(options: MonitorSenderOptions): MonitorSende
         trackNotices = splitMonitorTrack(studentId, nextTrackId, track);
         for (const notice of trackNotices) sendNotice(notice);
       });
+    },
+    notifyCue(cue) {
+      guard(() => {
+        if (openSocket() === null) return;
+        const audioCue = readMonitorAudioCue(cue);
+        if (audioCue !== null) sendNotice({ type: "cue", studentId, cue: audioCue });
+      });
+    },
+    notifySpeech(text, rate) {
+      guard(() => {
+        if (!isMonitorSpeechText(text) || !isMonitorSpeechRate(rate)) return;
+        sendNotice({ type: "speech", studentId, text, rate });
+      });
+    },
+    notifyAudioStop() {
+      guard(() => sendNotice({ type: "stopAudio", studentId }));
     },
     dispose() {
       guard(() => {

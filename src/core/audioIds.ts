@@ -30,6 +30,8 @@ export const NARRATION_ID = {
   evacuateStart: "evacuate-start",
   /** 締め */
   ending: "drill-ending",
+  /** 避難を終えて結果画面へ移る時の，ゴーグルを外す案内（app/ が避難の後に出す lobby/ の案内の画面が流す） */
+  gogglesOff: "goggles-off",
 } as const;
 
 export type NarrationId = (typeof NARRATION_ID)[keyof typeof NARRATION_ID];

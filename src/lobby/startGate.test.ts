@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { HandState, Quat, Vec3 } from "../core/types";
 import { UNTRACKED_HAND } from "../core/types";
 import {
+  ALIGN_BUTTON_ARM_SECONDS,
+  ALIGN_BUTTON_OFFSET,
   advanceStartGate,
   autoStartRemainingSeconds,
   buttonCenter,
@@ -386,5 +388,37 @@ describe("advanceStartGate（止めている間）", () => {
     expect(s.startedBy).toBeNull();
     s = advanceStartGate(s, frame(), AUTO_CONFIG);
     expect(s.startedBy).toBe("auto");
+  });
+});
+
+describe("ALIGN_BUTTON_OFFSET・ALIGN_BUTTON_ARM_SECONDS（見え方の調整を終えるボタン）", () => {
+  const alignConfig: StartGateConfig = { ...HAND_CONFIG, buttonOffset: ALIGN_BUTTON_OFFSET };
+
+  it("開始ボタンの 0.15 m 下にある", () => {
+    const start = DEFAULT_START_GATE_CONFIG.buttonOffset;
+    expect(ALIGN_BUTTON_OFFSET.x).toBeCloseTo(start.x);
+    expect(ALIGN_BUTTON_OFFSET.y).toBeCloseTo(start.y - 0.15);
+    expect(ALIGN_BUTTON_OFFSET.z).toBeCloseTo(start.z);
+  });
+
+  it("開始ボタンから handRadius より遠い", () => {
+    const a = ALIGN_BUTTON_OFFSET;
+    const b = DEFAULT_START_GATE_CONFIG.buttonOffset;
+    const d = Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+    expect(d).toBeGreaterThan(DEFAULT_START_GATE_CONFIG.handRadius);
+  });
+
+  it("開始ボタンにかざしたままの手では，見え方の調整のボタンに触れていない", () => {
+    const onStart = hand(DEFAULT_START_GATE_CONFIG.buttonOffset);
+    expect(isHandOnButton(IDENTITY, onStart, buttonCenter(0, alignConfig), alignConfig)).toBe(
+      false,
+    );
+    expect(isHandOnButton(IDENTITY, hand(ALIGN_BUTTON_OFFSET), buttonCenter(0, alignConfig))).toBe(
+      true,
+    );
+  });
+
+  it("押せるようになるまでの秒数は 3 秒", () => {
+    expect(ALIGN_BUTTON_ARM_SECONDS).toBe(3);
   });
 });

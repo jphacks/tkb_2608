@@ -11,4 +11,4 @@ export {
 } from "./audioIds";
 export { createDrillAudio, type DrillAudio, type DrillAudioOptions } from "./drillAudio";
 export { buildNarration, NARRATION_SCRIPTS } from "./narrationText";
-export { type SpeechPort, unlockSpeech } from "./speech";
+export { createSpeech, type SpeechPort, unlockSpeech } from "./speech";
