@@ -15,7 +15,7 @@ export interface HandRecognizerOptions {
   readonly stream: MediaStream;
   readonly urls: HandAssetUrls;
   readonly onResult: (result: HandFrameResult) => void;
-  /** Worker に渡す画像の幅（px）．高さは映像の縦横比から決める（既定 320） */
+  /** Worker に渡す画像の幅（px）．映像の幅より大きければ映像の幅にする．高さは映像の縦横比から決める（既定 640） */
   readonly width?: number;
   /** Worker を使うか（既定: 使えれば使う）．false でメインスレッドで認識する */
   readonly useWorker?: boolean;
@@ -231,12 +231,12 @@ export class HandRecognizer {
 
   private sendToWorker(id: number, t: number): void {
     const video = this.video;
-    const width = Math.max(16, Math.round(this.options.width ?? 320));
+    const width = Math.max(16, Math.round(Math.min(this.options.width ?? 640, video.videoWidth)));
     const height = Math.max(16, Math.round((width * video.videoHeight) / video.videoWidth));
     createImageBitmap(video, {
       resizeWidth: width,
       resizeHeight: height,
-      resizeQuality: "low",
+      resizeQuality: "medium",
     }).then(
       (bitmap) => {
         if (this.disposed || this.worker === null || id !== this.frameId) {

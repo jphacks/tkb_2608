@@ -61,7 +61,7 @@
 
 | 段階 | 内容 | 次へ進む条件 | 制限時間 |
 | --- | --- | --- | --- |
-| 開始ボタン | 目の前に 3D のボタンを出し，ゴーグルを付けて手のひらをかざすよう案内する．認識した手の位置に印を出す（校舎と共通の部品 `src/scenes/common/handMarkers.ts`．lobby/ は scenes/ を import しないため，app/ が `createLobbyScene` の `createHandMarkers` に渡す）．待つ間はキャリブレーションの時間を数えず，センサーの値も捨てる．手が 10 秒続けて見つからない時は「手を目の前に出して，カメラに映るようにしてください」と案内し，15 秒ごとに読み直す（自動では始めない．`src/lobby/handPrompt.ts`） | 手のひらをボタンに 1 秒かざす（`startMode: "hand"`．input/ の `PlayerInput.hands`）．時間で始める方式（`"auto"`．15 秒）も設定で選べる | ― |
+| 開始ボタン | 目の前に 3D のボタンを出し，ゴーグルを付けて手のひらをかざすよう案内する．認識した手の形（21 点の関節と骨．左右とも同じ色）を出す（校舎と共通の部品 `src/scenes/common/handMarkers.ts`．lobby/ は scenes/ を import しないため，app/ が `createLobbyScene` の `createHandMarkers` に渡す）．待つ間はキャリブレーションの時間を数えず，センサーの値も捨てる．手が 10 秒続けて見つからない時は「手を目の前に出して，カメラに映るようにしてください」と案内し，15 秒ごとに読み直す（自動では始めない．`src/lobby/handPrompt.ts`） | 手のひらをボタンに 1 秒かざす（`startMode: "hand"`．input/ の `PlayerInput.hands`）．時間で始める方式（`"auto"`．15 秒）も設定で選べる | ― |
 | 見え方の調整 | 左右それぞれの目の画面の中心に十字を出し，1 つに重なってくっきり見えるよう，スマホの位置やゴーグルのレンズの幅を合わせるよう案内する．値は作らない．3 秒たったら十字の下（開始ボタンの 0.15 m 下．`ALIGN_BUTTON_OFFSET`）に開始ボタンと同じボタンを出す（`ALIGN_BUTTON_ARM_SECONDS`．開始ボタンからかざしたままの手で押さないため） | ボタンに手のひらを 1 秒かざす（開始ボタンと同じ判定・手の印・手が見つからない時の案内）．`startMode: "auto"` の時は時間で進む | ―（`"auto"` の時は 15 秒） |
 | 導入 | これから行う手順を「練習」として案内する | 時間で進む | 4 秒 |
 | 正面 | 3 秒の準備の後，正面を向いて止まる → `yawOffset`．計測中は制限時間の残りではなく「そのまま あと N 秒」（保持の残り．ずれたら 3 に戻る）を出す | 3 秒の間ずれが ±15° 以内 | 8 秒 |
@@ -225,7 +225,7 @@ relay/           #126 の担当: 見守りの中継（Cloudflare Worker と Dura
 - `sim/`・`share/` は `core/` だけを import する純粋な関数のライブラリで，どのモジュールからも import してよい（エディタのプレビューと VR が同じ計算を使うため）
 - `input/` は three.js のシーンを import しない（`PlayerInput` は素のデータ．`core/types.ts` の `Vec3`・`Quat` を使う）
 - `scenes/` はセンサー・カメラの API（`DeviceMotionEvent`・`getUserMedia` 等）に触れない．入力は `FrameInfo.input` だけから受け取る
-- 画面をまたいで使う 3D の部品（今は手の印 `scenes/common/handMarkers.ts`）は scenes/ に置き，他の画面を持つモジュールには app/ が作る関数を渡す（例: ロビーの `createHandMarkers`）．受け取る側は使う形だけを自分で型にする
+- 画面をまたいで使う 3D の部品（今は手の形 `scenes/common/handMarkers.ts`）は scenes/ に置き，他の画面を持つモジュールには app/ が作る関数を渡す（例: ロビーの `createHandMarkers`）．受け取る側は使う形だけを自分で型にする
 - `scenario/`・`sim/`・`share/` は three.js にもブラウザ API にも依存しない（純粋な TypeScript．`share/` の圧縮に使う `CompressionStream` と，見守りの ID・指紋を作る `crypto.getRandomValues`・`crypto.subtle.digest` だけは例外とし，テストは Node の同じ API で行う）
 - `core/` のうち three.js の型を使うのは `core/scene.ts` だけ（型だけの import なので実行時の依存は無い）．`input/`・`scenario/`・`sim/`・`share/` は `core/scene.ts` を import しない
 
@@ -251,7 +251,7 @@ relay/           #126 の担当: 見守りの中継（Cloudflare Worker と Dura
 | `DrillTrack` | `core/drill.ts`（**新規**） | app/ → sim/ | 0.2 秒ごとの記録（非常ベルからの秒数・階（`SchoolPlan.floors` の添字．`CellRef.floor` と同じ）・ワールド座標の X と Z・姿勢） |
 | `DrillEvaluation` | `core/drill.ts`（**新規**） | sim/ → debrief/ | 評価（外れた区間・火に近づいた点・煙の中でしゃがんでいた割合・避難時間・逃げ遅れか） |
 | `PlayerInput` | `core/types.ts` | input/ → app/ → scenes/・scenario/ | 1 フレーム分の入力．頭の向き（`head`，正面リセット済み），姿勢（`posture`: `standing`／`crouching`），足踏み中か（`walking`）と前進の速さ（`walkSpeed`），左右の手（`hands`） |
-| `HandState` | `core/types.ts` | input/ → scenes/ | 片手の状態．認識できているか（`tracked`），手のひらの位置（頭を原点とした座標），握り具合（`grip`: 0〜1．握った状態の間は 0.6 以上，開いた状態の間は 0.4 以下に収めるため，0.5 で区切ればヒステリシスどおりに判定できる．握ったまま一瞬見失っても約 0.8 秒は `tracked` と握ったままを保つ） |
+| `HandState` | `core/types.ts` | input/ → scenes/ | 片手の状態．認識できているか（`tracked`），手のひらの位置（頭を原点とした座標），握り具合（`grip`: 0〜1．握った状態の間は 0.6 以上，開いた状態の間は 0.4 以下に収めるため，0.5 で区切ればヒステリシスどおりに判定できる．握ったまま一瞬見失っても約 0.8 秒は `tracked` と握ったままを保つ），手の 21 点の位置（`landmarks`: 頭の座標系．番号は MediaPipe の HandLandmarker と同じ．手の形を描くため．実機では奥行きを固定（既定 1.2 m＋相対の z）にして映像の手と重なる向きに置き，外挿しない．そのため手のひらの位置とは奥行きが一致しない．形を出せない入力と，直近の認識で見えなかった手（約 120 ms）では省く）．左右は MediaPipe の左右の札を使わず，前回の位置に近い方と画像の左右で決める |
 | `CalibrationProfile` | `core/types.ts` | lobby/ → input/ | 正面のヨー角（`yawOffset`）と，各手順の区間（`segments`: `CalibrationSegment` の配列）．旧来のしきい値の 3 項目は非推奨（後述「キャリブレーションとの分担」） |
 | `Scene` | `core/scene.ts` | 各担当 → app/ | 画面の共通インターフェース（`enter`・`update`・`exit`） |
 | `SceneContext` | `core/scene.ts` | app/ → 各 Scene | イベントバス，描画先（`Stage`），画面をまたぐデータ（`Session`），画面の切り替え（`goTo`） |
@@ -751,7 +751,7 @@ ctx.bus.emit({ type: "cue", cue: narrationCue(NARRATION_ID.fireAnnouncement, { r
 - **core の型を最初に入れる**: 「受け渡すデータ」の新規・変更の型を 1 本の専用 PR で先に入れる
 - **デモの校舎**: `src/share/samples/` に，手で書いた小さな `SchoolPlan`（教室 2〜3 つ・廊下・昇降口・校庭）を最初に置く．エディタの完成を待たずに，校舎の 3D・延焼・結果画面を作り始められる
 - **関数の形を先に決める**: `sim/` の関数（`computeSpread`・`proposeRoute`・`evaluateDrill`・`wallBetween`）は，中身より先に引数と戻り値の型を入れる．中身ができるまでは，延焼は「火元からの距離 × 秒数」，経路は「開始地点から集合場所へのまっすぐな幅優先探索」等の簡単な版でよい
-- **モック入力**: キーボードとマウスで `PlayerInput` を作る（W／S で歩行，C でしゃがみの切り替え，左ドラッグで頭の向き，マウスの位置で右手の位置，右ボタンか F キーを押している間は握る，ホイールで手の奥行き）．PC のブラウザだけで校舎と避難を確かめられる．置き場所は `src/input/`（担当D）とし，`app/` で本物の入力と切り替える
+- **モック入力**: キーボードとマウスで `PlayerInput` を作る（W／S で歩行，C でしゃがみの切り替え，左ドラッグで頭の向き，マウスの位置で右手の位置，右ボタンか F キーを押している間は握る，ホイールで手の奥行き．手の 21 点は開いた手・握った手の決め打ちの形）．PC のブラウザだけで校舎と避難を確かめられる．置き場所は `src/input/`（担当D）とし，`app/` で本物の入力と切り替える
 - **各自の dev ページ**: 担当ごとに単独で動かせるページを作る（例: `?scene=school` はモック入力で校舎を歩く，エディタは `?editor` だけで動く，結果画面はデモの校舎と手で作った `DrillTrack` で表示する）．本番のビルドには含めない
 
 ## バックエンド (Backend)

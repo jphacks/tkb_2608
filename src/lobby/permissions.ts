@@ -51,7 +51,7 @@ function requestCamera(): Promise<{ outcome: PermissionOutcome; stream: MediaStr
   }
   return media
     .getUserMedia({
-      video: { facingMode: "environment", width: { ideal: 320 }, height: { ideal: 240 } },
+      video: { facingMode: "environment", width: { ideal: 640 }, height: { ideal: 480 } },
       audio: false,
     })
     .then((stream) => ({ outcome: "granted" as const, stream }))

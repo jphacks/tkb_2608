@@ -117,3 +117,46 @@ describe("handParamsFromSearch", () => {
     expect(handParamsFromSearch("?worker=0&gripOff=0.35&scene=room")).toEqual({ gripOff: 0.35 });
   });
 });
+
+describe("描く 21 点・認識に渡す画像の項目", () => {
+  it("既定値: 固定の奥行き 1.2 m・z の倍率 1.5・21 点を出し続ける 120 ms・認識の幅 640 px", () => {
+    expect(DEFAULT_HAND_PARAMS.skeletonDepthM).toBe(1.2);
+    expect(DEFAULT_HAND_PARAMS.skeletonDepthScale).toBe(1.5);
+    expect(DEFAULT_HAND_PARAMS.skeletonHoldMs).toBe(120);
+    expect(DEFAULT_HAND_PARAMS.recognizeWidthPx).toBe(640);
+  });
+
+  it("21 点を出し続ける時間は tracked を外すまでの時間より短い（形を先に薄くする）", () => {
+    expect(DEFAULT_HAND_PARAMS.skeletonHoldMs).toBeLessThan(DEFAULT_HAND_PARAMS.trackLostMs);
+  });
+
+  it("URL パラメータで変えられる", () => {
+    expect(
+      handParamsFromSearch(
+        "?skeletonDepthM=0.8&skeletonDepthScale=2&skeletonHoldMs=200&recognizeWidthPx=320",
+      ),
+    ).toEqual({
+      skeletonDepthM: 0.8,
+      skeletonDepthScale: 2,
+      skeletonHoldMs: 200,
+      recognizeWidthPx: 320,
+    });
+  });
+
+  it("mergeHandParams で上書きでき，数でない値は無視する", () => {
+    const out = mergeHandParams(DEFAULT_HAND_PARAMS, {
+      skeletonDepthM: 0.9,
+      recognizeWidthPx: "320",
+      skeletonHoldMs: Number.NaN,
+    });
+    expect(out.skeletonDepthM).toBe(0.9);
+    expect(out.recognizeWidthPx).toBe(640);
+    expect(out.skeletonHoldMs).toBe(120);
+  });
+
+  it("worker=0 は手のしきい値として読まない", () => {
+    expect(handParamsFromSearch("?worker=0&recognizeWidthPx=480")).toEqual({
+      recognizeWidthPx: 480,
+    });
+  });
+});
