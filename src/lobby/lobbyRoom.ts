@@ -4,8 +4,9 @@
 // 2 画面で描くため，光の計算は MeshStandardMaterial より軽い MeshLambertMaterial にする
 
 import * as THREE from "three";
-import { drawFittedText } from "./canvasText";
+import { canvasFont, canvasMeasure, drawFittedText } from "./canvasText";
 import { canvasTexture, createLobbyProps, seededRandom } from "./lobbyProps";
+import { centerTextInBox } from "./textFit";
 
 /** 目の高さ（m）．rig の位置を目の位置として扱う（scenes/ の startPosition と同じ） */
 export const LOBBY_EYE_HEIGHT = 1.6;
@@ -185,6 +186,10 @@ export interface PanelContent {
   readonly body: string;
   /** 右上に出す補足（「手順 1 / 4　残り 5 秒」等） */
   readonly caption: string;
+  /**
+   * 準備のカウントダウンの数字（3・2・1）．ある時だけ，本文を上に小さく寄せて真ん中に大きく描く．省略か null なら描かない
+   */
+  readonly countdown?: number | null;
 }
 
 export interface LobbyPanel {
@@ -247,6 +252,28 @@ export const PANEL_TEXT_LAYOUT = {
     minFontPx: 26,
     lineHeight: 1.4,
   },
+  /**
+   * 準備のカウントダウンがある時の配置．本文は見出しの下に小さく（2 行まで）寄せ，
+   * 空いた下側に数字を大きく描く（文字の大きさは板の高さの半分を上限にし，枠に収める）
+   */
+  countdown: {
+    body: {
+      box: { x: PANEL_PADDING, y: 168, width: CANVAS_WIDTH - PANEL_PADDING * 2, height: 76 },
+      maxFontPx: 30,
+      minFontPx: 22,
+      lineHeight: 1.3,
+      maxLines: 2,
+    },
+    digit: {
+      box: {
+        x: PANEL_PADDING,
+        y: 252,
+        width: CANVAS_WIDTH - PANEL_PADDING * 2,
+        height: CANVAS_HEIGHT - 252 - 12,
+      },
+      maxFontPx: CANVAS_HEIGHT / 2,
+    },
+  },
 } as const;
 
 /** 目の高さの正面（少し上）に置く指示の板．object を頭のヨー角に合わせて回すと視界の正面に来る */
@@ -286,7 +313,8 @@ export function createLobbyPanel(): LobbyPanel {
   return {
     object: pivot,
     show(content) {
-      const signature = `${content.title}\n${content.body}\n${content.caption}`;
+      const countdown = content.countdown ?? null;
+      const signature = `${content.title}\n${content.body}\n${content.caption}\n${countdown ?? ""}`;
       if (signature === last || ctx === null) return;
       last = signature;
       ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
@@ -304,7 +332,26 @@ export function createLobbyPanel(): LobbyPanel {
         weight: "bold",
         color: "#ffffff",
       });
-      drawFittedText(ctx, content.body, body.box, { ...body, color: "#e0e4ec" });
+      if (countdown === null) {
+        drawFittedText(ctx, content.body, body.box, { ...body, color: "#e0e4ec" });
+      } else {
+        const layout = PANEL_TEXT_LAYOUT.countdown;
+        drawFittedText(ctx, content.body, layout.body.box, { ...layout.body, color: "#e0e4ec" });
+        const digit = String(countdown);
+        const placed = centerTextInBox(
+          digit,
+          layout.digit.box,
+          layout.digit.maxFontPx,
+          canvasMeasure(ctx, "bold"),
+        );
+        ctx.save();
+        ctx.fillStyle = "#ffd27a";
+        ctx.font = canvasFont(placed.fontPx, "bold");
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(digit, placed.x, placed.y);
+        ctx.restore();
+      }
       texture.needsUpdate = true;
     },
     setHighlight(amount) {

@@ -34,6 +34,10 @@ export const NARRATION_SCRIPTS: Readonly<Record<NarrationId, NarrationScript>> =
     templates: ["集合場所に着きました．訓練を終わります"],
     style: "narration",
   },
+  "goggles-off": {
+    templates: ["ゴーグルを外して，スマホの画面で結果を見てください"],
+    style: "narration",
+  },
 };
 
 /** 読み上げの速さ（SpeechSynthesisUtterance.rate）．校内放送は少しゆっくり読む */

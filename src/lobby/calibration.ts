@@ -78,8 +78,14 @@ const SEGMENT_KIND: Readonly<Record<CalibrationStepId, CalibrationSegmentKind | 
 
 export interface CalibrationConfig {
   /**
+   * 測る各手順の前の準備の秒数（指示の読み上げが終わってから数える．指示板に 3・2・1 を出す）．
+   * この間のセンサーの値は区間（segments）に入れない．0 以下なら準備を置かない
+   */
+  readonly prepSeconds: number;
+  /**
    * 見え方の調整（二眼の像が重なるよう，ゴーグル側でスマホの位置・レンズの幅を合わせる）の秒数．
-   * 完了の判定は持たず，この秒数たったら次へ進む．CalibrationProfile の値は作らない
+   * 完了の判定は持たず，この秒数たったら次へ進む．CalibrationProfile の値は作らない．
+   * 開始ボタンを手で押す設定（startGate.ts の startMode: "hand"）の時は使わず，体験者がボタンで終える（lobbyScene.ts）
    */
   readonly alignSeconds: number;
   /** 最初の説明の秒数 */
@@ -101,7 +107,8 @@ export interface CalibrationConfig {
     /** 静止とみなす標準偏差の上限（m/s^2） */
     readonly maxStdDev: number;
     readonly minSamples: number;
-    readonly timeoutSeconds: number;
+    /** 計測の秒数（固定．歩数等で早く終えず，この秒数たったら次へ進む） */
+    readonly measureSeconds: number;
   };
   readonly crouching: {
     /** 手順に入ってから完了とするまでの最短の秒数 */
@@ -113,16 +120,18 @@ export interface CalibrationConfig {
     readonly maxStdDev: number;
     /** 測ったずれに掛ける係数 */
     readonly thresholdRatio: number;
-    readonly timeoutSeconds: number;
+    /** 計測の秒数（固定） */
+    readonly measureSeconds: number;
   };
-  /** しゃがみ歩き．終わりの判定は足踏みと同じく山を数える（値の集計はしない） */
+  /** しゃがみ歩き．山を数えるのは測れたか（measured）の判定だけ（値の集計はしない） */
   readonly crouchWalking: {
     readonly requiredSteps: number;
     /** 1 歩とみなす山の最小の高さ（m/s^2） */
     readonly minPeak: number;
     /** 山と山の最短の間隔（秒） */
     readonly minIntervalSeconds: number;
-    readonly timeoutSeconds: number;
+    /** 計測の秒数（固定） */
+    readonly measureSeconds: number;
   };
   readonly stepping: {
     readonly requiredSteps: number;
@@ -132,9 +141,10 @@ export interface CalibrationConfig {
     readonly minIntervalSeconds: number;
     /** 測った山の高さの中央値に掛ける係数 */
     readonly thresholdRatio: number;
-    /** 時間切れの時に，測った値を使う最小の歩数 */
+    /** 歩数が requiredSteps に届かなかった時に，測った値を使う最小の歩数 */
     readonly minStepsAtTimeout: number;
-    readonly timeoutSeconds: number;
+    /** 計測の秒数（固定） */
+    readonly measureSeconds: number;
   };
   /** 測った値の下限・上限 */
   readonly limits: {
@@ -147,38 +157,51 @@ export const DEFAULT_CALIBRATION_CONFIG: CalibrationConfig = {
   alignSeconds: 15,
   introSeconds: 4,
   outroSeconds: 3,
+  prepSeconds: 3,
   faceFront: {
     holdSeconds: 3,
     toleranceRad: (15 * Math.PI) / 180,
     minSamples: 5,
     timeoutSeconds: 8,
   },
-  standing: { settleSeconds: 1, holdSeconds: 3, maxStdDev: 0.8, minSamples: 10, timeoutSeconds: 8 },
+  standing: {
+    settleSeconds: 1,
+    holdSeconds: 3,
+    maxStdDev: 0.8,
+    minSamples: 10,
+    measureSeconds: 10,
+  },
   crouching: {
     minSeconds: 4,
     minPeak: 1.0,
     stillSeconds: 1.5,
     maxStdDev: 0.8,
     thresholdRatio: 0.5,
-    timeoutSeconds: 10,
+    measureSeconds: 10,
   },
-  crouchWalking: { requiredSteps: 4, minPeak: 1.0, minIntervalSeconds: 0.25, timeoutSeconds: 12 },
+  crouchWalking: { requiredSteps: 4, minPeak: 1.0, minIntervalSeconds: 0.25, measureSeconds: 10 },
   stepping: {
     requiredSteps: 6,
     minPeak: 1.0,
     minIntervalSeconds: 0.25,
     thresholdRatio: 0.6,
     minStepsAtTimeout: 2,
-    timeoutSeconds: 12,
+    measureSeconds: 10,
   },
   limits: { crouchThreshold: [0.5, 5], stepPeakThreshold: [0.8, 6] },
 };
 
-/** 各手順の結果．measured = 条件を満たして測れた，timedOut = 時間切れ（測れた分があればその値，無ければ前の値のまま） */
+/**
+ * 各手順の結果．measured = 条件を満たして測れた，timedOut = 時間切れ・条件を満たさなかった
+ * （測れた分があればその値，無ければ前の値のまま）
+ */
 export type StepOutcome = "measured" | "timedOut";
 
 /** 段階の順番: align（見え方の調整）→ intro → step（plan の手順）→ outro → finished */
 export type CalibrationPhase = "align" | "intro" | "step" | "outro" | "finished";
+
+/** 手順の中の段階: prep（準備．3・2・1．値は捨てる）→ measure（計測．区間を記録する） */
+export type CalibrationStepStage = "prep" | "measure";
 
 export interface CalibrationState {
   /** 行う手順の順番 */
@@ -186,7 +209,11 @@ export interface CalibrationState {
   readonly phase: CalibrationPhase;
   /** phase が "step" の時の plan の位置 */
   readonly stepIndex: number;
-  /** 今の phase（手順）に入ってからの秒数 */
+  /** phase が "step" の時の手順の中の段階 */
+  readonly stepStage: CalibrationStepStage;
+  /** 準備（stepStage が "prep"）で数えた秒数 */
+  readonly prepElapsed: number;
+  /** 今の phase に入ってからの秒数（手順の最中は計測に入ってからの秒数．準備の間は 0） */
   readonly phaseElapsed: number;
   /** 今の手順で集めたサンプル */
   readonly motion: readonly MotionSample[];
@@ -198,7 +225,7 @@ export interface CalibrationState {
   readonly segments: readonly CalibrationSegment[];
   /** 最後に進めた時の時刻（performance.now() の ms）．まだ進めていなければ null */
   readonly clockMs: number | null;
-  /** 今の手順に入った時刻（performance.now() の ms）．手順の最中でなければ null */
+  /** 今の手順の計測に入った時刻（performance.now() の ms．準備の間は手順に入った時刻）．手順の最中でなければ null */
   readonly stepStartMs: number | null;
   /** 前回のキャリブレーションを引き継いだか */
   readonly reused: boolean;
@@ -236,6 +263,8 @@ export function startCalibration(previous: CalibrationProfile | null): Calibrati
     // 「もう一度」でもゴーグルを付け直す前提で，見え方の調整から行う
     phase: "align",
     stepIndex: 0,
+    stepStage: "prep",
+    prepElapsed: 0,
     phaseElapsed: 0,
     motion: [],
     orientation: [],
@@ -253,14 +282,88 @@ export function currentStepId(state: CalibrationState): CalibrationStepId | null
   return state.phase === "step" ? (state.plan[state.stepIndex] ?? null) : null;
 }
 
-/** 今の手順の制限時間の残り秒数．手順の最中でなければ null */
+/**
+ * 手順の秒数（s）．正面は制限時間（条件を満たせば早く終える），ほかは計測の秒数（固定）
+ */
+export function stepSeconds(id: CalibrationStepId, config: CalibrationConfig): number {
+  return id === "faceFront" ? config.faceFront.timeoutSeconds : config[id].measureSeconds;
+}
+
+/** 秒数が固定の手順か（正面だけは条件を満たしたら早く終える） */
+function isFixedLengthStep(id: CalibrationStepId): boolean {
+  return id !== "faceFront";
+}
+
+/** 今の手順の計測の残り秒数．手順の最中でない・準備の間は null */
 export function remainingStepSeconds(
   state: CalibrationState,
   config: CalibrationConfig = DEFAULT_CALIBRATION_CONFIG,
 ): number | null {
   const id = currentStepId(state);
-  if (id === null) return null;
-  return Math.max(0, config[id].timeoutSeconds - state.phaseElapsed);
+  if (id === null || state.stepStage === "prep") return null;
+  return Math.max(0, stepSeconds(id, config) - state.phaseElapsed);
+}
+
+/**
+ * 正面の手順で，正面を保てている秒数（s）．最後のサンプルからさかのぼり，向きが平均から
+ * toleranceRad 以内に収まっている間の長さ（holdSeconds で頭打ち．計測に入ってからの秒数も超えない）．
+ * ずれて保持が途切れると 0 に戻る．終わりの判定（evaluateFaceFront）と同じ「平均からのずれ」で見る．
+ * 正面の計測の最中でなければ 0
+ */
+export function faceFrontHoldElapsed(
+  state: CalibrationState,
+  config: CalibrationConfig = DEFAULT_CALIBRATION_CONFIG,
+): number {
+  if (currentStepId(state) !== "faceFront" || state.stepStage !== "measure") return 0;
+  const c = config.faceFront;
+  const window = latestWindow(state.orientation, c.holdSeconds);
+  const last = window[window.length - 1];
+  if (last === undefined) return 0;
+  const yaws = window.map((s) =>
+    headYawFromDeviceOrientation(s.alpha, s.beta, s.gamma, s.screenAngle),
+  );
+  // 新しい方から 1 つずつ足し，平均からのずれが許容を超えたらその手前までを保持とみなす
+  let runStart = last.t;
+  let sin = 0;
+  let cos = 0;
+  for (let i = yaws.length - 1; i >= 0; i--) {
+    const yaw = yaws[i] ?? 0;
+    sin += Math.sin(yaw);
+    cos += Math.cos(yaw);
+    if (sin === 0 && cos === 0) break;
+    const m = Math.atan2(sin, cos);
+    let steady = true;
+    for (let k = i; k < yaws.length; k++) {
+      if (Math.abs(angleDifference(m, yaws[k] ?? 0)) > c.toleranceRad) {
+        steady = false;
+        break;
+      }
+    }
+    if (!steady) break;
+    runStart = window[i]?.t ?? runStart;
+  }
+  return Math.max(0, Math.min(c.holdSeconds, state.phaseElapsed, last.t - runStart));
+}
+
+/**
+ * 正面の手順で，正面を保つ残り秒数（s）．正面の計測の最中でなければ null
+ * （指示板に「そのまま あと N 秒」と出す．制限時間 timeoutSeconds の残りは出さない）
+ */
+export function remainingHoldSeconds(
+  state: CalibrationState,
+  config: CalibrationConfig = DEFAULT_CALIBRATION_CONFIG,
+): number | null {
+  if (currentStepId(state) !== "faceFront" || state.stepStage !== "measure") return null;
+  return Math.max(0, config.faceFront.holdSeconds - faceFrontHoldElapsed(state, config));
+}
+
+/** 今の手順の準備の残り秒数．準備の間でなければ null */
+export function remainingPrepSeconds(
+  state: CalibrationState,
+  config: CalibrationConfig = DEFAULT_CALIBRATION_CONFIG,
+): number | null {
+  if (currentStepId(state) === null || state.stepStage !== "prep") return null;
+  return Math.max(0, config.prepSeconds - state.prepElapsed);
 }
 
 /** 見え方の調整の残り秒数．調整の最中でなければ null */
@@ -270,6 +373,31 @@ export function remainingAlignSeconds(
 ): number | null {
   if (state.phase !== "align") return null;
   return Math.max(0, config.alignSeconds - state.phaseElapsed);
+}
+
+/** 準備の合図: tick = 3・2・1 の数字が変わった，go = 準備を終えて計測に入った */
+export type PrepSignal = "tick" | "go";
+
+/**
+ * 1 フレーム進めた前後の状態から，鳴らす準備の合図を決める（lobbyScene が短い音を鳴らす）．
+ * 数字は数え始めてから（読み上げが終わり prepElapsed が進んでから）出す
+ */
+export function prepSignal(
+  before: CalibrationState,
+  after: CalibrationState,
+  config: CalibrationConfig = DEFAULT_CALIBRATION_CONFIG,
+): PrepSignal | null {
+  if (after.phase !== "step") return null;
+  const sameStep = before.phase === "step" && before.stepIndex === after.stepIndex;
+  if (after.stepStage === "measure") {
+    return sameStep && before.stepStage === "prep" ? "go" : null;
+  }
+  const digit = (s: CalibrationState): number | null =>
+    s.prepElapsed > 0 ? Math.ceil(config.prepSeconds - s.prepElapsed) : null;
+  const now = digit(after);
+  if (now === null) return null;
+  const prev = sameStep && before.stepStage === "prep" ? digit(before) : null;
+  return now !== prev ? "tick" : null;
 }
 
 /** 1 フレーム進める */
@@ -296,6 +424,12 @@ export function advanceCalibration(
       return enterStep(state, 0);
     }
     case "step": {
+      // 準備の間はサンプルを捨て，終わりの判定もしない（区間に入れないため）
+      if (state.stepStage === "prep") {
+        const prepElapsed = state.prepElapsed + dt;
+        if (prepElapsed < config.prepSeconds) return { ...state, prepElapsed };
+        return beginMeasure({ ...state, prepElapsed });
+      }
       const next: CalibrationState = {
         ...state,
         phaseElapsed: state.phaseElapsed + dt,
@@ -324,16 +458,31 @@ function nextClock(clockMs: number | null, nowMs: number | undefined, dt: number
   return clockMs === null ? nowMs : Math.max(clockMs, nowMs);
 }
 
+/** 準備を終えて計測に入る．区間の始まりは今の時刻にする（準備の間の値を区間に入れない） */
+function beginMeasure(state: CalibrationState): CalibrationState {
+  return {
+    ...state,
+    stepStage: "measure",
+    phaseElapsed: 0,
+    motion: [],
+    orientation: [],
+    stepStartMs: state.clockMs ?? 0,
+  };
+}
+
 /**
  * 今の手順を最初からやり直す（縦向きの案内で止めた後に再開した時．lobbyScene が呼ぶ）．
  * 止めている間はゴーグルに入っておらず，その前後の値が混ざると区間の値が正しく求まらないため，
- * 経過時間・サンプルを捨てて，区間の始まりを nowMs（performance.now() の ms）にする．手順の最中でなければそのまま
+ * 経過時間・サンプルを捨てて準備からやり直す（区間の始まりは準備の後に決まる．nowMs は performance.now() の ms）．
+ * 手順の最中でなければそのまま
  */
 export function restartCalibrationStep(state: CalibrationState, nowMs: number): CalibrationState {
   if (state.phase !== "step") return state;
   const clockMs = nextClock(state.clockMs, nowMs, 0);
   return {
     ...state,
+    stepStage: "prep",
+    prepElapsed: 0,
     phaseElapsed: 0,
     motion: [],
     orientation: [],
@@ -361,6 +510,14 @@ export function skipCalibrationStep(
     case "finished":
       return state;
   }
+}
+
+/**
+ * 見え方の調整を終えて導入へ進む（体験者がボタンで終えた時．lobbyScene が呼ぶ．startMode が "hand" の時）．
+ * 見え方の調整の最中でなければそのまま
+ */
+export function finishAlignment(state: CalibrationState): CalibrationState {
+  return state.phase === "align" ? { ...state, phase: "intro", phaseElapsed: 0 } : state;
 }
 
 /** 終わったか */
@@ -391,6 +548,8 @@ function enterStep(state: CalibrationState, index: number): CalibrationState {
     ...state,
     phase: "step",
     stepIndex: index,
+    stepStage: "prep",
+    prepElapsed: 0,
     phaseElapsed: 0,
     motion: [],
     orientation: [],
@@ -420,14 +579,21 @@ function finishStepIfDone(
 ): CalibrationState {
   const id = currentStepId(state);
   if (id === null) return state;
-  const timedOut = force || state.phaseElapsed >= config[id].timeoutSeconds;
-  const result = evaluateStep(id, state, config, timedOut);
+  const timeUp = state.phaseElapsed >= stepSeconds(id, config);
+  let result: StepResult | null;
+  let segmentOutcome: CalibrationSegmentOutcome;
+  if (isFixedLengthStep(id)) {
+    // 秒数が固定の手順は，秒数がたつまで終えない（条件を満たしても続ける）．
+    // 終えた時に条件を満たしていれば measured，満たさなければ時間切れと同じ扱い（取れた値があれば使う）．
+    // 区間は決まった秒数の動作を覆うため completed にする（使えるかは input/ が区間のサンプルで決める）
+    if (!force && !timeUp) return state;
+    result = evaluateStep(id, state, config, false) ?? evaluateStep(id, state, config, true);
+    segmentOutcome = force ? "skipped" : "completed";
+  } else {
+    result = evaluateStep(id, state, config, force || timeUp);
+    segmentOutcome = force ? "skipped" : result?.outcome === "measured" ? "completed" : "timeout";
+  }
   if (result === null) return state;
-  const segmentOutcome: CalibrationSegmentOutcome = force
-    ? "skipped"
-    : result.outcome === "measured"
-      ? "completed"
-      : "timeout";
   return enterStep(
     {
       ...state,
@@ -563,7 +729,7 @@ function evaluateStepping(
 }
 
 /**
- * しゃがみ歩き: 山を requiredSteps 回数えたら終える．値は作らない（しゃがみ歩きの山の大きさ等は input/ が区間から求める）
+ * しゃがみ歩き: 山を requiredSteps 回数えたら測れた（measured）とする．値は作らない（しゃがみ歩きの山の大きさ等は input/ が区間から求める）
  */
 function evaluateCrouchWalking(
   state: CalibrationState,
@@ -576,7 +742,7 @@ function evaluateCrouchWalking(
   return timedOut ? { outcome: "timedOut", patch: {} } : null;
 }
 
-/** 今の手順で数えた歩数（表示・しゃがみ歩きの終わりの判定用）．しゃがみ歩きの最中はその設定で数える */
+/** 今の手順で数えた歩数（しゃがみ歩きが測れたかの判定用）．しゃがみ歩きの最中はその設定で数える */
 export function countSteps(
   state: CalibrationState,
   config: CalibrationConfig = DEFAULT_CALIBRATION_CONFIG,

@@ -16,9 +16,15 @@ describe("SOUND_ID・NARRATION_ID", () => {
     );
   });
 
-  it("ナレーションの ID は決めた 4 つ", () => {
+  it("ナレーションの ID は決めた 5 つ", () => {
     expect(new Set(Object.values(NARRATION_ID))).toEqual(
-      new Set(["classroom-intro", "fire-announcement", "evacuate-start", "drill-ending"]),
+      new Set([
+        "classroom-intro",
+        "fire-announcement",
+        "evacuate-start",
+        "drill-ending",
+        "goggles-off",
+      ]),
     );
   });
 

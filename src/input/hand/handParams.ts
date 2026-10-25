@@ -15,6 +15,13 @@ export interface HandParams {
   readonly cameraOffsetXM: number;
   readonly cameraOffsetYM: number;
   readonly cameraOffsetZM: number;
+  /**
+   * 描く用の 21 点を置く固定の奥行き（m）．手のひらの位置（開始ボタンの判定に使う）とは別に，
+   * 奥行きを見積もらずにこの距離に置く（見積もりの揺れで描いた手が跳ねないようにする．rintoHasegawa/VRtest に倣う）
+   */
+  readonly skeletonDepthM: number;
+  /** 描く用の 21 点の奥行きに MediaPipe の相対の z を足す倍率（奥行き = skeletonDepthM × (1 + z × この値)） */
+  readonly skeletonDepthScale: number;
 
   // ---- なめらかさ（One Euro フィルタ＋外挿） ----
   /** 止めた時の遮断周波数（Hz）．小さいほど強く平滑化する */
@@ -37,6 +44,11 @@ export interface HandParams {
   readonly trackLostMs: number;
   /** 握ったまま見失った時に，握ったまま（tracked のまま）とみなす時間（ms） */
   readonly gripHoldMs: number;
+  /**
+   * 描く 21 点を，見えなかった認識が続いてもこの時間（ms．映像の時刻）までは出し続ける．過ぎたら landmarks を省き，
+   * 描く側が薄くして消す（tracked・position・grip は trackLostMs で決める）
+   */
+  readonly skeletonHoldMs: number;
 
   // ---- 手の形 ----
   /** 指の先と手のひらの中心の距離（手の大きさで割った値）がこれ以上なら伸びている（曲がり 0） */
@@ -57,6 +69,13 @@ export interface HandParams {
   readonly pointOthersMinCurl: number;
   /** 指を差す形が何回続いたら確定・解除するか */
   readonly pointConfirmCount: number;
+
+  // ---- 認識に渡す画像 ----
+  /**
+   * Worker で認識する時に渡す画像の幅（px）．映像（640x480 で取る）の幅より大きければ映像の幅にする．
+   * 小さいほど速いが指の点が粗くなる．カメラを付け直した時（attach）に読む
+   */
+  readonly recognizeWidthPx: number;
 
   // ---- 認識の頻度（負荷に応じた調整） ----
   /** 認識の頻度の段階（回/秒．高い順）．fps が落ちたら次の段階へ下げる */
@@ -79,6 +98,8 @@ export const DEFAULT_HAND_PARAMS: HandParams = {
   cameraOffsetXM: 0,
   cameraOffsetYM: 0,
   cameraOffsetZM: -0.08,
+  skeletonDepthM: 1.2,
+  skeletonDepthScale: 1.5,
 
   oneEuroMinCutoffHz: 1.0,
   oneEuroBeta: 1.5,
@@ -90,6 +111,7 @@ export const DEFAULT_HAND_PARAMS: HandParams = {
   trackAppearCount: 2,
   trackLostMs: 300,
   gripHoldMs: 800,
+  skeletonHoldMs: 120,
 
   fingerOpenRatio: 1.6,
   fingerClosedRatio: 0.8,
@@ -100,6 +122,8 @@ export const DEFAULT_HAND_PARAMS: HandParams = {
   pointIndexMaxCurl: 0.35,
   pointOthersMinCurl: 0.55,
   pointConfirmCount: 2,
+
+  recognizeWidthPx: 640,
 
   rateLevelsHz: [15, 10, 7],
   rateDownFps: 30,
