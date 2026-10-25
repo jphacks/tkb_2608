@@ -52,6 +52,8 @@ export interface WalkWorld {
   readonly eyeHeights: EyeHeights;
   readonly seats: readonly SeatSpot[];
   readonly body?: BodyShape;
+  /** PlayerInput.walkSpeed に掛ける倍率（省略時 1．広い校舎で速める．掛けた後も MAX_WALK_SPEED で抑える） */
+  readonly walkSpeedScale?: number;
 }
 
 /** プレイヤーの状態（ワールド座標．eyeHeight は床からの目の高さ） */
@@ -102,6 +104,17 @@ export function activeObstacles(world: WalkWorld): Obstacle[] {
     if (!door.isOpen()) list.push(door.obstacle);
   }
   return list;
+}
+
+/**
+ * 前へ進む速さ（m/s）．walkSpeed に倍率 scale を掛け，0〜MAX_WALK_SPEED に収める．
+ * scale が省略・有限でない・負の時は 1 とする．walkSpeed が NaN なら 0（進まない）
+ */
+export function scaledWalkSpeed(walkSpeed: number, scale: number | undefined): number {
+  const k = scale !== undefined && Number.isFinite(scale) && scale >= 0 ? scale : 1;
+  const speed = walkSpeed * k;
+  if (Number.isNaN(speed)) return 0;
+  return Math.min(Math.max(speed, 0), MAX_WALK_SPEED);
 }
 
 /** 開始時の状態 */
@@ -175,7 +188,7 @@ export function stepWalk(
 
   const obstacles = activeObstacles(world);
   const headTop = state.eyeHeight + body.headClearance;
-  const speed = input.walking ? Math.min(Math.max(input.walkSpeed, 0), MAX_WALK_SPEED) : 0;
+  const speed = input.walking ? scaledWalkSpeed(input.walkSpeed, world.walkSpeedScale) : 0;
   const distance = speed * seconds;
   // 進まない時も押し出す（閉じたドアに重なった時等）
   const moved =

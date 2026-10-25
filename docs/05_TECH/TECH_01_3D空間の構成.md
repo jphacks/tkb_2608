@@ -224,11 +224,11 @@
 
 ### 当たり判定 (School Collision)
 
-`collectSchoolCollision(root)` がパーツの Group の userData から `WalkWorld` の材料（障害物・ドア・床の範囲・エリア）を取り出す．範囲の計算は `schoolLayout.ts`・`classroomLayout.ts` の純粋な関数で行う．
+`collectSchoolCollision(root, { shutterWicketPassable })` がパーツの Group の userData から `WalkWorld` の材料（障害物・ドア・床の範囲・エリア）を取り出す．範囲の計算は `schoolLayout.ts`・`classroomLayout.ts` の純粋な関数で行う．
 
 - 壁・窓付きの壁（窓の下の腰壁を含む）・柱・教室の中身は通れない
 - ドアは閉じている間だけふさぐ．`locked` のドアは開けられない（`setSchoolDoorOpen()` が何もせず false を返す）ので，常にふさぐ
-- 閉じた防火シャッターは全面をふさぐ（しゃがんでもくぐれない）．くぐり戸の範囲を空ける関数（`fireShutterCurtainObstacles(…, true)`）はあるが，まだ使っていない
+- 閉じた防火シャッターは，既定（`shutterWicketPassable: false`．`?scene=school-parts`）では全面をふさぐ（しゃがんでもくぐれない）．`true`（`?scene=school`）ではくぐり戸の範囲を空け，幕をくぐり戸の左右の板・下端（高さ 0.05 m まで．足でまたげる高さ `stepHeight` と等しい）・上端（1.95 m から）の 4 枚に分ける（`fireShutterCurtainObstacles(…, true)`）．見た目と同じ寸法（`edgeLayout()` の `shutter.wicket`）から求めるため，くぐり戸の位置と通れる範囲がそろう．手で押して開ける動作（S4）は無く，常に通れる
 - 出口は，外のポーチと敷居（`exitSillRect()`）を床の範囲に足すため，内から外へ出られる．外のポーチはエリア `<出口の id>-outside` にする
 
 ### 確認用の空間 (School Parts Preview)
@@ -294,7 +294,7 @@ fireSmoke.update(secondsSinceAlarm, eyePosition);
 - 時刻が `NaN`・無限，着く時刻が `Infinity`・`NaN` の時は，火も煙も無いものとして扱う
 - 色・濃さ・粒の量は仮の値．見た目は `SMOKE_SHADE`・`SMOKE_SHEET`・`FIRE_PARTICLE_LOOK`・`FIRE_EMBERS`，粒の量は `FIRE_PARTICLES`，フォグは `SMOKE_FOG`（色は煙に合わせた濃い灰色 `0x4a4744`）で調整する．iPhone で重い時は，煙の層の数・billow ノイズの段の数（`BILLOW_GLSL` の 4）・粒の数を下げる
 - 負荷（Issue #119 で見た目を変えた時の変化）: 描画は 3 回のまま，粒は 600 個のまま．煙の 1 画素あたりのノイズは 5 回 → 6 回（ずらし 2 回＋billow 4 段）．炎の粒は縦長にしたぶん覆う画素がやや増え，火の粉の画素はノイズを使わないので軽い．CPU は生まれ直した粒のマスの中心（`aCenter`．1 粒 2 つの数）を書くのが増えただけ
-- 赤い表示（煙の中で立っている・火に近づいた時の画面の縁）と，燃えているマスの当たり判定はここでは扱わない
+- 赤い表示（煙の中で立っている・火に近づいた時の画面の縁）と，燃えているマスの当たり判定はここでは扱わない（「SchoolPlan からの組み立て」）
 
 ## SchoolPlan からの組み立て (School From Plan)
 
@@ -315,8 +315,13 @@ fireSmoke.update(secondsSinceAlarm, eyePosition);
 - ドアのマスは開口部として作る（引き戸の扉は置かない．SPEC_02 のとおり開け閉めはしない）．辺に置く物のドア・出口のパーツ（`createSchoolEdge` の `door`・`exit`）は下限の長さ（2.32 m・2.72 m）が 1 m のマスに入らないため使っていない
 - 床の正解経路の矢印（`createRouteArrows`．学習モードのみ）と火と煙（`createFireSmoke(plan, computeSpread(plan))`）を root の直下に置く（結合の対象外．Issue #104）．`SchoolSpace` の `routeArrows`（テストモードは `null`）・`fireSmoke`・`fog`（= `fireSmoke.fog`）で引ける．`update(frame)` は `fireSmoke.update(frame.seconds, frame.eye)` を呼ぶ．`dispose` で両方も解放する
 - `?scene=school` 単独で開いた時の非常ベルの時刻は，ページを開いた時を 0 秒とし，毎フレーム `dt × speed` を足す（`src/scenes/alarmClock.ts`．`?t=<秒>` で始める時刻，`?speed=<倍率>` で進む速さ．不正な値は既定の 0 秒・1 倍）．体験の流れ（`?app`）につなぐ時は，そちらの時刻を `update` に渡す
-- 防火シャッターは閉じていて通れないため，デモの校舎では開始地点から煙の中へは歩いて行けない（くぐり戸を通れるようにするのは後の Issue）
-- 教室の中身（机・黒板）は置いていない．エリアのイベント・赤い表示・燃えているマスの当たり判定・複数フロアは後の Issue で扱う
+- 防火シャッターは閉じているが，くぐり戸の範囲は通れる（「当たり判定」）．デモの校舎では，開始地点から廊下の中ほど（z = 7 の列）を東へ歩くと，くぐり戸を通って煙の中へ入れる（Issue #121）
+- 燃えているマス: 燃えうるマスごとにマス全体をふさぐ障害物を作り（`fireCellCollision.ts`），「燃えている間だけ閉じるドア」として `WalkWorld.doors` に足す．ふさぐのは `fireAt(cell) <= 今` で，かつ体（半径 0.18 m）がそのマスに重なっていない時だけ（火が着いた時にそのマスにいても押し出されたり閉じ込められたりしない．離れた後は入れない）．時刻と体の位置は `update(frame)` の `seconds`・`eye` から入るため，判定は 1 フレーム遅れて歩行に効く．時刻が `NaN` の時は通れる
+- 歩く速さ: `WalkWorld.walkSpeedScale` に校舎用の倍率 `SCHOOL_WALK_SPEED_SCALE`（1.5）を入れ，`walkSpeed` に掛ける（`scaledWalkSpeed()`．掛けた後も上限 `MAX_WALK_SPEED` の 2 m/s）．他の空間は倍率を持たないので変わらない．経路の提案の `ROUTE_WALK_SPEED`（`sim/params.ts`）とは別の定数で，値をそろえる
+- 赤い表示: `SchoolSpace.redEdge`（`src/scenes/common/redEdge.ts` の `createRedEdge()`）．クリップ座標に頂点を置いた全画面の板をシェーダーで描き，縁を赤くする（カメラ・ビューポートによらないため，左右 2 画面の両方の縁に出る）．`setActive(bool)` で出す・消すを指示し，`update(dt)` で 0.2 秒のフェードを進める（点滅させない．消えている間は描かない）．見た目は `RED_EDGE`（端の濃さ 0.85・赤くし始める位置 0.6）で調整する．`root` の子なので校舎と一緒に描かれ，DOM の重ね表示（Stage の overlay）より下になる
+  - `?scene=school` 単独（`createSchoolScene(…, { autoRedEdge: true })`）では，`update` の中で時刻・目の X と Z・姿勢から `detectErrorBehaviors(plan, spread, sample)` を呼び，`any` の間だけ出す（`sample` は使い回しの 1 件．画面の左上の `error` の行に結果を出す）
+  - 体験の流れ（`?app`）・見守り画面は `autoRedEdge` を付けずに作り（既定 `false`），呼ぶ側が毎フレーム `space.redEdge.setActive(detectErrorBehaviors(plan, space.spread, sample).any)` の後に `space.update({ seconds, eye, dt })` を呼ぶ（Issue #111）．`dt` を渡さないとフェードせずに切り替わり，`eye` を渡さないと燃えているマスは常にふさぐ
+- 教室の中身（机・黒板）は置いていない．エリアのイベント（集合場所 `assembly` は Issue #151）・複数フロアは後の Issue で扱う
 
 ## 歩行と当たり判定 (Walking & Collision)
 
@@ -324,7 +329,7 @@ fireSmoke.update(secondsSinceAlarm, eyePosition);
 
 ### 移動 (Locomotion)
 
-- `walking` の間だけ，体の向き（`startYaw`）＋頭の向きの yaw の方へ `walkSpeed` で進む（上限 `MAX_WALK_SPEED` 2 m/s）
+- `walking` の間だけ，体の向き（`startYaw`）＋頭の向きの yaw の方へ `walkSpeed`（`WalkWorld.walkSpeedScale` があれば掛けた値）で進む（上限 `MAX_WALK_SPEED` 2 m/s）
 - 1 フレームの時間は `MAX_STEP_SECONDS`（0.1 秒）までに抑え，移動は 5 cm ごとに分けてすり抜けを防ぐ．各刻みは「そのまま → X だけ → Z だけ」の順に試し，押し出した後も物と重なる候補は採らない（壁に沿って滑り，狭いすき間でめり込まない）
 - 目の高さは各空間の `EYE_HEIGHT` を基準に，`EYE_HEIGHT_SPEED`（2.5 m/s）で少しずつ変える
 

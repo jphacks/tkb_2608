@@ -10,7 +10,9 @@ import {
   type DoorBlocker,
   headYaw,
   initialWalkState,
+  MAX_WALK_SPEED,
   type SeatSpot,
+  scaledWalkSpeed,
   stepWalk,
   type WalkState,
   type WalkWorld,
@@ -356,5 +358,68 @@ describe("stepWalk: 着座", () => {
     const moved = run(crouched, walk(1, { posture: "crouching" }), w, 0.7, Math.PI / 2);
     const s = run(moved, input({ posture: "crouching" }), w, 1, SEAT.facingYaw);
     expect(s.seat).toBeNull();
+  });
+});
+
+// SPEC_01「VR 避難の規則」の「歩く速さ」（校舎では PlayerInput.walkSpeed に倍率を掛ける．他の空間は変えない）．Issue #121
+describe("scaledWalkSpeed", () => {
+  it.each([
+    ["倍率 1.5 で 1.0 m/s は 1.5 m/s", 1, 1.5, 1.5],
+    ["倍率 1.5 で 0.5 m/s は 0.75 m/s", 0.5, 1.5, 0.75],
+    ["倍率を省略すると変わらない", 1, undefined, 1],
+    ["倍率 1 は変わらない", 0.8, 1, 0.8],
+    ["倍率 0 は進まない", 1, 0, 0],
+    ["掛けた後も上限 2 m/s で抑える", 1.5, 1.5, 2],
+    ["倍率が大きくても上限 2 m/s", 1, 100, 2],
+    ["walkSpeed が上限を超えていても 2 m/s", 50, undefined, 2],
+    ["walkSpeed が 0 なら 0", 0, 1.5, 0],
+    ["負の walkSpeed は 0（後ろへ進まない）", -1, 1.5, 0],
+    ["walkSpeed が NaN なら 0", Number.NaN, 1.5, 0],
+    ["walkSpeed が Infinity なら上限", Number.POSITIVE_INFINITY, 1.5, 2],
+    ["倍率が NaN なら 1 とみなす", 1, Number.NaN, 1],
+    ["倍率が Infinity なら 1 とみなす", 1, Number.POSITIVE_INFINITY, 1],
+    ["倍率が負なら 1 とみなす（後ろへ進まない）", 1, -1.5, 1],
+  ])("%s", (_, speed, scale, expected) => {
+    expect(scaledWalkSpeed(speed, scale)).toBeCloseTo(expected, 10);
+  });
+
+  it("結果は常に 0〜MAX_WALK_SPEED", () => {
+    const speeds = [-10, -1, 0, 0.3, 1, 2, 10, Number.NaN, Number.POSITIVE_INFINITY];
+    const scales = [undefined, -1, 0, 0.5, 1, 1.5, 3, Number.NaN];
+    for (const v of speeds) {
+      for (const k of scales) {
+        const r = scaledWalkSpeed(v, k);
+        expect(r).toBeGreaterThanOrEqual(0);
+        expect(r).toBeLessThanOrEqual(MAX_WALK_SPEED);
+      }
+    }
+  });
+});
+
+describe("stepWalk: 歩く速さの倍率（walkSpeedScale）", () => {
+  it("walkSpeedScale 1.5 なら 1.0 m/s の足踏みで 1 秒に 1.5 m 進む", () => {
+    const s = run(start(), walk(1), world({ walkSpeedScale: 1.5 }), 1);
+    expect(s.z).toBeCloseTo(-1.5, 2);
+  });
+
+  it("walkSpeedScale が無い空間は今までどおり（1.0 m/s で 1 m）", () => {
+    const s = run(start(), walk(1), world(), 1);
+    expect(s.z).toBeCloseTo(-1, 2);
+  });
+
+  it("倍率を掛けても上限 2 m/s で頭打ちになる", () => {
+    const s = run(start(), walk(1.5), world({ walkSpeedScale: 1.5 }), 1);
+    expect(Math.hypot(s.x, s.z)).toBeCloseTo(2, 2);
+  });
+
+  it("足踏みしていなければ倍率があっても動かない", () => {
+    const s = run(
+      start(),
+      input({ walking: false, walkSpeed: 1 }),
+      world({ walkSpeedScale: 1.5 }),
+      1,
+    );
+    expect(s.x).toBeCloseTo(0);
+    expect(s.z).toBeCloseTo(0);
   });
 });

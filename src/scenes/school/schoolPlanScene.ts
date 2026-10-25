@@ -1,13 +1,18 @@
 // SchoolPlan の 1 フロアから組み立てた校舎の空間（?scene=school）．並べ方は schoolPlanLayout.ts の純粋な関数で求め，
 // ここでは校舎のパーツ（schoolParts.ts）を置くだけ．動かない Mesh は最後にマテリアルごとに結合する．
-// 学習モードの床の矢印（routeArrows.ts）と火と煙（fireSmoke.ts）も足し，火と煙は毎フレームの update で時刻に合わせる
+// 学習モードの床の矢印（routeArrows.ts）と火と煙（fireSmoke.ts）も足し，火と煙は毎フレームの update で時刻に合わせる．
+// 赤い表示（common/redEdge.ts）も足す．出す・消すは redEdge.setActive で外（app/）から指示するか，autoRedEdge で自分で判定する
 
 import * as THREE from "three";
 import type { SchoolPlan } from "../../core/schoolPlan";
+import type { Posture } from "../../core/types";
 import { DEMO_SCHOOL } from "../../share/samples/demoSchool";
-import { computeSpread } from "../../sim/spread";
+import { detectErrorBehaviors, type ErrorBehaviors } from "../../sim/errorBehavior";
+import { computeSpread, type SpreadMap } from "../../sim/spread";
 import { createBox, disposeObjectTree } from "../common/meshHelpers";
+import { createRedEdge, type RedEdge } from "../common/redEdge";
 import type { Space, SpaceBuildOptions } from "../types";
+import { createFireCellBlockers, type FireCellBlockers } from "./fireCellCollision";
 import { createFireSmoke, type FireSmoke } from "./fireSmoke";
 import { createRouteArrows, type RouteArrows } from "./routeArrows";
 import {
@@ -57,6 +62,18 @@ export interface SchoolSpace extends Space {
   /** 火と煙（root の子．fog は fireSmoke.fog と同じもの） */
   readonly fireSmoke: FireSmoke;
   readonly fog: THREE.FogExp2;
+  /** 火と煙が各マスに着く時刻（computeSpread(plan)．赤い表示の判定・燃えているマスの当たり判定と同じもの） */
+  readonly spread: SpreadMap;
+  /**
+   * 赤い表示（root の子）．体験の流れ（app/）からは毎フレーム
+   * `space.redEdge.setActive(detectErrorBehaviors(plan, space.spread, sample).any)` で出す・消すを指示する．
+   * フェードは update(frame) が frame.dt で進める
+   */
+  readonly redEdge: RedEdge;
+  /** 燃えているマスの当たり判定（WalkWorld.doors に足す．時刻と体の位置は update(frame) が渡す） */
+  readonly fireCells: FireCellBlockers;
+  /** autoRedEdge の時に直前の update で求めたエラー行動（autoRedEdge でない・まだ求めていない時は null） */
+  readonly errorBehaviors: ErrorBehaviors | null;
 }
 
 /** Space が SchoolPlan から組み立てた校舎の空間か */
@@ -68,6 +85,12 @@ export function isSchoolSpace(space: Space): space is SchoolSpace {
 export interface SchoolSceneOptions {
   /** 防火シャッターを閉じて作るか（既定 true．非常ベルの時点で閉じている扱い．SPEC_02「通れる・燃え広がる」） */
   readonly shuttersClosed?: boolean;
+  /**
+   * 赤い表示を自分で判定して出すか（既定 false）．true なら毎フレームの update で frame.seconds・frame.eye・frame.posture から
+   * detectErrorBehaviors() を呼び，any の間だけ出す（体験の流れ（app/）につながるまでの ?scene=school 単独の確認用）．
+   * false なら redEdge.setActive の指示だけに従う
+   */
+  readonly autoRedEdge?: boolean;
 }
 
 function place(object: THREE.Object3D, placement: PartPlacement): void {
@@ -240,8 +263,24 @@ export function createSchoolScene(
   // 矢印と火と煙は parts の外（root の直下）に置き，結合の対象にしない（それぞれ自分で解放するため）
   const routeArrows = createRouteArrows(plan);
   if (routeArrows) root.add(routeArrows.object);
-  const fireSmoke = createFireSmoke(plan, computeSpread(plan));
+  const spread = computeSpread(plan);
+  const fireSmoke = createFireSmoke(plan, spread);
   root.add(fireSmoke.object);
+  const redEdge = createRedEdge();
+  root.add(redEdge.object);
+  // 作る校舎は 1 つ目の階だけなので，燃えているマスの当たり判定も 1 つ目の階だけ
+  const fireCells = createFireCellBlockers(plan, spread, 0, layout.ceilingHeight);
+
+  const autoRedEdge = sceneOptions.autoRedEdge ?? false;
+  // 判定に渡す記録の 1 件（毎フレーム作らずに使い回す．DrillSample と同じ形）
+  const sample: { t: number; floor: number; x: number; z: number; posture: Posture } = {
+    t: 0,
+    floor: 0,
+    x: 0,
+    z: 0,
+    posture: "standing",
+  };
+  let errorBehaviors: ErrorBehaviors | null = null;
 
   return {
     id: "school",
@@ -255,8 +294,29 @@ export function createSchoolScene(
     routeArrows,
     fireSmoke,
     fog: fireSmoke.fog,
+    spread,
+    redEdge,
+    fireCells,
+    get errorBehaviors() {
+      return errorBehaviors;
+    },
     update: (frame) => {
+      fireCells.update(frame.seconds, frame.eye);
       fireSmoke.update(frame.seconds, frame.eye);
+      if (autoRedEdge) {
+        if (frame.eye === null) {
+          errorBehaviors = null;
+          redEdge.setActive(false);
+        } else {
+          sample.t = frame.seconds;
+          sample.x = frame.eye.x;
+          sample.z = frame.eye.z;
+          sample.posture = frame.posture ?? "standing";
+          errorBehaviors = detectErrorBehaviors(plan, spread, sample);
+          redEdge.setActive(errorBehaviors.any);
+        }
+      }
+      redEdge.update(frame.dt);
     },
     dispose: () => {
       // 矢印と火と煙は自分の dispose で解放する（火と煙の uniforms のテクスチャは disposeObjectTree では見つからないため）．
@@ -267,6 +327,8 @@ export function createSchoolScene(
       }
       root.remove(fireSmoke.object);
       fireSmoke.dispose();
+      root.remove(redEdge.object);
+      redEdge.dispose();
       disposeObjectTree(root);
       disposeSchoolPartContext(context);
     },

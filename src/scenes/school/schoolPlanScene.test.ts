@@ -5,11 +5,21 @@
 import * as THREE from "three";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { SchoolPlan } from "../../core/schoolPlan";
+import { IDLE_PLAYER_INPUT, type Posture } from "../../core/types";
 import { DEMO_SCHOOL } from "../../share/samples/demoSchool";
+import { detectErrorBehaviors, type ErrorBehaviors } from "../../sim/errorBehavior";
 import { computeSpread } from "../../sim/spread";
+import { RED_EDGE } from "../common/redEdge";
 import { createSpace, createWalkWorld } from "../index";
+import type { SpaceId } from "../types";
 import { circleOverlapsRect, DEFAULT_BODY, moveWithCollision, onFloor } from "../walk/collision";
-import { activeObstacles, type WalkWorld } from "../walk/locomotion";
+import {
+  activeObstacles,
+  initialWalkState,
+  stepWalk,
+  type WalkState,
+  type WalkWorld,
+} from "../walk/locomotion";
 import { FIRE_SMOKE_NAME, SMOKE_MESH_NAME } from "./fireSmoke";
 import { eyeSmokeDensity, smokeFogDensity } from "./fireSmokeLayout";
 import { ROUTE_ARROWS_NAME } from "./routeArrows";
@@ -22,6 +32,7 @@ import type {
 import { setFireShutterClosed } from "./schoolParts";
 import { SCHOOL_EYE_HEIGHT } from "./schoolPlanLayout";
 import { createSchoolScene, isSchoolSpace, type SchoolSpace } from "./schoolPlanScene";
+import { SCHOOL_WALK_SPEED_SCALE } from "./schoolPlanWalk";
 
 function fakeContext(): CanvasRenderingContext2D {
   const store: Record<string | symbol, unknown> = {};
@@ -51,7 +62,7 @@ afterAll(() => {
 
 let space: SchoolSpace | undefined;
 
-function build(options: { shuttersClosed?: boolean } = {}): SchoolSpace {
+function build(options: { shuttersClosed?: boolean; autoRedEdge?: boolean } = {}): SchoolSpace {
   space = createSchoolScene({ maxAnisotropy: 1 }, DEMO_SCHOOL, options);
   return space;
 }
@@ -402,5 +413,355 @@ describe("createSchoolScene（床の矢印と火と煙）", () => {
     const s = buildPlan(demoWith({ mode: "test" }));
     expect(() => s.dispose()).not.toThrow();
     space = undefined;
+  });
+});
+
+// ---- Issue #121: くぐり戸・燃えているマス・赤い表示・歩く速さ ----
+// 基準は SPEC_01「VR 避難の規則」（火のマスには入れない・煙・赤い表示・歩く速さ）と SPEC_02「通れる・燃え広がる」
+// （防火シャッターは閉じているが人はくぐり戸を通れる）．デモの校舎のシャッターは x = 12，くぐり戸は廊下の z = 6.6〜7.4
+
+const SPREAD = computeSpread(DEMO_SCHOOL);
+const cell = (x: number, z: number) => ({ floor: 0, x, z });
+
+/** 校舎の空間に 1 フレーム分の時刻・目の位置・姿勢を渡す */
+function frame(
+  s: SchoolSpace,
+  seconds: number,
+  at: { x: number; z: number } | null,
+  posture: Posture = "standing",
+  dt: number | undefined = 1,
+) {
+  const eyeY = posture === "crouching" ? SCHOOL_EYE_HEIGHT.crouching : SCHOOL_EYE_HEIGHT.standing;
+  s.update?.({ seconds, eye: at === null ? null : { x: at.x, y: eyeY, z: at.z }, posture, dt });
+}
+
+describe("校舎の空間の歩行（くぐり戸）", () => {
+  it.each([
+    ["西から東へ", { x: 11.5, z: 7.0 }, { x: 13.5, z: 7.0 }],
+    ["東から西へ", { x: 13.5, z: 7.0 }, { x: 11.5, z: 7.0 }],
+  ])("閉じたシャッターでもくぐり戸の中心（z = 7.0）は%s歩いて通れる", (_, from, to) => {
+    const s = build();
+    expect((s.parts.shutters[0]?.userData as FireShutterUserData | undefined)?.closed).toBe(true);
+    const w = createWalkWorld(s);
+    expect(reached(walk(w, from, to), to)).toBe(true);
+  });
+
+  it("くぐり戸を通っても，くぐり戸の外（z = 6.5・7.5）の幕は通れないまま", () => {
+    const s = build();
+    const w = createWalkWorld(s);
+    expect(reached(walk(w, center(11, 6), center(13, 6)), center(13, 6))).toBe(false);
+    expect(reached(walk(w, center(13, 7), center(11, 7)), center(11, 7))).toBe(false);
+  });
+
+  it("stepWalk で足踏みしてもくぐり戸を通って東へ抜けられる（敷居の高さで止まらない）", () => {
+    const s = build();
+    const w = createWalkWorld(s);
+    let st: WalkState = initialWalkState(11.0, 7.0, SCHOOL_EYE_HEIGHT.standing);
+    const input = { ...IDLE_PLAYER_INPUT, walking: true, walkSpeed: 1 };
+    // 体の向き -π/2 で +X（東）へ進む
+    for (let i = 0; i < 60; i++) st = stepWalk(st, input, 1 / 30, w, -Math.PI / 2);
+    expect(st.x).toBeGreaterThan(13);
+    expect(st.z).toBeCloseTo(7.0, 1);
+  });
+
+  it("くぐり戸をしゃがんでも通れる", () => {
+    const s = build();
+    const w = createWalkWorld(s);
+    const end = moveWithCollision(
+      11.5,
+      7.0,
+      2,
+      0,
+      SCHOOL_EYE_HEIGHT.crouching + DEFAULT_BODY.headClearance,
+      activeObstacles(w),
+      w.floors,
+      DEFAULT_BODY,
+    );
+    expect(end.x).toBeCloseTo(13.5);
+  });
+});
+
+describe("校舎の空間の歩行（燃えているマス）", () => {
+  it("燃えうるマスの当たり判定が WalkWorld.doors に入っている", () => {
+    const s = build();
+    const w = createWalkWorld(s);
+    expect(s.fireCells.doors.length).toBeGreaterThan(0);
+    for (const d of s.fireCells.doors) expect(w.doors).toContain(d);
+  });
+
+  it("燃えているマスへは歩いて入れず，火が着く前なら入れる", () => {
+    const s = build();
+    const w = createWalkWorld(s);
+    // 廊下の (15,7) から西へ．間の (14,7) に火が着く時刻の前後で比べる
+    const from = center(15, 7);
+    const to = center(13, 7);
+    const fireAtPath = SPREAD.fireAt(cell(14, 7));
+    expect(Number.isFinite(fireAtPath)).toBe(true);
+    frame(s, fireAtPath - 1, from);
+    const before = walk(w, from, center(14, 7));
+    expect(reached(before, center(14, 7))).toBe(true);
+    frame(s, fireAtPath, from);
+    const after = walk(w, from, to);
+    expect(after.x).toBeGreaterThanOrEqual(15 + DEFAULT_BODY.radius - 1e-6);
+  });
+
+  it("燃えているマスの中にいても，燃えていない隣のマスへ出られる（閉じ込められない）", () => {
+    const s = build();
+    const w = createWalkWorld(s);
+    // (14,6) に火が着いた瞬間にそのマスの中にいる．南の (14,7) はまだ燃えていない
+    const t = SPREAD.fireAt(cell(14, 6));
+    expect(SPREAD.fireAt(cell(14, 7))).toBeGreaterThan(t);
+    const here = center(14, 6);
+    frame(s, t, here);
+    expect(reached(walk(w, here, center(14, 7)), center(14, 7))).toBe(true);
+  });
+
+  it("stepWalk で燃えているマスの中に立ち止まっていても押し出されない（飛ばされない）", () => {
+    const s = build();
+    const w = createWalkWorld(s);
+    const t = SPREAD.fireAt(cell(14, 6));
+    let st: WalkState = initialWalkState(14.5, 6.5, SCHOOL_EYE_HEIGHT.standing);
+    for (let i = 0; i < 30; i++) {
+      frame(s, t + i / 30, { x: st.x, z: st.z });
+      st = stepWalk(st, IDLE_PLAYER_INPUT, 1 / 30, w, 0);
+    }
+    expect(st.x).toBeCloseTo(14.5);
+    expect(st.z).toBeCloseTo(6.5);
+  });
+
+  it("非常ベルの前（負の時刻）は火元のマスにも入れる", () => {
+    const s = build();
+    const w = createWalkWorld(s);
+    const origin = DEMO_SCHOOL.drill.fireOrigins[0];
+    if (!origin) throw new Error("火元が無い");
+    const from = center(origin.x - 1, origin.z);
+    frame(s, -5, from);
+    expect(reached(walk(w, from, center(origin.x, origin.z)), center(origin.x, origin.z))).toBe(
+      true,
+    );
+  });
+});
+
+describe("校舎の空間の歩く速さ", () => {
+  it("校舎の WalkWorld は walkSpeedScale 1.5（SPEC_01 の既定）", () => {
+    const s = build();
+    expect(SCHOOL_WALK_SPEED_SCALE).toBe(1.5);
+    expect(createWalkWorld(s).walkSpeedScale).toBe(1.5);
+  });
+
+  it("校舎の廊下で 1.0 m/s の足踏みをすると 1 秒に 1.5 m 進む", () => {
+    const s = build();
+    const w = createWalkWorld(s);
+    let st: WalkState = initialWalkState(3.5, 6.5, SCHOOL_EYE_HEIGHT.standing);
+    const input = { ...IDLE_PLAYER_INPUT, walking: true, walkSpeed: 1 };
+    for (let i = 0; i < 30; i++) st = stepWalk(st, input, 1 / 30, w, -Math.PI / 2);
+    expect(st.x).toBeCloseTo(5.0, 2);
+  });
+
+  it.each(["room", "train", "elevator", "school-parts"] as const)(
+    "他の空間（%s）は歩く速さを変えない（倍率なしか 1）",
+    (id: SpaceId) => {
+      const other = createSpace(id, { maxAnisotropy: 1 });
+      try {
+        const scale = createWalkWorld(other).walkSpeedScale;
+        expect(scale === undefined || scale === 1).toBe(true);
+      } finally {
+        other.dispose();
+      }
+    },
+  );
+});
+
+describe("createSchoolScene（赤い表示）", () => {
+  // 煙は来ているが火の 1 マス以内でない時刻と位置（シャッターの東の廊下 (13,7)）
+  const smokyCell = { x: 13, z: 7 };
+  const smokyPos = center(smokyCell.x, smokyCell.z);
+
+  function smokyNotNearFireSeconds(): number {
+    const t = SPREAD.smokeAt(cell(smokyCell.x, smokyCell.z));
+    expect(Number.isFinite(t)).toBe(true);
+    const expected = detectErrorBehaviors(DEMO_SCHOOL, SPREAD, {
+      t: t + 0.5,
+      floor: 0,
+      x: smokyPos.x,
+      z: smokyPos.z,
+      posture: "standing",
+    });
+    // 前提: その時刻は煙の中で，火の 1 マス以内でない
+    expect(expected).toEqual({ smokeStanding: true, nearFire: false, any: true });
+    return t + 0.5;
+  }
+
+  it("赤い表示（red-edge）は root の子で，消えた状態で始まる", () => {
+    const s = build();
+    expect(s.redEdge.object.parent).toBe(s.root);
+    expect(s.redEdge.active).toBe(false);
+    expect(s.redEdge.object.visible).toBe(false);
+    expect(s.errorBehaviors).toBeNull();
+  });
+
+  it("spread は computeSpread(plan) と同じ時刻を返す", () => {
+    const s = build();
+    for (const [x, z] of [
+      [16, 2],
+      [14, 6],
+      [13, 7],
+      [2, 2],
+    ] as const) {
+      expect(s.spread.fireAt(cell(x, z))).toBe(SPREAD.fireAt(cell(x, z)));
+      expect(s.spread.smokeAt(cell(x, z))).toBe(SPREAD.smokeAt(cell(x, z)));
+    }
+  });
+
+  it("autoRedEdge: 煙の中で立つと赤い表示が出て，しゃがむと消える", () => {
+    const s = build({ autoRedEdge: true });
+    const t = smokyNotNearFireSeconds();
+    frame(s, t, smokyPos, "standing");
+    expect(s.errorBehaviors).toMatchObject({ smokeStanding: true, nearFire: false, any: true });
+    expect(s.redEdge.active).toBe(true);
+    expect(s.redEdge.object.visible).toBe(true);
+    frame(s, t, smokyPos, "crouching");
+    expect(s.errorBehaviors).toMatchObject({ smokeStanding: false, nearFire: false, any: false });
+    expect(s.redEdge.active).toBe(false);
+    expect(s.redEdge.object.visible).toBe(false);
+  });
+
+  it("autoRedEdge: 煙が来る前は立っていても出ない", () => {
+    const s = build({ autoRedEdge: true });
+    frame(s, SPREAD.smokeAt(cell(smokyCell.x, smokyCell.z)) - 1, smokyPos, "standing");
+    expect(s.redEdge.active).toBe(false);
+  });
+
+  it("autoRedEdge: 燃えているマスから 1 マス以内（斜め・壁越しも）ではしゃがんでいても出る", () => {
+    const s = build({ autoRedEdge: true });
+    // (14,6) が燃えた後，斜めの隣の (13,7) に立つ（(13,7) 自身はまだ燃えていない時刻）
+    const t = SPREAD.fireAt(cell(14, 6));
+    expect(SPREAD.fireAt(cell(13, 7))).toBeGreaterThan(t);
+    frame(s, t, smokyPos, "crouching");
+    expect(s.errorBehaviors?.nearFire).toBe(true);
+    expect(s.redEdge.active).toBe(true);
+  });
+
+  it("autoRedEdge: 火から 2 マス以上離れ，煙の無い所では出ない", () => {
+    const s = build({ autoRedEdge: true });
+    frame(s, 100, center(2, 2), "standing");
+    expect(s.errorBehaviors).toMatchObject({ any: false });
+    expect(s.redEdge.active).toBe(false);
+  });
+
+  it("autoRedEdge: 判定は detectErrorBehaviors() とすべての場合で一致する", () => {
+    const s = build({ autoRedEdge: true });
+    const times = [-1, 0, 10, 14, 16, 20, 30, 36, 42, 48, 60, 100, 1000];
+    const positions = [
+      center(2, 2),
+      center(4, 6),
+      center(11, 7),
+      { x: 11.95, z: 7.0 },
+      { x: 12.05, z: 7.0 },
+      center(13, 6),
+      center(13, 7),
+      center(14, 7),
+      center(15, 6),
+      center(16, 7),
+      center(16, 9),
+      center(14, 4),
+    ];
+    for (const t of times) {
+      for (const p of positions) {
+        for (const posture of ["standing", "crouching"] as const) {
+          frame(s, t, p, posture);
+          const expected: ErrorBehaviors = detectErrorBehaviors(DEMO_SCHOOL, SPREAD, {
+            t,
+            floor: 0,
+            x: p.x,
+            z: p.z,
+            posture,
+          });
+          const label = `t=${t} (${p.x}, ${p.z}) ${posture}`;
+          expect(s.errorBehaviors, label).toEqual(expected);
+          expect(s.redEdge.active, label).toBe(expected.any);
+        }
+      }
+    }
+  });
+
+  it("autoRedEdge: 姿勢が渡されない時は立っている扱い", () => {
+    const s = build({ autoRedEdge: true });
+    const t = smokyNotNearFireSeconds();
+    s.update?.({ seconds: t, eye: { x: smokyPos.x, y: 1.6, z: smokyPos.z }, dt: 1 });
+    expect(s.redEdge.active).toBe(true);
+  });
+
+  it("autoRedEdge: 目の位置が null の時は出さず，errorBehaviors は null", () => {
+    const s = build({ autoRedEdge: true });
+    const t = smokyNotNearFireSeconds();
+    frame(s, t, smokyPos, "standing");
+    expect(s.redEdge.active).toBe(true);
+    frame(s, t, null);
+    expect(s.redEdge.active).toBe(false);
+    expect(s.errorBehaviors).toBeNull();
+  });
+
+  it("autoRedEdge: フレームの dt でフェードし（点滅しない），dt が無ければ瞬時に切り替える", () => {
+    const s = build({ autoRedEdge: true });
+    const t = smokyNotNearFireSeconds();
+    frame(s, t, smokyPos, "standing", RED_EDGE.fadeSeconds / 2);
+    expect(s.redEdge.opacity).toBeCloseTo(0.5);
+    frame(s, t, smokyPos, "standing", RED_EDGE.fadeSeconds / 2);
+    expect(s.redEdge.opacity).toBeCloseTo(1);
+    // エラー行動の間は出し続ける
+    for (let i = 0; i < 30; i++) frame(s, t + i * 0.01, smokyPos, "standing", 1 / 60);
+    expect(s.redEdge.opacity).toBe(1);
+    frame(s, t, smokyPos, "crouching", undefined);
+    expect(s.redEdge.opacity).toBe(0);
+  });
+
+  it("autoRedEdge が既定（false）なら自分では出さず，errorBehaviors は null のまま", () => {
+    const s = build();
+    const t = smokyNotNearFireSeconds();
+    frame(s, t, smokyPos, "standing");
+    expect(s.redEdge.active).toBe(false);
+    expect(s.redEdge.object.visible).toBe(false);
+    expect(s.errorBehaviors).toBeNull();
+  });
+
+  it("autoRedEdge が false でも，外からの setActive に従い update(frame) の dt でフェードする", () => {
+    const s = build();
+    s.redEdge.setActive(true);
+    frame(s, 0, center(2, 2), "standing", RED_EDGE.fadeSeconds);
+    expect(s.redEdge.opacity).toBe(1);
+    expect(s.redEdge.object.visible).toBe(true);
+    // 外の指示を update が上書きしない（煙の無い所に立っていても出たまま）
+    frame(s, 0, center(2, 2), "standing", 1);
+    expect(s.redEdge.active).toBe(true);
+    s.redEdge.setActive(false);
+    frame(s, 0, center(2, 2), "standing", RED_EDGE.fadeSeconds);
+    expect(s.redEdge.object.visible).toBe(false);
+  });
+
+  it('createSpace("school") は赤い表示を自分で判定する（煙の中で立つと出る）', () => {
+    const s = createSpace("school", { maxAnisotropy: 1 });
+    try {
+      if (!isSchoolSpace(s)) throw new Error("校舎でない");
+      const t = smokyNotNearFireSeconds();
+      frame(s, t, smokyPos, "standing");
+      expect(s.redEdge.active).toBe(true);
+      frame(s, t, smokyPos, "crouching");
+      expect(s.redEdge.active).toBe(false);
+    } finally {
+      s.dispose();
+    }
+  });
+
+  it("dispose で赤い表示を root から外して解放する", () => {
+    const s = build({ autoRedEdge: true });
+    const disposed: string[] = [];
+    const edge = s.redEdge.object;
+    edge.geometry.addEventListener("dispose", () => disposed.push("geometry"));
+    (edge.material as THREE.Material).addEventListener("dispose", () => disposed.push("material"));
+    expect(() => s.dispose()).not.toThrow();
+    space = undefined;
+    expect(edge.parent).toBeNull();
+    expect(disposed.sort()).toEqual(["geometry", "material"]);
   });
 });
