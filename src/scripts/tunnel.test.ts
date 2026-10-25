@@ -70,6 +70,10 @@ describe("withTarget", () => {
     expect(withTarget(URL, "train")).toBe(`${URL}/?scene=train`);
   });
 
+  it("app なら体験の流れの ?app を付ける", () => {
+    expect(withTarget(URL, "app")).toBe(`${URL}/?app`);
+  });
+
   it('"/" で始まればパスとして付ける', () => {
     expect(withTarget(URL, "/src/input/dev/")).toBe(`${URL}/src/input/dev/`);
   });

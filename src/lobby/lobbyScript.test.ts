@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { CalibrationProfile } from "../core/types";
 import {
+  advanceCalibration,
   type CalibrationState,
   currentStepId,
+  DEFAULT_CALIBRATION_CONFIG,
+  type OrientationSample,
   skipCalibrationStep,
   startCalibration,
 } from "./calibration";
-import { describeCalibration, describeStartGate } from "./lobbyScript";
+import { type AlignButtonPrompt, describeCalibration, describeStartGate } from "./lobbyScript";
 
 const PREVIOUS: CalibrationProfile = {
   createdAt: 1,
@@ -28,6 +31,17 @@ function allStates(previous: CalibrationProfile | null): CalibrationState[] {
   return states;
 }
 
+/** 準備を終えて計測に入った状態にする */
+function measure(s: CalibrationState): CalibrationState {
+  const next = advanceCalibration(s, {
+    dt: DEFAULT_CALIBRATION_CONFIG.prepSeconds,
+    motion: [],
+    orientation: [],
+  });
+  if (next.stepStage !== "measure") throw new Error("計測に入っていない");
+  return next;
+}
+
 describe("describeCalibration", () => {
   it("align では見え方の調整を案内し，残り秒数（15 秒，切り上げ）を出す", () => {
     const s = startCalibration(null);
@@ -40,7 +54,7 @@ describe("describeCalibration", () => {
     expect(describeCalibration({ ...s, phaseElapsed: 4.2 }).remainingSeconds).toBe(11);
   });
 
-  it("手順ごとに「手順 n / 5」と制限時間の残りを出す", () => {
+  it("準備の間は「手順 n / 5」を出し，制限時間の残りは出さない", () => {
     const steps = allStates(null).filter((s) => s.phase === "step");
     expect(steps.map((s) => currentStepId(s))).toEqual([
       "faceFront",
@@ -49,22 +63,42 @@ describe("describeCalibration", () => {
       "crouchWalking",
       "stepping",
     ]);
-    const expected = [8, 8, 10, 12, 12];
     steps.forEach((s, i) => {
+      expect(s.stepStage).toBe("prep");
       const d = describeCalibration(s);
-      expect(d.progressLabel).toBe(`手順 ${i + 1} / 5`);
-      expect(d.remainingSeconds).toBe(expected[i]);
+      expect(d.progressLabel).toContain(`手順 ${i + 1} / 5`);
+      expect(d.remainingSeconds).toBeNull();
+      expect(d.holdSeconds ?? null).toBeNull();
       expect(d.title.length).toBeGreaterThan(0);
       expect(d.body.length).toBeGreaterThan(0);
       expect(d.narration).not.toBeNull();
     });
   });
 
+  it("計測の間は「手順 n / 5」と計測の残り（10 秒）を出す．正面は残りを出さず保持の残り（3 秒）を出す", () => {
+    const steps = allStates(null)
+      .filter((s) => s.phase === "step")
+      .map(measure);
+    steps.forEach((s, i) => {
+      const d = describeCalibration(s);
+      expect(d.progressLabel).toBe(`手順 ${i + 1} / 5`);
+      expect(d.countdown ?? null).toBeNull();
+      if (currentStepId(s) === "faceFront") {
+        expect(d.remainingSeconds).toBeNull();
+        expect(d.holdSeconds).toBe(3);
+      } else {
+        expect(d.remainingSeconds).toBe(10);
+        expect(d.holdSeconds ?? null).toBeNull();
+      }
+    });
+  });
+
   it("残り秒数は切り上げ", () => {
     const s = allStates(null).find((x) => currentStepId(x) === "stepping");
     if (s === undefined) throw new Error("stepping が無い");
-    expect(describeCalibration({ ...s, phaseElapsed: 0.3 }).remainingSeconds).toBe(12);
-    expect(describeCalibration({ ...s, phaseElapsed: 11.5 }).remainingSeconds).toBe(1);
+    const m = measure(s);
+    expect(describeCalibration({ ...m, phaseElapsed: 0.3 }).remainingSeconds).toBe(10);
+    expect(describeCalibration({ ...m, phaseElapsed: 9.5 }).remainingSeconds).toBe(1);
   });
 
   it("段階・手順ごとに key が異なり，同じ段階の中では変わらない（読み上げは区切りが変わった時だけ）", () => {
@@ -81,27 +115,22 @@ describe("describeCalibration", () => {
     const reused = allStates(PREVIOUS);
     const steps = reused.filter((s) => s.phase === "step");
     expect(steps.length).toBe(1);
-    expect(describeCalibration(steps[0] as CalibrationState).progressLabel).toBe("手順 1 / 1");
+    const first = steps[0] as CalibrationState;
+    expect(describeCalibration(first).progressLabel).toContain("手順 1 / 1");
+    expect(describeCalibration(measure(first)).progressLabel).toBe("手順 1 / 1");
     const introReused = reused.find((s) => s.phase === "intro");
     const introFirst = allStates(null).find((s) => s.phase === "intro");
     if (introReused === undefined || introFirst === undefined) throw new Error("intro が無い");
     expect(describeCalibration(introReused).body).not.toBe(describeCalibration(introFirst).body);
   });
 
-  it("足踏みの案内に必要な歩数（6）を出す", () => {
-    const s = allStates(null).find((x) => currentStepId(x) === "stepping");
-    if (s === undefined) throw new Error("stepping が無い");
-    expect(describeCalibration(s).body).toContain("6");
-  });
-
-  it("しゃがみ歩きの案内は「しゃがんだまま足踏み」で，必要な歩数（4）と数えた歩数を出す", () => {
+  it("しゃがみ歩きの案内は「しゃがんだまま」足踏みで，足踏みの手順とは別の案内（読み上げが切り替わる）", () => {
     const s = allStates(null).find((x) => currentStepId(x) === "crouchWalking");
     if (s === undefined) throw new Error("crouchWalking が無い");
     const d = describeCalibration(s);
-    expect(d.title).toBe("しゃがんだまま足踏みをしてください");
-    expect(d.body).toBe("しゃがんだまま，その場で足踏みを 4 歩ほどしてください（0 歩）");
+    expect(d.body).toContain("しゃがんだまま");
+    expect(describeCalibration(measure(s)).body).toContain("しゃがんだまま");
     expect(d.narration).not.toBeNull();
-    // 足踏みの手順とは別の案内（読み上げが切り替わる）
     const stepping = allStates(null).find((x) => currentStepId(x) === "stepping");
     if (stepping === undefined) throw new Error("stepping が無い");
     expect(describeCalibration(stepping).key).not.toBe(d.key);
@@ -213,5 +242,191 @@ describe("describeCalibration（outro．Issue #110）", () => {
     const d = describeCalibration(outro);
     expect(d.body).toBe("続いて，今日の訓練について説明します");
     expect(d.narration).toContain("続いて，今日の訓練について説明します");
+  });
+});
+
+/** 指定の手順の準備の状態 */
+function prepOf(id: string, previous: CalibrationProfile | null = null): CalibrationState {
+  const s = allStates(previous).find((x) => currentStepId(x) === id);
+  if (s === undefined) throw new Error(`${id} が無い`);
+  return s;
+}
+
+describe("describeCalibration（準備のカウントダウン）", () => {
+  it("読み上げの間（数え始める前）は数字を出さない", () => {
+    const s = prepOf("standing");
+    expect(s.prepElapsed).toBe(0);
+    expect(describeCalibration(s).countdown ?? null).toBeNull();
+  });
+
+  it.each([
+    [0.01, 3],
+    [0.99, 3],
+    [1.0, 2],
+    [1.5, 2],
+    [2.0, 1],
+    [2.99, 1],
+  ])("数え始めて %d 秒なら %d", (elapsed, digit) => {
+    const s = { ...prepOf("standing"), prepElapsed: elapsed };
+    expect(describeCalibration(s).countdown).toBe(digit);
+  });
+
+  it("本文の末尾に数字を付けない（数字は countdown で渡す）", () => {
+    for (const id of ["faceFront", "standing", "crouching", "crouchWalking", "stepping"]) {
+      const s = { ...prepOf(id), prepElapsed: 0.5 };
+      const d = describeCalibration(s);
+      expect(d.countdown).toBe(3);
+      expect(d.body).not.toMatch(/[0-9３２１]\s*$/);
+      expect(d.title).not.toMatch(/[0-9]\s*$/);
+    }
+  });
+
+  it("計測の間は数字を出さない", () => {
+    expect(describeCalibration(measure(prepOf("stepping"))).countdown ?? null).toBeNull();
+  });
+
+  it("準備と計測で key を変えない（準備の前に読んだ指示を計測に入る時に読み直さない）", () => {
+    for (const id of ["faceFront", "standing", "crouching", "crouchWalking", "stepping"]) {
+      const s = prepOf(id);
+      const k = describeCalibration(s).key;
+      expect(describeCalibration({ ...s, prepElapsed: 1.5 }).key).toBe(k);
+      expect(describeCalibration(measure(s)).key).toBe(k);
+    }
+  });
+});
+
+describe("describeCalibration（正面の保持の残り）", () => {
+  const DT = 1 / 32;
+  /** 正面の計測を seconds 秒，ヨー角 yawDeg（度）で進める */
+  function holdFor(seconds: number, yawDeg: (t: number) => number): CalibrationState {
+    let s = measure(prepOf("faceFront"));
+    let t = 100;
+    for (let i = 0; i < Math.round(seconds / DT); i++) {
+      t += DT;
+      const o: OrientationSample = {
+        t,
+        alpha: yawDeg((i + 1) * DT),
+        beta: 90,
+        gamma: 0,
+        screenAngle: 0,
+      };
+      s = advanceCalibration(s, { dt: DT, motion: [], orientation: [o] });
+    }
+    if (currentStepId(s) !== "faceFront") throw new Error("正面が終わってしまった");
+    return s;
+  }
+
+  it("保持の残りを切り上げて出す（1.5 秒保てば 2）", () => {
+    const d = describeCalibration(holdFor(1.5, () => 0));
+    expect(d.holdSeconds).toBe(2);
+    expect(d.remainingSeconds).toBeNull();
+  });
+
+  it("ずれたら 3 に戻る", () => {
+    const d = describeCalibration(holdFor(2 + DT, (t) => (t <= 2 ? 0 : 40)));
+    expect(d.holdSeconds).toBe(3);
+  });
+
+  it("保持の残りは 1 以上（0 は出さない）", () => {
+    const d = describeCalibration(holdFor(2.95, () => 0));
+    expect(d.holdSeconds).toBeGreaterThanOrEqual(1);
+  });
+
+  it("制限時間の残り（8 秒）は計測の間ずっと出さない", () => {
+    for (const sec of [0.5, 4, 7]) {
+      const d = describeCalibration(holdFor(sec, (t) => 40 * Math.sin(t * 3)));
+      expect(d.remainingSeconds).toBeNull();
+      expect(d.holdSeconds).not.toBeNull();
+    }
+  });
+
+  it("正面以外の手順・準備の間は holdSeconds を出さない", () => {
+    expect(describeCalibration(prepOf("faceFront")).holdSeconds ?? null).toBeNull();
+    expect(describeCalibration(measure(prepOf("standing"))).holdSeconds ?? null).toBeNull();
+  });
+});
+
+describe("describeCalibration（体験者には「練習」として見せる）", () => {
+  it("導入・終わりの文面は「練習」", () => {
+    const intro = allStates(null).find((s) => s.phase === "intro");
+    const outro = allStates(null).find((s) => s.phase === "outro");
+    if (intro === undefined || outro === undefined) throw new Error("intro・outro が無い");
+    const di = describeCalibration(intro);
+    const doo = describeCalibration(outro);
+    expect(`${di.title}${di.body}`).toContain("練習");
+    expect(`${doo.title}${doo.body}`).toContain("練習");
+  });
+
+  it.each(["standing", "crouching", "crouchWalking", "stepping"])("%s の見出しは「練習」", (id) => {
+    expect(describeCalibration(prepOf(id)).title).toContain("練習");
+  });
+
+  it("見え方の調整の後の文面に「キャリブレーション」「計測」を出さない", () => {
+    for (const s of allStates(null).filter((x) => x.phase !== "align")) {
+      const d = describeCalibration(s);
+      const text = `${d.title}${d.body}${d.narration ?? ""}`;
+      expect(text).not.toContain("キャリブレーション");
+      expect(text).not.toContain("計測");
+    }
+  });
+});
+
+describe("describeCalibration（見え方の調整をボタンで終える．alignButton）", () => {
+  const prompt = (patch: Partial<AlignButtonPrompt> = {}): AlignButtonPrompt => ({
+    gazeEnabled: false,
+    handPrompt: null,
+    ...patch,
+  });
+
+  it("alignButton を渡すと残り秒数を出さず（制限時間なし），ボタンに手をかざすよう案内する", () => {
+    const s = startCalibration(null);
+    const d = describeCalibration(s, DEFAULT_CALIBRATION_CONFIG, prompt());
+    expect(d.remainingSeconds).toBeNull();
+    expect(d.progressLabel).toBeNull();
+    expect(d.body).toContain("ボタン");
+    expect(d.body).toContain("手のひら");
+    expect(d.narration).not.toBeNull();
+    expect(d.key).not.toBe(describeCalibration(s).key);
+    // 時間がたっても残り秒数は出ない
+    expect(
+      describeCalibration({ ...s, phaseElapsed: 30 }, DEFAULT_CALIBRATION_CONFIG, prompt())
+        .remainingSeconds,
+    ).toBeNull();
+  });
+
+  it("省略・null なら時間で進める案内（残り 15 秒）のまま", () => {
+    const s = startCalibration(null);
+    expect(describeCalibration(s).remainingSeconds).toBe(15);
+    expect(describeCalibration(s, DEFAULT_CALIBRATION_CONFIG, null).remainingSeconds).toBe(15);
+  });
+
+  it("handPrompt があれば手を目の前に出すよう案内し，回ごとに key が変わる", () => {
+    const s = startCalibration(null);
+    const keys = [0, 1].map((i) => {
+      const d = describeCalibration(s, DEFAULT_CALIBRATION_CONFIG, prompt({ handPrompt: i }));
+      expect(d.body).toContain("手を目の前に出して");
+      expect(d.narration).toContain("手を目の前に出して");
+      expect(d.remainingSeconds).toBeNull();
+      return d.key;
+    });
+    expect(new Set(keys).size).toBe(2);
+    expect(keys).not.toContain(describeCalibration(s, DEFAULT_CALIBRATION_CONFIG, prompt()).key);
+  });
+
+  it("注視（debug）が有効なら Enter の案内を表示するが読み上げない", () => {
+    const s = startCalibration(null);
+    const on = describeCalibration(s, DEFAULT_CALIBRATION_CONFIG, prompt({ gazeEnabled: true }));
+    expect(on.body).toContain("Enter");
+    expect(on.narration).not.toContain("Enter");
+    const off = describeCalibration(s, DEFAULT_CALIBRATION_CONFIG, prompt());
+    expect(off.body).not.toContain("Enter");
+  });
+
+  it("見え方の調整の後（導入・手順・終わり）では alignButton を渡しても同じ案内", () => {
+    for (const s of allStates(null).filter((x) => x.phase !== "align")) {
+      expect(describeCalibration(s, DEFAULT_CALIBRATION_CONFIG, prompt())).toEqual(
+        describeCalibration(s),
+      );
+    }
   });
 });
