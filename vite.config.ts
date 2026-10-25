@@ -21,6 +21,7 @@ export default defineConfig(({ mode }) => ({
     ...(mode === "record" ? { ws: false as const } : {}),
   },
   test: {
-    include: ["src/**/*.test.ts"],
+    // 見守りの中継（relay/．Cloudflare Worker）の純粋な関数のテストも同じ Vitest で実行する
+    include: ["src/**/*.test.ts", "relay/src/**/*.test.ts"],
   },
 }));
