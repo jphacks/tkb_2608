@@ -1,6 +1,7 @@
-// 教員用のホーム画面（パラメータ無しの URL）の薄い殻．背景にキービジュアル「ひなんクラフトVR」を敷き，
-// 進む先は「エディタを開く」（?editor）だけを置く．HTML と CSS だけで組み，three.js は使わない
-import { buildEditorHref, resolveHeroImageUrls } from "./portalLinks";
+// トップ（パラメータ無しの URL）の薄い殻．背景にキービジュアル「ひなんクラフトVR」を敷き，
+// 入口「PC で体験する」「スマホ＋VR ゴーグルで体験する」「校舎を作る（エディタ）」を並べる（Issue #205）．
+// 開いた端末に合う体験（PC ならマウス・キーボード）を先頭に大きく出す．HTML と CSS だけで組み，three.js は使わない
+import { portalEntries, resolveHeroImageUrls } from "./portalLinks";
 
 /** ページの題名（タブ・ブックマークに出る） */
 const PAGE_TITLE = "ひなんクラフトVR";
@@ -31,22 +32,35 @@ const STYLE = `
   clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0;
 }
 .portal__actions {
-  position: absolute; left: 50%; bottom: max(7vh, calc(env(safe-area-inset-bottom) + 16px));
+  position: absolute; left: 50%; bottom: max(5vh, calc(env(safe-area-inset-bottom) + 12px));
   transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 10px;
   width: max-content; max-width: calc(100% - 32px);
 }
+.portal__entry { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.portal__note {
+  margin: 0; font-size: 14px; color: #eaf6ff; text-align: center;
+  text-shadow: 0 0 6px rgba(0, 0, 0, 0.95), 0 0 2px rgba(0, 0, 0, 0.95);
+}
 .portal__open {
-  display: inline-flex; align-items: center; justify-content: center; min-height: 60px; padding: 14px 56px;
+  display: inline-flex; align-items: center; justify-content: center; min-height: 48px; padding: 10px 36px;
   box-sizing: border-box; border-radius: 999px; border: 2px solid #8fdcff;
-  background: linear-gradient(180deg, rgba(48, 150, 255, 0.92), rgba(12, 60, 170, 0.92));
-  color: #fff; font-size: 24px; font-weight: bold; letter-spacing: 0.08em; text-decoration: none;
+  background: rgba(8, 30, 70, 0.85);
+  color: #fff; font-size: 18px; font-weight: bold; letter-spacing: 0.06em; text-decoration: none;
   text-shadow: 0 0 8px rgba(120, 210, 255, 0.9);
-  box-shadow: 0 0 18px rgba(70, 180, 255, 0.85), 0 0 48px rgba(40, 120, 255, 0.45),
-    inset 0 0 14px rgba(160, 230, 255, 0.45);
+  box-shadow: 0 0 12px rgba(70, 180, 255, 0.55);
   transition: transform 0.15s, box-shadow 0.15s, background 0.15s;
 }
 .portal__open:hover {
-  transform: translateY(-2px);
+  transform: translateY(-2px); background: rgba(24, 70, 150, 0.92);
+  box-shadow: 0 0 20px rgba(110, 205, 255, 0.9);
+}
+.portal__open.is-primary {
+  min-height: 60px; padding: 14px 56px; font-size: 24px; letter-spacing: 0.08em;
+  background: linear-gradient(180deg, rgba(48, 150, 255, 0.92), rgba(12, 60, 170, 0.92));
+  box-shadow: 0 0 18px rgba(70, 180, 255, 0.85), 0 0 48px rgba(40, 120, 255, 0.45),
+    inset 0 0 14px rgba(160, 230, 255, 0.45);
+}
+.portal__open.is-primary:hover {
   background: linear-gradient(180deg, rgba(80, 175, 255, 0.95), rgba(24, 80, 200, 0.95));
   box-shadow: 0 0 24px rgba(110, 205, 255, 1), 0 0 64px rgba(60, 150, 255, 0.6),
     inset 0 0 16px rgba(180, 240, 255, 0.55);
@@ -60,12 +74,14 @@ const STYLE = `
     -webkit-mask-image: linear-gradient(to bottom, transparent, #000 10%, #000 85%, transparent);
     mask-image: linear-gradient(to bottom, transparent, #000 10%, #000 85%, transparent);
   }
-  .portal__actions { bottom: max(12vh, calc(env(safe-area-inset-bottom) + 16px)); }
-  .portal__open { padding: 14px 40px; font-size: 22px; }
+  .portal__actions { bottom: max(6vh, calc(env(safe-area-inset-bottom) + 16px)); }
+  .portal__open { padding: 10px 28px; font-size: 17px; }
+  .portal__open.is-primary { padding: 14px 32px; font-size: 21px; }
+  .portal__note { font-size: 13px; }
 }
 `;
 
-/** 教員用のホーム画面を立ち上げる（document.body に画面を置く） */
+/** トップの画面を立ち上げる（document.body に画面を置く） */
 export function startPortal(): void {
   const style = document.createElement("style");
   style.textContent = STYLE;
@@ -90,10 +106,20 @@ export function startPortal(): void {
 
   const actions = el("nav", "portal__actions");
   actions.setAttribute("aria-label", "進む先");
-  const open = el("a", "portal__open");
-  open.href = buildEditorHref(window.location.pathname);
-  open.textContent = "エディタを開く";
-  actions.append(open);
+  // タッチ主体の端末（スマホ）か．PC で開いた時は「PC で体験する」を先頭に大きく出す
+  const coarsePointer = window.matchMedia("(pointer: coarse)").matches;
+  for (const entry of portalEntries(window.location.pathname, coarsePointer)) {
+    const item = el("div", "portal__entry");
+    const open = el("a", "portal__open");
+    open.href = entry.href;
+    open.textContent = entry.label;
+    open.dataset.entry = entry.id;
+    if (entry.primary) open.classList.add("is-primary");
+    const note = el("p", "portal__note");
+    note.textContent = entry.note;
+    item.append(open, note);
+    actions.append(item);
+  }
 
   root.append(backdrop, hero, title, actions);
   document.body.appendChild(root);

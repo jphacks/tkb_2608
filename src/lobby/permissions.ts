@@ -103,3 +103,16 @@ export async function requestAllPermissions(): Promise<AcquiredDevices> {
     cameraStream: camera.stream,
   };
 }
+
+/**
+ * 音だけを使えるようにする（PC のマウス・キーボードで体験する時．センサーもカメラも使わないため，
+ * カメラの許可のダイアログを出さない）．タップ・クリックの処理の中から呼ぶこと
+ */
+export async function requestAudioOnly(): Promise<AcquiredDevices> {
+  const audio = await startAudio();
+  return {
+    results: { motion: "notRequired", camera: "unavailable", audio: audio.outcome },
+    audioContext: audio.context,
+    cameraStream: null,
+  };
+}

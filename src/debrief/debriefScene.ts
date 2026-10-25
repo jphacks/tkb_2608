@@ -5,6 +5,7 @@
 import type { Scene, SceneContext } from "../core/scene";
 import type { SchoolPlan } from "../core/schoolPlan";
 import { type DebriefStat, debriefTitle, describeDrill, describeRouteReveal } from "./debriefText";
+import { debriefActionForKey } from "./debriefVrLayout";
 import { drawDebriefMap } from "./mapCanvas";
 import { DEFAULT_MAP_FIT, fitMapCanvas } from "./mapLayout";
 import { buildMapOverlay, defaultDebriefFloor } from "./mapOverlay";
@@ -23,6 +24,10 @@ export interface DebriefSceneOptions {
   readonly theme?: DebriefTheme;
   /** 「同じ訓練をもう一度」「ホームへ」のボタンを出すか（既定 true．見守り画面では画面を移れないので出さない） */
   readonly showActions?: boolean;
+  /** 「ホームへ」のボタンの文字（PC モードでは行き先がトップの画面なので替える．省くと DEBRIEF_HOME_LABEL） */
+  readonly homeLabel?: string;
+  /** true ならキーでもボタンを押す（Enter / Space で「同じ訓練をもう一度」，Escape で「ホームへ」．PC モード用） */
+  readonly keyboard?: boolean;
 }
 
 /** 結果画面から同じ訓練（同じ校舎・同じ条件）を繰り返すボタンの文字（ロビーの短い手順の後に同じ避難へ進む） */
@@ -80,7 +85,7 @@ function styleText(theme: DebriefTheme): string {
 .debrief__actions { display: flex; flex-wrap: wrap; gap: 10px; }
 .debrief button {
   font-size: 1.15rem; padding: 10px 28px; border: none; border-radius: 8px;
-  background: #ff8a3d; color: #10141c; font-weight: bold;
+  background: #ff8a3d; color: #10141c; font-weight: bold; cursor: pointer;
   box-shadow: 0 4px 16px rgba(255, 138, 61, 0.35);
 }
 .debrief button.secondary { background: #3a4252; color: #f2f4f8; box-shadow: none; }
@@ -147,13 +152,30 @@ export function createDebriefScene(options: DebriefSceneOptions = {}): Scene {
       }
 
       if (options.showActions ?? true) {
-        side.appendChild(
-          createActions([
-            // キャリブレーション（Session.calibration）は消さない．ロビーは前回の値を保ったまま正面だけを取り直す
-            { text: DEBRIEF_RETRY_LABEL, secondary: false, onClick: () => ctx.goTo("lobby") },
-            { text: DEBRIEF_HOME_LABEL, secondary: true, onClick: () => ctx.goTo("home") },
-          ]),
-        );
+        const actions = createActions([
+          // キャリブレーション（Session.calibration）は消さない．ロビーは前回の値を保ったまま正面だけを取り直す
+          { text: DEBRIEF_RETRY_LABEL, secondary: false, onClick: () => ctx.goTo("lobby") },
+          {
+            text: options.homeLabel ?? DEBRIEF_HOME_LABEL,
+            secondary: true,
+            onClick: () => ctx.goTo("home"),
+          },
+        ]);
+        side.appendChild(actions.element);
+        if (options.keyboard === true) {
+          const [retryButton, homeButton] = actions.buttons;
+          // ボタンの click を通して押す（押した後は全部が押せなくなるので，キーとクリックで二度押しにならない）
+          const onKeyDown = (event: KeyboardEvent): void => {
+            if (event.repeat) return;
+            const action = debriefActionForKey(event.key);
+            const target = action === "retry" ? retryButton : action === "home" ? homeButton : null;
+            if (target === undefined || target === null || target.disabled) return;
+            event.preventDefault();
+            target.click();
+          };
+          window.addEventListener("keydown", onKeyDown);
+          disposers.push(() => window.removeEventListener("keydown", onKeyDown));
+        }
       }
       main.appendChild(side);
       root.appendChild(main);
@@ -298,7 +320,10 @@ interface ActionSpec {
 }
 
 /** ボタンを並べる．どれかを押したら全部を押せなくする（二度押しで画面の切り替えを重ねないため） */
-function createActions(specs: readonly ActionSpec[]): HTMLElement {
+function createActions(specs: readonly ActionSpec[]): {
+  readonly element: HTMLElement;
+  readonly buttons: readonly HTMLButtonElement[];
+} {
   const actions = document.createElement("div");
   actions.className = "debrief__actions";
   const buttons = specs.map((spec) => {
@@ -313,5 +338,5 @@ function createActions(specs: readonly ActionSpec[]): HTMLElement {
     return b;
   });
   actions.append(...buttons);
-  return actions;
+  return { element: actions, buttons };
 }

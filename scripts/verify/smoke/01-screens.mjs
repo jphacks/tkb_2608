@@ -6,9 +6,9 @@ export default async function ({ open, check, expect, consoleLines }) {
   let start = consoleLines.length;
   const home = await open("/");
   await check(
-    "ホーム画面に「エディタを開く」が出る",
+    "ホーム画面に「校舎を作る（エディタ）」が出る",
     async () => {
-      await home.getByText("エディタを開く").first().waitFor({ timeout: 10_000 });
+      await home.getByText("校舎を作る（エディタ）").first().waitFor({ timeout: 10_000 });
       const errors = errorsSince(start);
       expect(errors.length === 0, `エラー: ${errors.join(" / ")}`);
     },

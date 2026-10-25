@@ -1,13 +1,16 @@
 // 開始画面（許可の画面，start，HTML）．安全確認の案内を出し，
 // ボタン 1 回でセンサー・カメラ・音の許可をまとめて取ってホームへ進む．
 // 起動直後の 1 回だけ出す（ゴーグル装着の案内はホームで出す．Issue #40）．
-// カメラが使えない時は先へ進まず，再読み込みしてカメラを許可するよう案内する（ロビーの開始が手のため．Issue #110）
+// カメラが使えない時は先へ進まず，再読み込みしてカメラを許可するよう案内する（ロビーの開始が手のため．Issue #110）．
+// PC モード（pc を渡した時．Issue #205）は音だけを使えるようにし，操作の説明を出してロビーへ進む（センサー・カメラ・ゴーグルの案内は出さない）．
+// スマホ向けの画面を PC で開いた時は，PC モードで開き直す入口（pcModeHref）も出す
 
 import type { Scene, SceneContext } from "../core/scene";
 import { unlockNarration } from "./narrator";
 import {
   type AcquiredDevices,
   requestAllPermissions,
+  requestAudioOnly,
   requestMotionPermission,
 } from "./permissions";
 import { decideStart, type StartDecision } from "./startPolicy";
@@ -27,7 +30,26 @@ export interface StartSceneOptions {
    * app/ が false にする（startPolicy.ts の StartDecisionOptions.requireCamera）
    */
   readonly requireCamera?: boolean;
+  /**
+   * PC モード（マウス・キーボードで体験する）の時に渡す．センサー・カメラの許可を求めず，音だけを使えるようにして
+   * ロビーへ進む．controls は操作の説明（1 行ずつ）
+   */
+  readonly pc?: { readonly controls: readonly string[] } | null;
+  /**
+   * スマホ向けの画面を PC で開いた時に，PC モードで開き直す URL（app/ が渡す．null・省略なら出さない）
+   */
+  readonly pcModeHref?: string | null;
 }
+
+/** PC モードの開始画面の説明（1 段落ずつ） */
+export const PC_START_LINES: readonly string[] = [
+  "PC のマウスとキーボードで，火事の校舎から避難する訓練を体験します．音が出ます",
+  "訓練の説明を聞いたあと，非常ベルが鳴ったら教室から校庭の集合場所まで逃げます．煙の中ではしゃがんで進みましょう",
+];
+
+/** スマホ向けの画面を PC で開いた時に出す，PC モードへの入口の説明 */
+export const PC_MODE_LINK_NOTE =
+  "PC で開いていますか？ ゴーグル無しで，マウスとキーボードで体験できます";
 
 const STYLE = `
 .lobby-start {
@@ -46,6 +68,12 @@ const STYLE = `
 }
 .lobby-start button.secondary { background: #3a4252; color: #f2f4f8; }
 .lobby-start button:disabled { opacity: 0.5; }
+.lobby-start__pc { margin-top: 16px; padding-top: 12px; border-top: 1px solid rgba(242, 244, 248, 0.25); }
+.lobby-start__pc p { margin: 0 0 8px; }
+.lobby-start__pc a {
+  display: inline-block; font-size: 1.05rem; padding: 10px 24px; border-radius: 8px;
+  background: #3a4252; color: #f2f4f8; font-weight: bold; text-decoration: none;
+}
 .lobby-start__status { min-height: 1.6em; margin-top: 12px; color: #ffd27a; white-space: pre-line; }
 `;
 
@@ -66,6 +94,23 @@ export function createStartScene(options: StartSceneOptions = {}): Scene {
       style.textContent = STYLE;
       document.head.appendChild(style);
 
+      const pc = options.pc ?? null;
+      if (pc !== null) {
+        root = createPcStart(pc.controls, () => {
+          // 音の再生の解除はクリックの処理の中で呼び始める
+          unlockNarration();
+          options.onStartTap?.();
+          void requestAudioOnly().then((acquired) => {
+            if (!active) return;
+            options.onDevices?.(acquired);
+            // ゴーグルを使わないのでホーム（ゴーグルの装着の案内）を通らず，ロビー（訓練の説明）へ進む
+            ctx.goTo("lobby");
+          });
+        });
+        ctx.stage.overlay.appendChild(root);
+        return;
+      }
+
       root = document.createElement("div");
       root.className = "lobby-start";
       root.innerHTML = `
@@ -80,6 +125,18 @@ export function createStartScene(options: StartSceneOptions = {}): Scene {
           </div>
           <div class="lobby-start__status" aria-live="polite"></div>
         </div>`;
+      const pcModeHref = options.pcModeHref ?? null;
+      if (pcModeHref !== null) {
+        const pcEntry = document.createElement("div");
+        pcEntry.className = "lobby-start__pc";
+        const note = document.createElement("p");
+        note.textContent = PC_MODE_LINK_NOTE;
+        const link = document.createElement("a");
+        link.href = pcModeHref;
+        link.textContent = "PC で体験する";
+        pcEntry.append(note, link);
+        root.querySelector(".lobby-start__box")?.appendChild(pcEntry);
+      }
       ctx.stage.overlay.appendChild(root);
 
       const actions = root.querySelector<HTMLDivElement>(".lobby-start__actions");
@@ -183,4 +240,41 @@ export function createStartScene(options: StartSceneOptions = {}): Scene {
       style = null;
     },
   };
+}
+
+/** PC モードの開始画面（説明・操作・「はじめる」）．onStart は「はじめる」のクリックの中で呼ぶ */
+function createPcStart(controls: readonly string[], onStart: () => void): HTMLDivElement {
+  const root = document.createElement("div");
+  root.className = "lobby-start";
+  const box = document.createElement("div");
+  box.className = "lobby-start__box";
+  const title = document.createElement("h1");
+  title.textContent = "ひなんクラフトVR（PC で体験）";
+  box.appendChild(title);
+  for (const line of PC_START_LINES) {
+    const p = document.createElement("p");
+    p.textContent = line;
+    box.appendChild(p);
+  }
+  const heading = document.createElement("p");
+  heading.textContent = "操作";
+  heading.style.fontWeight = "bold";
+  heading.style.margin = "0 0 4px";
+  const list = document.createElement("ul");
+  for (const line of controls) {
+    const item = document.createElement("li");
+    item.textContent = line;
+    list.appendChild(item);
+  }
+  const button = document.createElement("button");
+  button.type = "button";
+  button.dataset.action = "start";
+  button.textContent = "はじめる";
+  button.addEventListener("click", () => {
+    button.disabled = true;
+    onStart();
+  });
+  box.append(heading, list, button);
+  root.appendChild(box);
+  return root;
 }

@@ -1,5 +1,7 @@
 // 体験の流れ（開始画面 → ホーム → ロビー → シナリオ → 結果）の組み立てと画面の切り替え（docs/04_SPEC/SPEC_01）．
-// ロジックは書かず，各モジュールをつなぐだけにする
+// ロジックは書かず，各モジュールをつなぐだけにする．
+// PC モード（?app&pc．Issue #205）は 開始画面（PC 向け）→ ロビー（訓練の説明だけ）→ シナリオ → 結果 とし，
+// ホーム・ゴーグルの付け外しの案内・キャリブレーションを通らない．結果画面の「トップへ」はトップの画面（パラメータ無しの URL）へ移る
 
 import * as THREE from "three";
 import { StereoEffect } from "three/examples/jsm/effects/StereoEffect.js";
@@ -8,6 +10,7 @@ import { createEventBus } from "../core/event-bus";
 import type { AppEvent } from "../core/events";
 import type { Scene, SceneContext, SceneId, Session, Stage } from "../core/scene";
 import type { CalibrationProfile, Posture } from "../core/types";
+import { createDebriefScene } from "../debrief/debriefScene";
 import { createDebriefVrScene, isDebriefVrScene } from "../debrief/debriefVrScene";
 import { parseInputKind } from "../input/inputParam";
 import { createInputSource, type InputSource } from "../input/inputSource";
@@ -26,7 +29,7 @@ import { resolveSceneRequest } from "../lobby/homeFlow";
 import { createHomeScene } from "../lobby/homeScene";
 import { createHomeMemory } from "../lobby/homeSettings";
 import { createLobbyScene } from "../lobby/lobbyScene";
-import { createOrientationGuide } from "../lobby/orientationGuide";
+import { createOrientationGuide, type OrientationGuide } from "../lobby/orientationGuide";
 import type { AcquiredDevices } from "../lobby/permissions";
 import { createStartScene } from "../lobby/startScene";
 import { TRAINING_BACKGROUND_CSS, TRAINING_BOX_CSS } from "../lobby/trainingTheme";
@@ -55,6 +58,13 @@ import {
   monitorPitchOfDirection,
   monitorYawOfDirection,
 } from "./monitorSender";
+import {
+  buildPcModeHref,
+  buildTopHref,
+  PC_CONTROLS_LINES,
+  PC_HOME_LABEL,
+  resolvePcMode,
+} from "./pcMode";
 import { withResolvedRoute } from "./resolvedRoute";
 import {
   browserCalibrationStorage,
@@ -90,10 +100,11 @@ export function startApp(): void {
   renderer.setSize(window.innerWidth, window.innerHeight);
   document.body.appendChild(renderer.domElement);
   const stereo = new StereoEffect(renderer);
-  const useStereo = resolveStereo(
-    window.location.search,
-    window.matchMedia("(pointer: coarse)").matches,
-  );
+  // PC モード（?app&pc）．センサー・ゴーグルを使わず，PC のマウスとキーボードで体験する
+  const pcMode = resolvePcMode(window.location.search);
+  const coarsePointer = window.matchMedia("(pointer: coarse)").matches;
+  // PC モードは 1 画面で描く（?stereo= の指定は従う）
+  const useStereo = resolveStereo(window.location.search, coarsePointer && !pcMode);
 
   const debug = resolveDebug(window.location.search);
   // デモ用の起動（?app&demo）．開始画面の後，付ける案内を挟んで ② 非常ベルと校内放送から始める
@@ -103,8 +114,10 @@ export function startApp(): void {
   overlay.style.cssText = "position:fixed;inset:0;pointer-events:none;z-index:1;";
   document.body.appendChild(overlay);
 
-  // 縦向きの案内は画面の切り替えと関係なく，?app の全画面で出す
-  const orientationGuide = createOrientationGuide();
+  // 縦向きの案内は画面の切り替えと関係なく，?app の全画面で出す（PC モードはスマホを持たないので出さない）
+  const orientationGuide: OrientationGuide = pcMode
+    ? { visible: false, dispose: () => {} }
+    : createOrientationGuide();
 
   const world = new THREE.Scene();
   world.background = new THREE.Color(0x10141c);
@@ -150,8 +163,8 @@ export function startApp(): void {
   // 設定を開いたか．ホームを作り直しても（結果画面から戻った時も）その回の利用の中では保つ
   const homeMemory = createHomeMemory();
 
-  // ?app だけなら実機のセンサー（device），?app&input=mock なら PC のキーボード・ドラッグ（mock）
-  const inputKind = parseInputKind(window.location.search) ?? "device";
+  // ?app だけなら実機のセンサー（device），?app&input=mock なら PC のキーボード・ドラッグ（mock）．PC モードは常に mock
+  const inputKind = pcMode ? "mock" : (parseInputKind(window.location.search) ?? "device");
   // ロビーの間の motion のサンプル（区間から判定の値を求めるため．ロビーを出たら捨てる．上限つき）
   const lobbySamples = createMotionSampleBuffer();
   let collectingLobbySamples = false;
@@ -173,6 +186,16 @@ export function startApp(): void {
         // ロビーは手で開始ボタンに触れて始めるため，手をカメラから作る device ではカメラが使えないと先へ進めない．
         // mock（マウスが右手）・replay（記録の手）はカメラを使わない
         requireCamera: inputKind === "device",
+        pc: pcMode ? { controls: PC_CONTROLS_LINES } : null,
+        // スマホのセンサーで体験する画面を PC（タッチ主体でない端末）で開いた時は，PC モードで開き直す入口を出す
+        pcModeHref:
+          !pcMode && inputKind === "device" && !coarsePointer
+            ? buildPcModeHref(
+                window.location.pathname,
+                window.location.search,
+                window.location.hash,
+              )
+            : null,
         onDevices: (acquired) => {
           devices.current = acquired;
           drillAudio ??= createDrillAudio({ bus: ctx.bus, audioContext });
@@ -208,6 +231,7 @@ export function startApp(): void {
         onPanelView: (view) => monitor.notifyLobby(view),
         // 見守り画面が PC の読み上げで同じ文を読めるよう，読み上げた文を送る
         onNarrate: (text, rate) => monitor.notifySpeech(text, rate),
+        pc: pcMode,
       }),
     scenario: () => {
       const scene = createDrillScene({
@@ -221,6 +245,7 @@ export function startApp(): void {
             ? describeSavedCalibration(demoOverrides)
             : describeLobbyParams(lobbyParams),
         skipClassroom: demo,
+        pc: pcMode ? { controls: PC_CONTROLS_LINES } : null,
       });
       drillScene = scene;
       return scene;
@@ -228,15 +253,23 @@ export function startApp(): void {
     // 結果画面は VR の中で見る（Issue #146）．手のボタンで「同じ訓練をもう一度」（そのままロビーへ）・「ホームへ」（外す案内を挟む）．
     // 実機ではゴーグルを外して画面をタップすると HTML の結果画面に切り替わり（stereo() が false），その後の行き先には
     // ゴーグルを外している前提で案内を挟む（下の goggleSwitchBetween に currentStereo() を渡す）
+    // PC モードは VR の結果画面を使わず，HTML の結果画面を画面いっぱいに出してボタンをクリック（Enter・Esc）で押す．
+    // 「ホームへ」はトップの画面へ移るので文字を替える（goTo("home") を上の goTo がトップへの移動に替える）
     debrief: () =>
-      createDebriefVrScene({
-        createHandButton,
-        createHandMarkers,
-        handsUsable,
-        // mock はマウスで手を動かすため，タップで切り替えると手を動かしただけで切り替わってしまう
-        allowTap: inputKind === "device",
-        theme: { backgroundCss: TRAINING_BACKGROUND_CSS, boxCss: TRAINING_BOX_CSS },
-      }),
+      pcMode
+        ? createDebriefScene({
+            theme: { backgroundCss: TRAINING_BACKGROUND_CSS, boxCss: TRAINING_BOX_CSS },
+            homeLabel: PC_HOME_LABEL,
+            keyboard: true,
+          })
+        : createDebriefVrScene({
+            createHandButton,
+            createHandMarkers,
+            handsUsable,
+            // mock はマウスで手を動かすため，タップで切り替えると手を動かしただけで切り替わってしまう
+            allowTap: inputKind === "device",
+            theme: { backgroundCss: TRAINING_BACKGROUND_CSS, boxCss: TRAINING_BOX_CSS },
+          }),
   };
 
   let current: Scene | null = null;
@@ -319,10 +352,21 @@ export function startApp(): void {
         if (session.drill !== null) monitor.sendTrack(session.drill.track);
       }
       // デモ用の起動: 開始画面が許可を取り終えてホームへ進む所を，付ける案内 → 避難の画面に替える
-      if (demo && !demoStarted && current?.id === "start" && next === "home") {
+      // （PC モードの開始画面はロビーへ進む．PC モードはゴーグルを使わないので付ける案内を挟まない）
+      if (
+        demo &&
+        !demoStarted &&
+        current?.id === "start" &&
+        (next === "home" || (pcMode && next === "lobby"))
+      ) {
         startDemo();
-        forcedGuide = "putOn";
+        forcedGuide = pcMode ? null : "putOn";
         pending = "scenario";
+        return;
+      }
+      // PC モードはホーム（ゴーグルの装着の案内）を使わない．結果画面の「トップへ」はトップの画面へ移る
+      if (pcMode && next === "home") {
+        window.location.assign(buildTopHref(window.location.pathname));
         return;
       }
       // 許可の画面は起動直後の 1 回だけ（許可・カメラ・AudioContext は取り直さない）
@@ -390,7 +434,10 @@ export function startApp(): void {
       collectingLobbySamples = id === "lobby";
       // 中継へは許可を取った後（ホームに入る時）につなぐ．つながるのを待たない
       // （案内の画面は id が行き先の画面なので，案内に入る時は数えない）
-      if (guide === null && id === "home") monitor.start();
+      // PC モードはホームを通らないため，ロビーに入る時につなぐ（2 回目以降の start は何もしない）
+      if (guide === null && (id === "home" || (pcMode && id === "lobby"))) monitor.start();
+      // PC モード: ロビーの説明の間に見回した向きを持ち越さず，避難は開始の向き（正解経路の方）から始める
+      if (guide === null && id === "scenario" && pcMode) input.recenter();
       // デモの起動: ゴーグルに入れ終えた今の向きを正面にする（ロビーの正面合わせの代わり）
       if (guide === null && id === "scenario" && demoRecenterPending) {
         demoRecenterPending = false;

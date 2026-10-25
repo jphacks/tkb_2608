@@ -136,7 +136,16 @@ export function mockTargetSpeed(s: MockState, options: MockOptions = DEFAULT_MOC
   return 0;
 }
 
-/** 速さを今の時刻 now（ms）まで進める．時刻が戻った・飛んだ（0.2 秒超）時は速さを動かさず時刻だけ合わせる */
+/** 1 回の advanceMock で進める時間の上限（s）．タブを隠した後等に，空いた時間の分だけ一度に歩かないようにする */
+export const MOCK_MAX_DT_SEC = 0.2;
+
+/** 速さのバネを 1 回に進める時間の上限（s）．刻みが粗いと（0.2 s で ω·dt = 1.6）速さが目標の前後で揺れるため，細かく刻む */
+export const MOCK_SPEED_STEP_SEC = 1 / 30;
+
+/**
+ * 速さを今の時刻 now（ms）まで進める．時刻が戻った時は速さを動かさず時刻だけ合わせる．
+ * 前の呼び出しから MOCK_MAX_DT_SEC より空いた時（描画が遅い・タブを隠した）は，その秒数だけ進める
+ */
 export function advanceMock(
   s: MockState,
   now: number,
@@ -145,9 +154,17 @@ export function advanceMock(
 ): MockState {
   if (!Number.isFinite(now)) return s;
   const dtSec = Number.isNaN(s.lastT) ? 0 : (now - s.lastT) / 1000;
-  if (!(dtSec > 0) || dtSec > 0.2) return { ...s, lastT: now };
+  if (!(dtSec > 0)) return { ...s, lastT: now };
+  // 間が空いた時も速さの更新を飛ばさず，上限で切り詰めて進める（飛ばすと，描画が遅い間は W を離しても
+  // 速さが残って歩き続け，押しても進みにくくなる）
   const v = { speed: s.speed, speedRate: s.speedRate };
-  smoothSpeed(v, mockTargetSpeed(s, options), dtSec, params);
+  const target = mockTargetSpeed(s, options);
+  let rest = Math.min(dtSec, MOCK_MAX_DT_SEC);
+  while (rest > 0) {
+    const step = Math.min(rest, MOCK_SPEED_STEP_SEC);
+    smoothSpeed(v, target, step, params);
+    rest -= step;
+  }
   return { ...s, speed: v.speed, speedRate: v.speedRate, lastT: now };
 }
 

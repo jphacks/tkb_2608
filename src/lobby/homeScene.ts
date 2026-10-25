@@ -47,8 +47,8 @@ export interface HomeSceneOptions {
   readonly handStart?: HomeHandStart | null;
 }
 
-/** ホームのタイトルの既定値（名前は仮） */
-export const DEFAULT_HOME_TITLE = "防災シミュレータ（仮）";
+/** ホームのタイトルの既定値（トップの画面・開始画面と同じアプリの名前） */
+export const DEFAULT_HOME_TITLE = "ひなんクラフトVR";
 
 /** 設定を開いていない時に「スタート」を押すと出す問い */
 export const HOME_START_CONFIRM = "音量や画面の明るさは大丈夫ですか？";

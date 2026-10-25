@@ -9,6 +9,7 @@ import {
   DEFAULT_MOCK_OPTIONS,
   INITIAL_MOCK_STATE,
   interpretMockKey,
+  MOCK_MAX_DT_SEC,
   type MockState,
   mockHead,
   mockTargetSpeed,
@@ -138,16 +139,73 @@ describe("advanceMock", () => {
     expect(st.speed).toBe(0);
   });
 
-  it("時刻が 0.2 秒より飛んだ・戻った時は速さを動かさない", () => {
+  it("上限の秒数は 0.2 秒", () => {
+    expect(MOCK_MAX_DT_SEC).toBe(0.2);
+  });
+
+  it("時刻が 0.2 秒より飛んだ時は 0.2 秒分だけ速さを動かす", () => {
     let st = applyMockKeyDown(INITIAL_MOCK_STATE, "KeyW", false);
     st = advanceMock(st, 0, P);
-    const jumped = advanceMock(st, 201, P);
-    expect(jumped.speed).toBe(0);
-    expect(jumped.lastT).toBe(201);
-    const back = advanceMock(jumped, 100, P);
-    expect(back.speed).toBe(0);
     const ok = advanceMock(st, 200, P);
     expect(ok.speed).toBeGreaterThan(0);
+    const jumped = advanceMock(st, 201, P);
+    expect(jumped.speed).toBeGreaterThan(0);
+    expect(jumped.speed).toBe(ok.speed);
+    expect(jumped.speedRate).toBe(ok.speedRate);
+    expect(jumped.lastT).toBe(201);
+    // 大きく飛んでも（タブを隠した等）同じく 0.2 秒分だけ
+    const far = advanceMock(st, 60_000, P);
+    expect(far.speed).toBe(ok.speed);
+    expect(far.lastT).toBe(60_000);
+  });
+
+  it("時刻が戻った・同じ時刻の時は速さを動かさず時刻だけ合わせる", () => {
+    let st = applyMockKeyDown(INITIAL_MOCK_STATE, "KeyW", false);
+    st = advanceMock(st, 0, P);
+    st = advanceMock(st, 100, P);
+    const before = st.speed;
+    expect(before).toBeGreaterThan(0);
+    const back = advanceMock(st, 50, P);
+    expect(back.speed).toBe(before);
+    expect(back.speedRate).toBe(st.speedRate);
+    expect(back.lastT).toBe(50);
+    const same = advanceMock(st, 100, P);
+    expect(same.speed).toBe(before);
+    expect(same.lastT).toBe(100);
+  });
+
+  it("秒間 4 フレーム（250 ms 間隔）でも W を押し続ければ速さが上がる", () => {
+    let st = advanceMock(applyMockKeyDown(INITIAL_MOCK_STATE, "KeyW", false), 0, P);
+    st = advanceMock(st, 250, P);
+    expect(st.speed).toBeGreaterThan(0);
+    for (let t = 500; t <= 5000; t += 250) {
+      const prev = st.speed;
+      st = advanceMock(st, t, P);
+      // 押している間に一時的に遅くならない（刻みが粗いと目標の前後で揺れる）
+      expect(st.speed).toBeGreaterThanOrEqual(prev - 1e-9);
+      expect(st.speed).toBeGreaterThan(0);
+      expect(st.speed).toBeLessThanOrEqual(DEFAULT_MOCK_OPTIONS.walkSpeed);
+    }
+    expect(st.speed).toBeCloseTo(DEFAULT_MOCK_OPTIONS.walkSpeed, 2);
+    expect(mockWalking(st).walking).toBe(true);
+  });
+
+  it("秒間 4 フレーム（250 ms 間隔）でも W を離せば速さが 0 に近づき止まる", () => {
+    let st = runFor(applyMockKeyDown(INITIAL_MOCK_STATE, "KeyW", false), 0, 2000);
+    expect(st.speed).toBeGreaterThan(0.5);
+    st = applyMockKeyUp(st, "KeyW");
+    const released = st.speed;
+    st = advanceMock(st, st.lastT + 250, P);
+    expect(st.speed).toBeLessThan(released);
+    const t0 = st.lastT;
+    for (let t = t0 + 250; t <= t0 + 3000; t += 250) {
+      const prev = st.speed;
+      st = advanceMock(st, t, P);
+      // 離した後に一度速くならない
+      expect(st.speed).toBeLessThanOrEqual(prev + 1e-9);
+    }
+    expect(st.speed).toBeCloseTo(0, 2);
+    expect(mockWalking(st)).toEqual({ walking: false, walkSpeed: 0 });
   });
 
   it("非有限の時刻では状態を変えない", () => {
