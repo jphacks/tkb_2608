@@ -342,16 +342,30 @@ function parseDrill(value: unknown): DrillSetup {
 
 function parseSpread(value: unknown): SpreadSettings {
   const spread = recordAt(value, "drill.spread");
-  return {
+  const settings: SpreadSettings = {
     fireSecondsPerCell: numberAt(spread.fireSecondsPerCell, "drill.spread.fireSecondsPerCell"),
     smokeSecondsPerCell: numberAt(spread.smokeSecondsPerCell, "drill.spread.smokeSecondsPerCell"),
-    extraFires: arrayAt(spread.extraFires, "drill.spread.extraFires").map((fire, i) => {
-      const path = `drill.spread.extraFires[${i}]`;
-      const record = recordAt(fire, path);
-      return {
-        cell: parseCellRef(record.cell, `${path}.cell`),
-        atSeconds: numberAt(record.atSeconds, `${path}.atSeconds`),
-      };
-    }),
+    extraFires: parseTimedCells(spread.extraFires, "drill.spread.extraFires"),
   };
+  // 煙の発生源（#148）より前のデータには項目が無い．無ければ省いたまま（空と同じ）にし，読み戻した校舎を元の形のまま保つ
+  if (spread.extraSmokes === undefined) return settings;
+  return {
+    ...settings,
+    extraSmokes: parseTimedCells(spread.extraSmokes, "drill.spread.extraSmokes"),
+  };
+}
+
+/** extraFires・extraSmokes の形（`{ cell, atSeconds }` の配列） */
+function parseTimedCells(
+  value: unknown,
+  path: string,
+): { readonly cell: CellRef; readonly atSeconds: number }[] {
+  return arrayAt(value, path).map((item, i) => {
+    const itemPath = `${path}[${i}]`;
+    const record = recordAt(item, itemPath);
+    return {
+      cell: parseCellRef(record.cell, `${itemPath}.cell`),
+      atSeconds: numberAt(record.atSeconds, `${itemPath}.atSeconds`),
+    };
+  });
 }

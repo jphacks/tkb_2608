@@ -51,6 +51,14 @@ export function trimVoidMargins(plan: SchoolPlan): SchoolPlan {
       spread: {
         ...drill.spread,
         extraFires: drill.spread.extraFires.map((fire) => ({ ...fire, cell: shift(fire.cell) })),
+        ...(drill.spread.extraSmokes === undefined
+          ? {}
+          : {
+              extraSmokes: drill.spread.extraSmokes.map((smoke) => ({
+                ...smoke,
+                cell: shift(smoke.cell),
+              })),
+            }),
       },
     },
   };
@@ -64,6 +72,7 @@ function drillRefs(drill: DrillSetup, floor: number): CellRef[] {
     ...drill.assembly,
     ...drill.route,
     ...drill.spread.extraFires.map((fire) => fire.cell),
+    ...(drill.spread.extraSmokes ?? []).map((smoke) => smoke.cell),
   ].filter((ref) => ref.floor === floor);
 }
 

@@ -114,6 +114,25 @@ function twoFloorTestPlan(): SchoolPlan {
   };
 }
 
+/** デモの校舎に，火元から離れた西の廊下と 2 階の煙の発生源を足したもの */
+function smokeSourcePlan(): SchoolPlan {
+  const floor = DEMO_SCHOOL.floors[0];
+  return {
+    ...DEMO_SCHOOL,
+    floors: [floor, { ...floor, level: 2 }],
+    drill: {
+      ...DEMO_SCHOOL.drill,
+      spread: {
+        ...DEMO_SCHOOL.drill.spread,
+        extraSmokes: [
+          { cell: at(8, 6), atSeconds: 10 },
+          { cell: at(3, 6, 1), atSeconds: 0.5 },
+        ],
+      },
+    },
+  };
+}
+
 /** バイト列を deflate-raw で圧縮して base64url にする（仕様の 2・3 をテストの中で書き写したもの．細工した入力を作るために使う） */
 async function deflateToBase64Url(bytes: Uint8Array): Promise<string> {
   const stream = new Blob([bytes as Uint8Array<ArrayBuffer>])
@@ -150,6 +169,10 @@ async function demoJson(): Promise<EncodedJson> {
   return (await inflateEmbedded(await encodePlan(DEMO_SCHOOL))) as EncodedJson;
 }
 
+/** 細工する JSON の延焼の設定（上書きの元にする） */
+const spreadOf = (json: EncodedJson): Record<string, unknown> =>
+  json.drill.spread as Record<string, unknown>;
+
 const expectFailure = (result: DecodePlanResult, kind: string): void => {
   expect(result.ok).toBe(false);
   if (result.ok) return;
@@ -164,6 +187,14 @@ describe("encodePlan → decodePlan の往復", () => {
     ["60×30 の想定の校舎", () => schoolOf60x30()],
     ["60×30 の想定の校舎（長い経路）", () => schoolOf60x30({ longRoute: true })],
     ["2 階建て・テストモード・追加の延焼箇所あり", twoFloorTestPlan],
+    ["煙の発生源あり", smokeSourcePlan],
+    [
+      "煙の発生源が空",
+      () => ({
+        ...DEMO_SCHOOL,
+        drill: { ...DEMO_SCHOOL.drill, spread: { ...DEMO_SCHOOL.drill.spread, extraSmokes: [] } },
+      }),
+    ],
   ])("%s は元の SchoolPlan と等しく戻る", async (_label, make) => {
     const plan = make();
     expect(validatePlan(plan)).toEqual([]);
@@ -396,6 +427,20 @@ describe("decodePlan（壊れた入力）", () => {
           extraFires: [{ cell: { floor: 0, x: 14, z: 6 }, atSeconds: "0" }],
         }),
     ],
+    ["煙の発生源が配列でない", (j) => (j.drill.spread = { ...spreadOf(j), extraSmokes: {} })],
+    ["煙の発生源が null", (j) => (j.drill.spread = { ...spreadOf(j), extraSmokes: null })],
+    [
+      "煙の発生源の時刻が文字列",
+      (j) =>
+        (j.drill.spread = {
+          ...spreadOf(j),
+          extraSmokes: [{ cell: { floor: 0, x: 8, z: 6 }, atSeconds: "10" }],
+        }),
+    ],
+    [
+      "煙の発生源の位置が無い",
+      (j) => (j.drill.spread = { ...spreadOf(j), extraSmokes: [{ atSeconds: 10 }] }),
+    ],
     ["制限時間が null（Infinity を JSON にした形）", (j) => (j.drill.timeLimitSeconds = null)],
     ["開始時の向きが null", (j) => (j.drill.startYaw = null)],
   ])("形が違う（%s）は例外を投げず corrupted", async (_label, mutate) => {
@@ -500,6 +545,19 @@ describe("decodePlan（中身の誤り）", () => {
       { ...DEMO_SCHOOL, drill: { ...DEMO_SCHOOL.drill, fireOrigins: [at(99, 0)] } },
     ],
     ["マスの大きさが 0", { ...DEMO_SCHOOL, cellSize: 0 }],
+    [
+      "煙の発生源がマス目の外",
+      {
+        ...DEMO_SCHOOL,
+        drill: {
+          ...DEMO_SCHOOL.drill,
+          spread: {
+            ...DEMO_SCHOOL.drill.spread,
+            extraSmokes: [{ cell: at(99, 0), atSeconds: 0 }],
+          },
+        },
+      },
+    ],
     ["教室の一覧が空（教室の添字が範囲外）", { ...DEMO_SCHOOL, rooms: [] }],
   ])("%s は invalidPlan で，理由に validatePlan の最初の誤りが入る", async (_label, plan) => {
     const errors = validatePlan(plan);
@@ -542,6 +600,24 @@ describe("decodePlan（中身の誤り）", () => {
       expect(result.ok).toBe(false);
       expect(Object.keys(result).sort()).toEqual(["kind", "ok", "reason"]);
     }
+  });
+});
+
+describe("decodePlan（煙の発生源が無い古いデータ）", () => {
+  it("drill.spread に extraSmokes が無いデータも読め，項目は無いまま（空と同じ）", async () => {
+    const json = await demoJson();
+    expect(spreadOf(json)).not.toHaveProperty("extraSmokes");
+    const result = await decodePlan(await embedJson(json));
+    expect(result).toEqual({ ok: true, plan: DEMO_SCHOOL });
+    if (result.ok) expect(result.plan.drill.spread).not.toHaveProperty("extraSmokes");
+  });
+
+  it("煙の発生源のある校舎の JSON から extraSmokes を消すと，発生源の無い校舎として読む", async () => {
+    const json = (await inflateEmbedded(await encodePlan(smokeSourcePlan()))) as EncodedJson;
+    delete spreadOf(json).extraSmokes;
+    const result = await decodePlan(await embedJson(json));
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.plan.drill.spread.extraSmokes ?? []).toEqual([]);
   });
 });
 
