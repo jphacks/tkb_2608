@@ -13,6 +13,12 @@ export const DOOR_TOGGLE_KEY = "KeyE";
 export interface InputPreviewOptions {
   /** DOOR_TOGGLE_KEY を押した時（確認用のドア開閉．近くにドアが無ければ何もしない） */
   readonly onDoorToggle?: () => void;
+  /**
+   * device: センサーとカメラの許可を取るタップを受け取る要素（描画の canvas を渡す．既定は document.body）．
+   * iOS の Safari は click の処理が無い要素へのタップでは click を出さず，window に付けても届かないため，
+   * タップされる要素そのものに付ける
+   */
+  readonly tapTarget?: HTMLElement;
 }
 
 export class InputPreview {
@@ -22,6 +28,7 @@ export class InputPreview {
   private camera: MediaStream | null = null;
   private cameraRequested = false;
   private cameraState = "";
+  private readonly tapTarget: HTMLElement;
   private readonly onClick = () => {
     void this.input.activate().then((a) => {
       this.activation = a;
@@ -60,7 +67,8 @@ export class InputPreview {
     });
     document.body.appendChild(this.hud);
     // iOS のセンサーの許可はタップの中でしか取れない
-    if (input.kind === "device") window.addEventListener("click", this.onClick);
+    this.tapTarget = options.tapTarget ?? document.body;
+    if (input.kind === "device") this.tapTarget.addEventListener("click", this.onClick);
     window.addEventListener("keydown", this.onKeyDown);
   }
 
@@ -84,7 +92,7 @@ export class InputPreview {
   }
 
   dispose(): void {
-    window.removeEventListener("click", this.onClick);
+    this.tapTarget.removeEventListener("click", this.onClick);
     window.removeEventListener("keydown", this.onKeyDown);
     this.hud.remove();
     this.input.dispose();
