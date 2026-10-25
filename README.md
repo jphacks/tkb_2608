@@ -91,13 +91,12 @@ VR で火災を体験できる教材はすでにありますが，多くは専�
 #### API・データ
 
 - Gemini API（見取り図の写真から部屋の配置の下書きを作る．構造化出力で部屋の矩形を受け取る）
-- VOICEVOX（校内放送・案内のナレーションを事前に音声ファイルとして書き出して同梱）
-- Web API: DeviceOrientationEvent・DeviceMotionEvent（頭の向き・足踏み・しゃがみ），getUserMedia（背面カメラ），Web Audio API，CompressionStream（URL への圧縮）
+- Web API: DeviceOrientationEvent・DeviceMotionEvent（頭の向き・足踏み・しゃがみ），getUserMedia（背面カメラ），Web Speech API の speechSynthesis（校内放送・案内のナレーションを端末の日本語の声で読み上げる），Web Audio API（非常ベル・チャイム・警告音などの効果音をその場で合成する．音声ファイルは持たない），CompressionStream（URL への圧縮）
 
 #### フレームワーク・ライブラリ・モジュール
 
 - TypeScript / Vite
-- three.js（3D の校舎・火と煙・左右 2 画面の描画・立体音響）
+- three.js（3D の校舎・火と煙・左右 2 画面の描画）
 - MediaPipe Tasks Vision（HandLandmarker．手の 21 点の認識）
 - qrcode-generator（QR コードの生成）
 - Cloudflare Pages（静的サイトの配信）・Pages Functions（Gemini を呼ぶサーバー関数）
@@ -128,7 +127,7 @@ VR で火災を体験できる教材はすでにありますが，多くは専�
 - **見守りの中継と見守り画面**（[relay/src/index.ts](relay/src/index.ts)・[src/monitor/](src/monitor/)．commit `bbfe9eb`・`f361779`・`2ee0f71`・`0c07ceb`）
 - **火災訓練を最初から結果画面まで通す体験の流れ**（[src/app/](src/app/)．commit `b529374`）
 
-判定・計算のロジックは描画やブラウザ API から切り離した純粋な関数にし，189 個のテストファイルで確かめています．
+判定・計算のロジックは描画やブラウザ API から切り離した純粋な関数にし，200 を超えるテストファイルで確かめています．
 
 ## 動かし方（開発者向け）
 
