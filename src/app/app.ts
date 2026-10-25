@@ -38,9 +38,8 @@ import { createHandButton } from "../scenes/common/handButton";
 import { createHandMarkers } from "../scenes/common/handMarkers";
 import { createPlanFingerprintFromHash } from "../share/monitorIds";
 import { loadPlanFromHash } from "../share/planHash";
-import { DEMO_PITCH_SCHOOL } from "../share/samples/demoPitchSchool";
-import { DEMO_SCHOOL } from "../share/samples/demoSchool";
 import { createDrillScene, type DrillScene } from "./drillScene";
+import { FALLBACK_PLAN } from "./fallbackPlan";
 import { createHomeHandStart } from "./homeHandStart";
 import { resolveDebug, resolveDemo, resolveStereo } from "./launchMode";
 import {
@@ -284,7 +283,7 @@ export function startApp(): void {
     hash: window.location.hash,
     getStudentId: () => loadStudentId(() => window.sessionStorage),
     getPlanFingerprint: () => createPlanFingerprintFromHash(window.location.hash),
-    getMode: () => (session.plan ?? DEMO_SCHOOL).drill.mode,
+    getMode: () => (session.plan ?? FALLBACK_PLAN).drill.mode,
     readState: () => {
       // 状態を送るのは避難の画面とロビー（見守り画面が同じ目線で描く）だけ
       if (current === null || switching || currentIsGuide) return null;
@@ -294,7 +293,7 @@ export function startApp(): void {
       camera.getWorldPosition(monitorPosition);
       camera.getWorldDirection(monitorDirection);
       const drill = inLobby ? null : drillScene;
-      monitorSnapshot.floor = drill?.floor() ?? (session.plan ?? DEMO_SCHOOL).drill.start.floor;
+      monitorSnapshot.floor = drill?.floor() ?? (session.plan ?? FALLBACK_PLAN).drill.start.floor;
       monitorSnapshot.posture = latestPosture;
       // 避難の画面では非常ベルからの秒数を送る．ロビーと非常ベルの前は負の数にする
       // （見守り画面はロビーの間 t を使わず，負の t では赤い表示を出さない）
@@ -312,8 +311,8 @@ export function startApp(): void {
 
   // 読み込み中も描画のループは回す（空の 3D 空間の背景が出て，画面は真っ白で止まらない）．
   // 想定外の例外で読めなくても開始画面へは進む（plan・planLoadError は null のまま）
-  // デモ用の起動（?app&demo）で #p= が無い時は，発表のデモ用の校舎を使う（Issue #189）
-  loadPlanFromHash(window.location.hash, demo ? DEMO_PITCH_SCHOOL : DEMO_SCHOOL)
+  // #p= が無い時は，?demo・?pc の有無によらず発表のデモ用の校舎を使う（見守り画面と同じ．fallbackPlan.ts）
+  loadPlanFromHash(window.location.hash, FALLBACK_PLAN)
     .then((loaded) => {
       // 教員が経路を決めていない校舎は，ここで提案の経路を入れる（床の矢印・結果画面・評価が同じ経路を使うように）
       session.plan = loaded.plan === null ? null : withResolvedRoute(loaded.plan);

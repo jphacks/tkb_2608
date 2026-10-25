@@ -649,8 +649,19 @@ export interface FireShutterUserData extends EdgeUserDataBase {
     readonly width: number;
     readonly height: number;
   };
-  /** くぐり戸が開いているか（くぐり戸の操作（S4）は範囲外のため今は常に false） */
+  /**
+   * くぐり戸の扉が開いているか（開き具合が 0 より大きいか）．人が近づくと開く見た目だけで，当たり判定は見ない
+   * （くぐり戸は常に通れる．手で押して開ける操作（S4）は範囲外）
+   */
   wicketOpen: boolean;
+  /** くぐり戸の扉の開き具合（0 で閉，1 で全開） */
+  wicketOpenAmount: number;
+  /** くぐり戸の扉の開く向き（1 で -Z の側へ，-1 で +Z の側へ．shutterWicket.ts の WicketSwing） */
+  wicketSwing: 1 | -1;
+  /** 人が近づいて開くべき間か（距離のしきい値の切り替えに使う．shutterWicket.ts の wicketShouldOpen） */
+  wicketApproached: boolean;
+  /** くぐり戸の扉（蝶番を軸に回る Group）の name */
+  readonly wicketLeafName: string;
   /** くぐり戸の位置の指定（中央からのずれ．m） */
   readonly wicketOffset: number;
   /** 閉じた時の幕の Group の name（表示を切り替える） */

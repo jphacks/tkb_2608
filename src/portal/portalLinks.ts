@@ -35,14 +35,14 @@ export function buildEditorHref(pathname: string): string {
 
 /**
  * 「PC で体験する」の行き先．体験の流れ（?app）を PC モード（?pc．マウス・キーボードで，ゴーグルの案内等を飛ばす）で開く．
- * #p= が無いのでデモの校舎で始まる
+ * #p= が無いので発表のデモ用の校舎（火元が隣の理科室・防火シャッターのくぐり戸を通る経路）で始まる
  */
 export function buildPcExperienceHref(pathname: string): string {
   const path = pathname === "" ? "/" : pathname;
   return `${path}?app&pc`;
 }
 
-/** 「スマホ＋VR ゴーグルで体験する」の行き先．体験の流れ（?app．入力はスマホのセンサー）をデモの校舎で開く */
+/** 「スマホ＋VR ゴーグルで体験する」の行き先．体験の流れ（?app．入力はスマホのセンサー）を発表のデモ用の校舎で開く */
 export function buildVrExperienceHref(pathname: string): string {
   const path = pathname === "" ? "/" : pathname;
   return `${path}?app`;

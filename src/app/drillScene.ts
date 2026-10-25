@@ -17,7 +17,6 @@ import { createSchoolScene, type SchoolSpace } from "../scenes/school/schoolPlan
 import { createSchoolWalkWorld, SCHOOL_WALK_SPEED_SCALE } from "../scenes/school/schoolPlanWalk";
 import { scaledWalkSpeed } from "../scenes/walk/locomotion";
 import { SpaceWalker } from "../scenes/walk/walker";
-import { DEMO_SCHOOL } from "../share/samples/demoSchool";
 import {
   detectErrorBehaviors,
   type ErrorBehaviors,
@@ -31,6 +30,7 @@ import {
   tickTrack,
   type WarningTimer,
 } from "./drillProgress";
+import { FALLBACK_PLAN } from "./fallbackPlan";
 import { routeFacingYaw } from "./pcMode";
 import { withResolvedRoute } from "./resolvedRoute";
 
@@ -171,9 +171,9 @@ export function createDrillScene(options: DrillSceneOptions): DrillScene {
     floor: () => current.floor,
     enter(ctx) {
       ctxRef = ctx;
-      // 校舎データ（#p=）が無い・読めない時はデモの校舎を使う（SPEC_01「起動の切り替え」）．
+      // 校舎データ（#p=）が無い・読めない時は既定の校舎（FALLBACK_PLAN．発表のデモ用の校舎）を使う（SPEC_01「起動の切り替え」）．
       // URL から読んだ校舎は app.ts が経路を埋め済み．デモの校舎に替えた時もここで同じように埋める（床の矢印が同じ経路を使うため）
-      const plan = withResolvedRoute(ctx.session.plan ?? DEMO_SCHOOL);
+      const plan = withResolvedRoute(ctx.session.plan ?? FALLBACK_PLAN);
       // 赤い表示は app/ が判定して setActive で指示する（autoRedEdge は使わない）
       const built = createSchoolScene({ maxAnisotropy: options.maxAnisotropy }, plan);
       space = built;
