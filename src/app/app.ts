@@ -11,6 +11,8 @@ import type { CalibrationProfile, Posture } from "../core/types";
 import { createDebriefScene } from "../debrief/debriefScene";
 import { parseInputKind } from "../input/inputParam";
 import { createInputSource, type InputSource } from "../input/inputSource";
+import { GOGGLE_SCENES, type GoggleSwitch, goggleSwitchBetween } from "../lobby/goggleSwitch";
+import { createGoggleOffScene, createGoggleOnScene } from "../lobby/goggleSwitchScenes";
 import { resolveSceneRequest } from "../lobby/homeFlow";
 import { createHomeScene } from "../lobby/homeScene";
 import { createHomeMemory } from "../lobby/homeSettings";
@@ -43,9 +45,6 @@ import {
 } from "./monitorSender";
 import { withResolvedRoute } from "./resolvedRoute";
 import { yawOnly } from "./yawOnlyCalibration";
-
-/** 左右 2 画面で描く画面（ゴーグル装着中の画面） */
-const VR_SCENES: ReadonlySet<SceneId> = new Set<SceneId>(["lobby", "scenario"]);
 
 /** 1 フレームの dt の上限（タブが裏に回った後等に大きく飛ばないため） */
 const MAX_DT = 0.1;
@@ -198,6 +197,11 @@ export function startApp(): void {
   };
 
   let current: Scene | null = null;
+  // 今の画面を左右 2 画面で描くか（ゴーグルの付け外しの案内は画面の ID と別に決めるため，切り替えた時に覚える）
+  let currentStereo = false;
+  // 今の画面がゴーグルの付け外しの案内か（案内からの goTo には，もう案内を挟まない）．
+  // 案内の画面は既存の画面の ID を借りるため，ID で画面を見分ける処理（見守りへの送信等）はこれも見る
+  let currentIsGuide = false;
   // 見守りへ送る値のうち，カメラから取れないもの（避難の画面の非常ベルからの秒数・階と最新の姿勢）
   let drillScene: DrillScene | null = null;
   let latestPosture: Posture = "standing";
@@ -212,7 +216,7 @@ export function startApp(): void {
     getMode: () => (session.plan ?? DEMO_SCHOOL).drill.mode,
     readState: () => {
       // 状態を送るのは避難の画面とロビー（見守り画面が同じ目線で描く）だけ
-      if (current === null || switching) return null;
+      if (current === null || switching || currentIsGuide) return null;
       if (current.id !== "scenario" && current.id !== "lobby") return null;
       const inLobby = current.id === "lobby";
       // 生徒の画面で今描いているカメラの，ワールドでの位置と向き（rig の位置・体の向き・頭の向きを反映したもの）
@@ -256,7 +260,8 @@ export function startApp(): void {
     session,
     goTo(next) {
       // 避難の画面から結果画面へ進む時が「避難が終わった」（集合場所に着いた・時間切れ）
-      if (next === "debrief" && current?.id === "scenario") {
+      // （外す案内も id は "scenario" だが，案内から進む時は避難の画面が送り終えているので送らない）
+      if (next === "debrief" && current?.id === "scenario" && !currentIsGuide) {
         monitor.setPhase("goal");
         // 見守り画面が同じ結果画面を出せるよう，その回の記録を送る（評価は見守り画面が求め直す）
         if (session.drill !== null) monitor.sendTrack(session.drill.track);
@@ -269,11 +274,19 @@ export function startApp(): void {
   // 見守り画面が同じ効果音・ナレーションを鳴らせるよう，バスに流れた Cue をそのまま送る（audio/ の購読とは別．送れなくても音は変わらない）
   ctx.bus.on("cue", (event) => monitor.notifyCue(event.cue));
 
-  const switchTo = async (id: SceneId): Promise<void> => {
+  // ゴーグルの付け外しの案内の画面．案内の後に本来の画面（next）へ goTo で進む
+  const createGuide = (kind: GoggleSwitch, next: SceneId): Scene =>
+    kind === "takeOff"
+      ? createGoggleOffScene({ next })
+      : createGoggleOnScene({ next, isPaused: () => orientationGuide.visible });
+
+  const switchTo = async (id: SceneId, guide: GoggleSwitch | null): Promise<void> => {
     switching = true;
     try {
       current?.exit();
       current = null;
+      currentIsGuide = false;
+      currentStereo = false;
       drillScene = null;
       // 前の画面の音は次の画面へ持ち越さない（購読は続けるので，次の画面の enter で流した cue は鳴る）
       drillAudio?.stopAll();
@@ -283,8 +296,9 @@ export function startApp(): void {
       lobbySamples.clear();
       collectingLobbySamples = id === "lobby";
       // 中継へは許可を取った後（ホームに入る時）につなぐ．つながるのを待たない
-      if (id === "home") monitor.start();
-      const factory = factories[id];
+      // （案内の画面は id が行き先の画面なので，案内に入る時は数えない）
+      if (guide === null && id === "home") monitor.start();
+      const factory = guide === null ? factories[id] : () => createGuide(guide, id);
       if (factory === undefined) {
         console.warn(`未実装の画面です: ${id}`);
         return;
@@ -292,8 +306,12 @@ export function startApp(): void {
       const next = factory();
       await next.enter(ctx);
       current = next;
-      // 画面に入り終えてから知らせる（避難の画面の開始地点にカメラが置かれてから状態を送り始めるため）
-      const phase = monitorPhaseOfScene(id);
+      currentIsGuide = guide !== null;
+      // 外す案内はゴーグルの中で読むので 2 画面，付ける案内はゴーグルに入れる前に読むので 1 画面
+      currentStereo = guide === null ? GOGGLE_SCENES.has(id) : guide === "takeOff";
+      // 画面に入り終えてから知らせる（避難の画面の開始地点にカメラが置かれてから状態を送り始めるため）．
+      // 案内の画面では知らせず，案内の後に本来の画面へ入った時に知らせる
+      const phase = guide === null ? monitorPhaseOfScene(id) : null;
       if (phase !== null) monitor.setPhase(phase);
     } catch (error) {
       console.error(`画面の切り替えに失敗しました: ${id}`, error);
@@ -351,7 +369,9 @@ export function startApp(): void {
     if (pending !== null && !switching) {
       const id = pending;
       pending = null;
-      void switchTo(id);
+      // ゴーグルを付けて見る画面と外して見る画面の間では，付け外しの案内を挟む（案内からの切り替えには挟まない）
+      const guide = currentIsGuide ? null : goggleSwitchBetween(current?.id ?? null, id);
+      void switchTo(id, guide);
     }
 
     if (session.calibration !== null && session.calibration !== appliedCalibration) {
@@ -364,7 +384,7 @@ export function startApp(): void {
     camera.quaternion.set(head.x, head.y, head.z, head.w);
     if (current !== null && !switching) current.update({ dt, input: frameInput });
 
-    if (useStereo && current !== null && VR_SCENES.has(current.id)) {
+    if (useStereo && current !== null && currentStereo) {
       stereo.render(world, camera);
     } else {
       // StereoEffect はビューポートを右半分のまま残すため戻す
