@@ -35,6 +35,7 @@ import {
   MAX_GRID_SIZE,
   type MarkerKind,
   markerRejection,
+  openPlan,
   paintCell,
   placeMarker,
   placeStart,
@@ -2176,5 +2177,88 @@ describe("訓練条件の操作と正解経路", () => {
     const removed = toggleAssembly(added.state, at(3, 4));
     expect(removed.reason).toBeNull();
     expect(removed.state.plan.drill.route).toEqual(FULL_ROUTE);
+  });
+});
+
+// openPlan（ファイルの読み込み・デモの校舎に戻す）．Issue #134「読み込みは元に戻すで戻せる」
+describe("openPlan", () => {
+  it("校舎を丸ごと置き換え，元に戻すで前の校舎に・やり直すで開いた校舎に戻る", () => {
+    const s = state();
+    const opened = plan({
+      rows: ["oooo", "oooo"],
+      rooms: [],
+      overrides: { name: "読み込んだ校舎" },
+    });
+    const next = openPlan(s, opened);
+    expect(next.plan).toBe(opened);
+    expect(canUndo(next)).toBe(true);
+    expect(next.past).toEqual([s.plan]);
+    const undone = undo(next);
+    expect(undone.plan).toBe(s.plan);
+    expect(redo(undone).plan).toBe(opened);
+  });
+
+  it("やり直す先は捨てる（新しい操作として履歴に積む）", () => {
+    const s = paintCell(state({ rows: ["hhhh", "hhhh"] }), at(0, 0));
+    const undone = undo(s);
+    expect(canRedo(undone)).toBe(true);
+    const next = openPlan(undone, plan());
+    expect(canRedo(next)).toBe(false);
+  });
+
+  it("同じ校舎（同じ参照）なら何もしない", () => {
+    const s = state();
+    expect(openPlan(s, s.plan)).toBe(s);
+  });
+
+  it("道具が開いた校舎に無い教室を指していれば直す", () => {
+    const s = selectTool(state(), { kind: "classroom", room: 1 });
+    expect(s.tool).toEqual({ kind: "classroom", room: 1 });
+    const oneRoom = openPlan(s, plan({ rows: ["00hh", "oooo"], rooms: [{ name: "A" }] }));
+    expect(oneRoom.tool).toEqual({ kind: "classroom", room: 0 });
+    const noRoom = openPlan(s, plan({ rows: ["hhhh", "oooo"], rooms: [] }));
+    expect(noRoom.tool.kind).not.toBe("classroom");
+  });
+
+  it("道具が開いた校舎にある教室なら変えない", () => {
+    const s = selectTool(state(), { kind: "classroom", room: 1 });
+    expect(openPlan(s, plan({ overrides: { name: "別名" } })).tool).toEqual({
+      kind: "classroom",
+      room: 1,
+    });
+    const corridor = selectTool(state(), { kind: "corridor" });
+    expect(openPlan(corridor, plan({ overrides: { name: "別名" } })).tool).toEqual({
+      kind: "corridor",
+    });
+  });
+
+  it("ドラッグの途中なら塗り終えてから開き，元に戻す 1 回目で塗った後の校舎に戻る", () => {
+    const s = selectTool(state(), { kind: "wall" });
+    const dragging = continueStroke(beginStroke(s, at(0, 0)), at(1, 0));
+    const painted = dragging.plan;
+    expect(painted).not.toBe(s.plan);
+    const opened = plan({ overrides: { name: "読み込んだ校舎" } });
+    const next = openPlan(dragging, opened);
+    expect(next.stroke).toBeNull();
+    expect(next.plan).toBe(opened);
+    expect(next.past).toEqual([s.plan, painted]);
+    expect(undo(next).plan).toBe(painted);
+    expect(undo(undo(next)).plan).toBe(s.plan);
+  });
+
+  it("誤りのある校舎も開く（validatePlan の誤りは編集の画面で見える）", () => {
+    const broken = plan({ overrides: { cellSize: 0 } });
+    expect(validatePlan(broken).length).toBeGreaterThan(0);
+    expect(openPlan(state(), broken).plan).toBe(broken);
+  });
+
+  it("入力の状態と校舎を書き換えない", () => {
+    const s = state();
+    const opened = plan();
+    const before = JSON.stringify(s);
+    const openedBefore = JSON.stringify(opened);
+    openPlan(s, opened);
+    expect(JSON.stringify(s)).toBe(before);
+    expect(JSON.stringify(opened)).toBe(openedBefore);
   });
 });

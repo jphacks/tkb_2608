@@ -28,6 +28,7 @@ import {
   isRouteTool,
   MAX_GRID_SIZE,
   type MarkerKind,
+  openPlan,
   placeMarker,
   redo,
   renameRoom,
@@ -53,8 +54,10 @@ import {
   ROUTE_TOOL_LABEL,
   roomColor,
 } from "./editorStyle";
+import { browserPlanStorage, loadSavedPlan, PLAN_STORAGE_MESSAGES, savePlan } from "./planStorage";
 import { checkRoute, isEmptyRouteUnreachable, type RouteCheck } from "./routeCheck";
 import { createRoutePanel } from "./routePanel";
+import { createSavePanel } from "./savePanel";
 import { createSharePanel } from "./sharePanel";
 import { createSpreadPanel } from "./spreadPanel";
 import { countSpreadAt, createSpreadCache } from "./spreadPreview";
@@ -64,6 +67,9 @@ const SHOWN_ERRORS = 5;
 
 /** 置けないマスを選んだ時の案内を出しておく時間（ms） */
 const NOTICE_MS = 3000;
+
+/** 読み込めなかった理由など，長めの案内を出しておく時間（ms） */
+const LONG_NOTICE_MS = 8000;
 
 const STYLE = `
 .editor {
@@ -145,14 +151,23 @@ const STYLE = `
 .editor__row input[type="range"] { flex: 1; min-width: 0; }
 `;
 
-/** エディタを立ち上げる（document.body に画面を置く）．最初はデモの校舎を開いた状態にする */
-export function startEditor(initialPlan: SchoolPlan = DEMO_SCHOOL): void {
+/**
+ * エディタを立ち上げる（document.body に画面を置く）．localStorage に前回の編集があればそれを開き，
+ * 無い・読めない時は demoPlan（デモの校舎）を開いた状態にする
+ */
+export function startEditor(demoPlan: SchoolPlan = DEMO_SCHOOL): void {
   const style = document.createElement("style");
   style.textContent = STYLE;
   document.head.appendChild(style);
   document.title = "校舎エディタ | 防災体験VR（仮称）";
 
-  let state: EditorState = createEditorState(initialPlan);
+  const storage = browserPlanStorage();
+  const saved = loadSavedPlan(storage);
+  let state: EditorState = createEditorState(saved.kind === "opened" ? saved.plan : demoPlan);
+  /** 最後に localStorage に書いた校舎（開いた時の校舎は書かずに済ませる．参照が変わった時だけ書く） */
+  let storedPlan: SchoolPlan = state.plan;
+  /** 自動保存できているか（できなくなった時に一度だけ案内を出す） */
+  let autoSaveOk = saved.kind !== "failed" || saved.storageUsable;
   let hover: CellXZ | null = null;
   let layout: GridLayout = { cellPx: 1, offsetX: 0, offsetY: 0 };
 
@@ -277,6 +292,40 @@ export function startEditor(initialPlan: SchoolPlan = DEMO_SCHOOL): void {
     "今の校舎とモードで，生徒が読み取る QR コードと URL を出す．校舎に誤りがある時・大きすぎる時は理由を出す";
   side.append(shareRow, shareHint);
 
+  // 保存（ファイルの書き出し・読み込み，デモの校舎に戻す）．通知の帯はこの後に作るので，呼ばれた時に引く
+  const savePanel = createSavePanel({
+    currentPlan: () => {
+      const settled = endStroke(state);
+      if (settled !== state) update(settled);
+      return state.plan;
+    },
+    onLoaded: (result, fileName) => {
+      if (result.ok || result.kind === "invalidPlan") {
+        update(openPlan(state, result.plan));
+        showNotice(
+          result.ok
+            ? `「${fileName}」を開きました（元に戻すで戻せる）`
+            : `「${fileName}」を開きました．校舎に誤りがあります（右下）`,
+          LONG_NOTICE_MS,
+        );
+        return;
+      }
+      // 版が新しい時の理由は読み方の案内を含むので，そのまま出す
+      const hint =
+        result.kind === "corrupted" ? "．このアプリで書き出した校舎のファイルを選んでください" : "";
+      showNotice(`「${fileName}」を開けません．${result.reason}${hint}`, LONG_NOTICE_MS);
+    },
+    onResetDemo: () => {
+      const next = openPlan(state, demoPlan);
+      if (next.plan === state.plan) return;
+      update(next);
+      showNotice("デモの校舎を開きました（元に戻すで戻せる）");
+    },
+    notify: (message) => showNotice(message),
+  });
+  savePanel.syncAutoSave(autoSaveOk);
+  side.appendChild(savePanel.element);
+
   side.append(heading("元に戻す"));
   const historyRow = el("div", "editor__row");
   const undoButton = button("元に戻す");
@@ -320,14 +369,14 @@ export function startEditor(initialPlan: SchoolPlan = DEMO_SCHOOL): void {
   const ctx = canvas.getContext("2d");
   let noticeTimer: number | undefined;
 
-  /** 置けなかった理由を数秒だけ出す */
-  const showNotice = (message: string): void => {
+  /** 置けなかった理由などを数秒（ms）だけ出す */
+  const showNotice = (message: string, ms = NOTICE_MS): void => {
     noticeBox.textContent = message;
     noticeBox.hidden = false;
     window.clearTimeout(noticeTimer);
     noticeTimer = window.setTimeout(() => {
       noticeBox.hidden = true;
-    }, NOTICE_MS);
+    }, ms);
   };
 
   // 生徒用の QR の窓（案内の帯より下に重ね，コピーの成否は案内の帯で知らせる）
@@ -422,7 +471,23 @@ export function startEditor(initialPlan: SchoolPlan = DEMO_SCHOOL): void {
     }
     if (toolChanged || roomsChanged) renderRooms();
     render();
+    persist();
   }
+
+  /** 校舎が変わっていれば localStorage に書く（ドラッグの途中は書かず，塗り終えた時にまとめて書く） */
+  function persist(): void {
+    if (state.stroke !== null || state.plan === storedPlan) return;
+    const ok = savePlan(storage, state.plan);
+    if (ok) storedPlan = state.plan;
+    if (!ok && autoSaveOk) showNotice(PLAN_STORAGE_MESSAGES.saveFailed, LONG_NOTICE_MS);
+    if (ok !== autoSaveOk) savePanel.syncAutoSave(ok);
+    autoSaveOk = ok;
+  }
+
+  // ドラッグの途中で閉じた・再読み込みした時も，そこまでの編集を残す
+  window.addEventListener("pagehide", () => {
+    if (state.stroke !== null) update(endStroke(state));
+  });
 
   /** 教室の一覧のボタンを作り直す（教室の数・名前・選択が変わった時だけ） */
   function renderRooms(): void {
@@ -585,6 +650,8 @@ export function startEditor(initialPlan: SchoolPlan = DEMO_SCHOOL): void {
 
   renderRooms();
   render();
+  if (saved.kind === "opened") showNotice(PLAN_STORAGE_MESSAGES.opened);
+  else if (saved.kind === "failed") showNotice(saved.message, LONG_NOTICE_MS);
 }
 
 /** そのマス（編集中の階）に置いてある訓練条件の印 */

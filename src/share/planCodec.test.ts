@@ -531,6 +531,18 @@ describe("decodePlan（中身の誤り）", () => {
     json.floors[0].roomOf = [0, floor.width * floor.depth];
     expectFailure(await decodePlan(await embedJson(json)), "invalidPlan");
   });
+
+  it("失敗の結果は ok・kind・reason だけを持つ（誤りのある校舎は渡さない．SPEC_02「{ ok: false, kind, reason }」）", async () => {
+    const results = [
+      await decodePlan(await encodePlan({ ...DEMO_SCHOOL, cellSize: 0 })),
+      await decodePlan(await embedJson({ version: 2 })),
+      await decodePlan("!!!"),
+    ];
+    for (const result of results) {
+      expect(result.ok).toBe(false);
+      expect(Object.keys(result).sort()).toEqual(["kind", "ok", "reason"]);
+    }
+  });
 });
 
 describe("decodePlan（知らない項目）", () => {
