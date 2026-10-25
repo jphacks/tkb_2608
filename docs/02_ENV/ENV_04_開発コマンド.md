@@ -100,7 +100,7 @@
 
 - ローカル: `VITE_MONITOR_RELAY_URL=ws://127.0.0.1:8787 npm run dev`（`npm run relay:dev` と並べて起動する）．毎回書かない時は `.env.development.local` に `VITE_MONITOR_RELAY_URL=ws://127.0.0.1:8787` と書く（`.env.*` は Git の管理外）．PC の同じブラウザの別のタブで `?app&input=mock#room=<部屋の ID>` と `?monitor#room=<部屋の ID>` を開けば試せる（手順は下記「見守りをローカルで試す」）
 - スマホの実機（トンネル経由の `https`）からは `ws://127.0.0.1:8787` につなげない（https のページから `ws://` は使えず，`127.0.0.1` はスマホ自身を指す）．実機で試す時は，デプロイした中継の `wss://` の住所を `VITE_MONITOR_RELAY_URL` に入れて `npm run dev` を起動する
-- staging・本番: `deploy-staging.yml`・`deploy-prod.yml` のビルド（`npm run build`）の環境変数に `VITE_MONITOR_RELAY_URL` を渡す（リポジトリの変数から渡す形にする．下記「中継のデプロイ」）
+- staging・本番: `deploy-staging.yml`・`deploy-prod.yml` のビルド（`npm run build`）が，リポジトリの変数 `MONITOR_RELAY_URL` を環境変数 `VITE_MONITOR_RELAY_URL` として渡す（変数は設定済み．中継の住所を変えた時は変数を直す．下記「中継のデプロイ」）
 
 #### 中継のデプロイ (Relay Deployment)
 
@@ -109,7 +109,7 @@
 1. `npx wrangler login` でチームの Cloudflare アカウントにログインする（Pages と同じアカウント）
 2. `npx wrangler deploy --config relay/wrangler.jsonc` で Worker `tkb2608-relay` と Durable Object（SQLite 版．無料プランで使える）を作る．表示された `https://tkb2608-relay.<サブドメイン>.workers.dev` の `https` を `wss` に替えたものが中継の住所
 3. `npm run relay:check -- wss://tkb2608-relay.<サブドメイン>.workers.dev` で `ALL OK` を確かめる
-4. 中継の住所を Pages のビルドに渡す: リポジトリの変数 `MONITOR_RELAY_URL` を作り（`gh variable set MONITOR_RELAY_URL --body wss://…`），`deploy-staging.yml`・`deploy-prod.yml` のビルドの手順に `env: VITE_MONITOR_RELAY_URL: ${{ vars.MONITOR_RELAY_URL }}` を足す（ワークフローの変更は別の PR で行う）
+4. 中継の住所を Pages のビルドに渡す: リポジトリの変数 `MONITOR_RELAY_URL` を作り（`gh variable set MONITOR_RELAY_URL --body wss://…`），`deploy-staging.yml`・`deploy-prod.yml` のビルドの手順に `env: VITE_MONITOR_RELAY_URL: ${{ vars.MONITOR_RELAY_URL }}` を足す（足し済み．変数も作成済み）
 5. 費用の確認: Workers・Durable Objects の無料枠（リクエスト数・Durable Object の実行時間）を Cloudflare の画面で確かめる．WebSocket のメッセージは 20 件で 1 リクエストとして数えられ，生徒 1 人が 1 秒に 20〜30 回送るので，発表・練習の数十分では無料枠に収まる見込み．長く開きっぱなしにしない
 
 中継のコードを変えた時は，手順 2・3 をもう一度行う（Pages の配信とは別で，GitHub Actions からは配信しない）．
