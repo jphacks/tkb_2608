@@ -1,13 +1,14 @@
 // エントリポイント．?app を付けると体験の流れ（開始画面 → ロビー → シナリオ → 結果．src/app/）を起動する．
 // 開発サーバーでは ?debrief で結果画面だけを，デモの校舎と手で作った記録で表示する（?debrief=late・?debrief=nosmoke で記録を変える）．
 // 開発サーバーでは ?audio で避難の音（src/audio/）だけを鳴らして確かめる．
-// ?editor で教員用のエディタ（src/editor/．Canvas 2D の上から見た図）を起動する．
+// ?editor で教員用のエディタ（src/editor/．Canvas 2D の上から見た図．「3D で見る」で校舎の 3D も確かめられる）を起動する．
 // ?monitor で教員用の見守り画面（src/monitor/．中継から届いた生徒の状態で校舎を描き直す）を起動する．
 // 付けなければ，URL パラメータ（?scene=room 等）で選んだ空間を一人称で表示する PC 確認用のビューア．
 // ビューアはドラッグで視点を回し，画面のボタンで歩く・しゃがむ・ドアを開閉できる（VR 表示は後の Issue で足す）
 // ?input=mock|device を付けると，ボタン・ドラッグの代わりに担当D の入力（足踏み・しゃがみ・頭の向き）で歩く
 import * as THREE from "three";
 import { startApp } from "./app/app";
+import { createEditorPlanPreview } from "./app/editorPlanPreview";
 import { resolveLaunchMode } from "./app/launchMode";
 import { startMonitorApp } from "./app/monitorMain";
 import { devPlayerInput } from "./controls/devInput";
@@ -254,8 +255,11 @@ if (launchMode === "app") {
   // 避難の音の dev 用の単独起動．本番のビルドには含めない
   void import("./app/audioPreview").then((m) => m.startAudioPreview());
 } else if (launchMode === "editor") {
-  // 教員用のエディタ（three.js の描画は立ち上げない）．配置の下書き（ES3）は AI（サーバー関数経由の Gemini）で作る
-  startEditor(undefined, { draftProvider: createGeminiDraftProvider() });
+  // 教員用のエディタ（three.js の描画は「3D で見る」を押した時だけ立ち上げる）．配置の下書き（ES3）は AI（サーバー関数経由の Gemini）で作る
+  startEditor(undefined, {
+    draftProvider: createGeminiDraftProvider(),
+    planPreview: createEditorPlanPreview(),
+  });
 } else if (launchMode === "monitor") {
   // 見守り画面（校舎の読み込みを待ってから描き始める）
   void startMonitorApp();
