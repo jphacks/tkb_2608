@@ -423,9 +423,94 @@ export function toggleFireOrigin(state: EditorState, cell: CellXZ): MarkerResult
   return toggleRef(state, "fireOrigin", "fireOrigins", cell);
 }
 
-/** 集合場所を足す．すでに集合場所のマスなら外す（最後の 1 つも外せる．無い時は validatePlan の誤りとして見える） */
+/**
+ * 集合場所を足す．すでに集合場所のマスなら外す（最後の 1 つも外せる．無い時は validatePlan の誤りとして見える）．
+ * 1 マスだけの範囲の toggleAssemblyArea と同じ
+ */
 export function toggleAssembly(state: EditorState, cell: CellXZ): MarkerResult {
-  return toggleRef(state, "assembly", "assembly", cell);
+  return toggleAssemblyArea(state, { from: cell, to: cell });
+}
+
+/** マス目の上の矩形の範囲（ドラッグを始めたマスと今のマス．どちらの角からでもよく，両端のマスを含む） */
+export interface CellArea {
+  readonly from: CellXZ;
+  readonly to: CellXZ;
+}
+
+/** 範囲の左上・右下のマス（両端を含む） */
+export interface AreaBounds {
+  readonly minX: number;
+  readonly minZ: number;
+  readonly maxX: number;
+  readonly maxZ: number;
+}
+
+/** 範囲の左上・右下．両端のどちらかがマス目の外（整数でない・数でないを含む）なら null */
+export function areaBounds(floor: Floor, area: CellArea): AreaBounds | null {
+  if (!isInsideFloor(floor, area.from) || !isInsideFloor(floor, area.to)) return null;
+  return {
+    minX: Math.min(area.from.x, area.to.x),
+    minZ: Math.min(area.from.z, area.to.z),
+    maxX: Math.max(area.from.x, area.to.x),
+    maxZ: Math.max(area.from.z, area.to.z),
+  };
+}
+
+/** 範囲の中の屋外のマス（上の行から，行の中は左から）．範囲がマス目の外なら空 */
+export function outdoorCellsInArea(floor: Floor, area: CellArea): CellXZ[] {
+  const bounds = areaBounds(floor, area);
+  if (bounds === null) return [];
+  const cells: CellXZ[] = [];
+  for (let z = bounds.minZ; z <= bounds.maxZ; z++) {
+    for (let x = bounds.minX; x <= bounds.maxX; x++) {
+      if (floor.cells[z * floor.width + x] === "outdoor") cells.push({ x, z });
+    }
+  }
+  return cells;
+}
+
+/**
+ * 範囲を選んだ後の集合場所の一覧（SPEC_02「集合場所の範囲指定」の決まり）．変わらなければ同じ配列を返す．
+ * - 範囲の中の屋外のマスがすべて集合場所なら，範囲の中の集合場所をすべて外す（屋外でなくなったマスの物も）
+ * - そうでなければ，範囲の中の屋外のマスのうち集合場所でないものを足す（屋外でないマスは足さない）
+ * - 範囲に屋外のマスが無い時は，範囲の中の集合場所を外す．外す物も無ければ置けない理由を返す
+ */
+export function nextAssemblyForArea(
+  floor: Floor,
+  assembly: readonly CellRef[],
+  area: CellArea,
+): { readonly assembly: readonly CellRef[]; readonly reason: string | null } {
+  const bounds = areaBounds(floor, area);
+  if (bounds === null) return { assembly, reason: MARKER_REASONS.outside };
+  const inArea = (ref: CellRef): boolean =>
+    ref.floor === EDIT_FLOOR &&
+    ref.x >= bounds.minX &&
+    ref.x <= bounds.maxX &&
+    ref.z >= bounds.minZ &&
+    ref.z <= bounds.maxZ;
+  const has = new Set(assembly.filter((r) => r.floor === EDIT_FLOOR).map((r) => `${r.x},${r.z}`));
+  const missing = outdoorCellsInArea(floor, area).filter((c) => !has.has(`${c.x},${c.z}`));
+  if (missing.length > 0) return { assembly: [...assembly, ...missing.map(editRef)], reason: null };
+  const kept = assembly.filter((r) => !inArea(r));
+  if (kept.length === assembly.length) {
+    return { assembly, reason: MARKER_REASONS.assemblyNotOutdoor };
+  }
+  return { assembly: kept, reason: null };
+}
+
+/**
+ * 範囲を選んで集合場所を足す・外す（決まりは nextAssemblyForArea．1 回の範囲指定が 1 回分の「元に戻す」になる）．
+ * 置けない時は理由を返して何もしない
+ */
+export function toggleAssemblyArea(state: EditorState, area: CellArea): MarkerResult {
+  const settled = endStroke(state);
+  const drill = settled.plan.drill;
+  const result = nextAssemblyForArea(editingFloor(settled), drill.assembly, area);
+  if (result.reason !== null) return { state: settled, reason: result.reason };
+  return {
+    state: commit(settled, withDrill(settled.plan, { ...drill, assembly: result.assembly })),
+    reason: null,
+  };
 }
 
 /** 開始地点を置く（1 つだけなので，前の位置から移る）．同じマスなら何もしない */
@@ -671,11 +756,11 @@ function cellsBetween(from: CellXZ, to: CellXZ): CellXZ[] {
   return result;
 }
 
-/** 位置の一覧（火元・集合場所）にマスを足す・外す．置けないマスなら理由を返して何もしない */
+/** 位置の一覧（火元）にマスを足す・外す．置けないマスなら理由を返して何もしない */
 function toggleRef(
   state: EditorState,
   kind: MarkerKind,
-  key: "fireOrigins" | "assembly",
+  key: "fireOrigins",
   cell: CellXZ,
 ): MarkerResult {
   const settled = endStroke(state);
@@ -689,8 +774,7 @@ function toggleRef(
     if (reason !== null) return { state: settled, reason };
   }
   const next = has ? list.filter((r) => !sameRef(r, ref)) : [...list, ref];
-  const nextDrill: DrillSetup =
-    key === "fireOrigins" ? { ...drill, fireOrigins: next } : { ...drill, assembly: next };
+  const nextDrill: DrillSetup = { ...drill, [key]: next };
   return { state: commit(settled, withDrill(settled.plan, nextDrill)), reason: null };
 }
 
