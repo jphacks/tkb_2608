@@ -1,8 +1,6 @@
 // PC モードの判定・URL・開始の向きのテスト（Issue #205）
 import { describe, expect, it } from "vitest";
-import { resolveLaunchMode } from "./launchMode";
 import {
-  buildPcModeHref,
   buildTopHref,
   PC_CONTROLS_LINES,
   PC_HOME_LABEL,
@@ -23,20 +21,6 @@ describe("resolvePcMode", () => {
     ["?app&input=mock", false],
   ])("%s は %s", (search, expected) => {
     expect(resolvePcMode(search)).toBe(expected);
-  });
-});
-
-describe("buildPcModeHref", () => {
-  it("?app に pc を足し，ハッシュ（校舎・部屋）を保つ", () => {
-    const href = buildPcModeHref("/", "?app", "#p=abc&room=r1");
-    expect(href).toBe("/?app&pc#p=abc&room=r1");
-    const search = href.slice(href.indexOf("?"), href.indexOf("#"));
-    expect(resolveLaunchMode(search)).toBe("app");
-    expect(resolvePcMode(search)).toBe(true);
-  });
-
-  it("input= は外し，他のパラメータは保つ", () => {
-    expect(buildPcModeHref("/sub/", "?app&input=device&debug", "")).toBe("/sub/?app&debug&pc");
   });
 });
 
@@ -90,49 +74,6 @@ describe("resolvePcMode（境界値）", () => {
   ])("%j は %s", (search, expected) => {
     expect(resolvePcMode(search)).toBe(expected);
   });
-});
-
-describe("buildPcModeHref（境界値）", () => {
-  it.each<[string, string, string, string]>([
-    ["/", "?app&input=mock", "", "/?app&pc"],
-    ["/", "?app&input=device", "#p=xyz", "/?app&pc#p=xyz"],
-    ["/", "?app&input=mock&input=device", "", "/?app&pc"],
-    ["/", "?app&demo", "", "/?app&demo&pc"],
-    ["/", "?app&demo&input=mock", "#p=a-b_c&room=r9", "/?app&demo&pc#p=a-b_c&room=r9"],
-    ["/", "?app&room=r1", "#p=abc", "/?app&room=r1&pc#p=abc"],
-    ["", "?app", "", "/?app&pc"],
-    ["/sub/index.html", "?app", "#room=r2", "/sub/index.html?app&pc#room=r2"],
-  ])("パス %j・%j・%j から %s を作る", (pathname, search, hash, expected) => {
-    expect(buildPcModeHref(pathname, search, hash)).toBe(expected);
-  });
-
-  it.each<[string]>([["?app&pc"], ["?app&pc=0"], ["?app&pc=false"], ["?app&pc=1"]])(
-    "すでに pc がある %j からは pc を 1 つだけ持ち PC モードになる URL を作る",
-    (search) => {
-      const href = buildPcModeHref("/", search, "");
-      const query = href.slice(href.indexOf("?"));
-      expect(new URLSearchParams(query).getAll("pc")).toHaveLength(1);
-      expect(resolvePcMode(query)).toBe(true);
-    },
-  );
-
-  it.each<[string, string]>([
-    ["?app", "#p=abc&room=r1"],
-    ["?app&input=mock", "#p=abc"],
-    ["?app&input=device&demo", "#room=r1"],
-    ["?app&demo", ""],
-  ])(
-    "%j%s から作った URL は input= を持たず，体験の流れの PC モードで開き，ハッシュはそのまま",
-    (search, hash) => {
-      const href = buildPcModeHref("/", search, hash);
-      const hashIndex = href.indexOf("#");
-      const query = href.slice(href.indexOf("?"), hashIndex === -1 ? undefined : hashIndex);
-      expect(new URLSearchParams(query).has("input")).toBe(false);
-      expect(resolveLaunchMode(query)).toBe("app");
-      expect(resolvePcMode(query)).toBe(true);
-      expect(hashIndex === -1 ? "" : href.slice(hashIndex)).toBe(hash);
-    },
-  );
 });
 
 describe("PC_CONTROLS_LINES・PC_HOME_LABEL", () => {

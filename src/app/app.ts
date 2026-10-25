@@ -58,13 +58,7 @@ import {
   monitorPitchOfDirection,
   monitorYawOfDirection,
 } from "./monitorSender";
-import {
-  buildPcModeHref,
-  buildTopHref,
-  PC_CONTROLS_LINES,
-  PC_HOME_LABEL,
-  resolvePcMode,
-} from "./pcMode";
+import { buildTopHref, PC_CONTROLS_LINES, PC_HOME_LABEL, resolvePcMode } from "./pcMode";
 import { withResolvedRoute } from "./resolvedRoute";
 import {
   browserCalibrationStorage,
@@ -187,15 +181,8 @@ export function startApp(): void {
         // mock（マウスが右手）・replay（記録の手）はカメラを使わない
         requireCamera: inputKind === "device",
         pc: pcMode ? { controls: PC_CONTROLS_LINES } : null,
-        // スマホのセンサーで体験する画面を PC（タッチ主体でない端末）で開いた時は，PC モードで開き直す入口を出す
-        pcModeHref:
-          !pcMode && inputKind === "device" && !coarsePointer
-            ? buildPcModeHref(
-                window.location.pathname,
-                window.location.search,
-                window.location.hash,
-              )
-            : null,
+        // トップで PC／ゴーグルを選び直せるように，開始画面から戻れるようにする
+        topHref: buildTopHref(window.location.pathname),
         onDevices: (acquired) => {
           devices.current = acquired;
           drillAudio ??= createDrillAudio({ bus: ctx.bus, audioContext });

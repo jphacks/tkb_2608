@@ -3,7 +3,7 @@
 // 起動直後の 1 回だけ出す（ゴーグル装着の案内はホームで出す．Issue #40）．
 // カメラが使えない時は先へ進まず，再読み込みしてカメラを許可するよう案内する（ロビーの開始が手のため．Issue #110）．
 // PC モード（pc を渡した時．Issue #205）は音だけを使えるようにし，操作の説明を出してロビーへ進む（センサー・カメラ・ゴーグルの案内は出さない）．
-// スマホ向けの画面を PC で開いた時は，PC モードで開き直す入口（pcModeHref）も出す
+// どちらの画面にも，トップへ戻る入口（topHref）を出す（トップで選び直せるように）
 
 import type { Scene, SceneContext } from "../core/scene";
 import { unlockNarration } from "./narrator";
@@ -35,10 +35,8 @@ export interface StartSceneOptions {
    * ロビーへ進む．controls は操作の説明（1 行ずつ）
    */
   readonly pc?: { readonly controls: readonly string[] } | null;
-  /**
-   * スマホ向けの画面を PC で開いた時に，PC モードで開き直す URL（app/ が渡す．null・省略なら出さない）
-   */
-  readonly pcModeHref?: string | null;
+  /** トップ（体験の選び直し）の URL（app/ が渡す．null・省略なら「トップへ戻る」を出さない） */
+  readonly topHref?: string | null;
 }
 
 /** PC モードの開始画面の説明（1 段落ずつ） */
@@ -47,9 +45,8 @@ export const PC_START_LINES: readonly string[] = [
   "訓練の説明を聞いたあと，非常ベルが鳴ったら教室から校庭の集合場所まで逃げます．煙の中ではしゃがんで進みましょう",
 ];
 
-/** スマホ向けの画面を PC で開いた時に出す，PC モードへの入口の説明 */
-export const PC_MODE_LINK_NOTE =
-  "PC で開いていますか？ ゴーグル無しで，マウスとキーボードで体験できます";
+/** トップへ戻る入口の文字 */
+export const START_BACK_TO_TOP_LABEL = "トップへ戻る";
 
 const STYLE = `
 .lobby-start {
@@ -68,10 +65,8 @@ const STYLE = `
 }
 .lobby-start button.secondary { background: #3a4252; color: #f2f4f8; }
 .lobby-start button:disabled { opacity: 0.5; }
-.lobby-start__pc { margin-top: 16px; padding-top: 12px; border-top: 1px solid rgba(242, 244, 248, 0.25); }
-.lobby-start__pc p { margin: 0 0 8px; }
-.lobby-start__pc a {
-  display: inline-block; font-size: 1.05rem; padding: 10px 24px; border-radius: 8px;
+.lobby-start a.lobby-start__back {
+  display: inline-block; font-size: 1.05rem; padding: 10px 24px; margin: 4px 8px 4px 0; border-radius: 8px;
   background: #3a4252; color: #f2f4f8; font-weight: bold; text-decoration: none;
 }
 .lobby-start__status { min-height: 1.6em; margin-top: 12px; color: #ffd27a; white-space: pre-line; }
@@ -96,7 +91,7 @@ export function createStartScene(options: StartSceneOptions = {}): Scene {
 
       const pc = options.pc ?? null;
       if (pc !== null) {
-        root = createPcStart(pc.controls, () => {
+        root = createPcStart(pc.controls, options.topHref ?? null, () => {
           // 音の再生の解除はクリックの処理の中で呼び始める
           unlockNarration();
           options.onStartTap?.();
@@ -125,18 +120,9 @@ export function createStartScene(options: StartSceneOptions = {}): Scene {
           </div>
           <div class="lobby-start__status" aria-live="polite"></div>
         </div>`;
-      const pcModeHref = options.pcModeHref ?? null;
-      if (pcModeHref !== null) {
-        const pcEntry = document.createElement("div");
-        pcEntry.className = "lobby-start__pc";
-        const note = document.createElement("p");
-        note.textContent = PC_MODE_LINK_NOTE;
-        const link = document.createElement("a");
-        link.href = pcModeHref;
-        link.textContent = "PC で体験する";
-        pcEntry.append(note, link);
-        root.querySelector(".lobby-start__box")?.appendChild(pcEntry);
-      }
+      // 「はじめる」の横に置く（押した後は actions ごと消え，許可の途中で戻らない）
+      const backLink = createBackToTopLink(options.topHref ?? null);
+      if (backLink !== null) root.querySelector(".lobby-start__actions")?.appendChild(backLink);
       ctx.stage.overlay.appendChild(root);
 
       const actions = root.querySelector<HTMLDivElement>(".lobby-start__actions");
@@ -242,8 +228,12 @@ export function createStartScene(options: StartSceneOptions = {}): Scene {
   };
 }
 
-/** PC モードの開始画面（説明・操作・「はじめる」）．onStart は「はじめる」のクリックの中で呼ぶ */
-function createPcStart(controls: readonly string[], onStart: () => void): HTMLDivElement {
+/** PC モードの開始画面（説明・操作・「はじめる」・「トップへ戻る」）．onStart は「はじめる」のクリックの中で呼ぶ */
+function createPcStart(
+  controls: readonly string[],
+  topHref: string | null,
+  onStart: () => void,
+): HTMLDivElement {
   const root = document.createElement("div");
   root.className = "lobby-start";
   const box = document.createElement("div");
@@ -274,7 +264,21 @@ function createPcStart(controls: readonly string[], onStart: () => void): HTMLDi
     button.disabled = true;
     onStart();
   });
-  box.append(heading, list, button);
+  const actions = document.createElement("div");
+  actions.appendChild(button);
+  const backLink = createBackToTopLink(topHref);
+  if (backLink !== null) actions.appendChild(backLink);
+  box.append(heading, list, actions);
   root.appendChild(box);
   return root;
+}
+
+/** 「トップへ戻る」の入口．href が null なら作らない */
+function createBackToTopLink(href: string | null): HTMLAnchorElement | null {
+  if (href === null) return null;
+  const link = document.createElement("a");
+  link.className = "lobby-start__back";
+  link.href = href;
+  link.textContent = START_BACK_TO_TOP_LABEL;
+  return link;
 }

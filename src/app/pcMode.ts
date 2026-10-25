@@ -12,26 +12,6 @@ export function resolvePcMode(search: string): boolean {
   return value !== null && value !== "0" && value.toLowerCase() !== "false";
 }
 
-/**
- * 今の URL（search・hash）を PC モードで開き直す URL．?pc を付けて ?input= を外し（PC モードの入力は mock に決まる），
- * 他のパラメータ・ハッシュ（#p= の校舎・room=）は保つ
- */
-export function buildPcModeHref(pathname: string, search: string, hash: string): string {
-  const params = new URLSearchParams(search);
-  params.delete("input");
-  params.set("pc", "");
-  // URLSearchParams は値の無い ?app を "app=" にするため，値が空のものは名前だけに戻す
-  const query = [...params]
-    .map(([key, value]) =>
-      value === ""
-        ? encodeURIComponent(key)
-        : `${encodeURIComponent(key)}=${encodeURIComponent(value)}`,
-    )
-    .join("&");
-  const path = pathname === "" ? "/" : pathname;
-  return `${path}?${query}${hash}`;
-}
-
 /** トップ（パラメータ無しの教員用のホーム画面）の URL．PC モードの「トップへ」の行き先 */
 export function buildTopHref(pathname: string): string {
   return pathname === "" ? "/" : pathname;
