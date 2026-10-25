@@ -1,6 +1,7 @@
 // 教員用エディタ（?editor）の画面の薄い殻．道具箱・上から見た図（Canvas 2D）・校舎の誤りの表示を DOM で組み，
 // マウスとキーの操作を editorState.ts の純粋な関数に渡して，返ってきた状態で描き直す．VR・three.js は使わない
 import type { SchoolPlan } from "../core/schoolPlan";
+import { createRoomId } from "../share/monitorIds";
 import { DEMO_SCHOOL } from "../share/samples/demoSchool";
 import { createShareLink } from "../share/shareUrl";
 import { validatePlan } from "../share/validatePlan";
@@ -55,6 +56,7 @@ import {
   roomColor,
 } from "./editorStyle";
 import { browserPlanStorage, loadSavedPlan, PLAN_STORAGE_MESSAGES, savePlan } from "./planStorage";
+import { createRoomIdResolver } from "./roomStorage";
 import { checkRoute, isEmptyRouteUnreachable, type RouteCheck } from "./routeCheck";
 import { createRoutePanel } from "./routePanel";
 import { createSavePanel } from "./savePanel";
@@ -136,12 +138,15 @@ const STYLE = `
 }
 .editor__share[hidden] { display: none; }
 .editor__share-card {
-  max-width: min(520px, calc(100% - 32px)); max-height: calc(100% - 32px); overflow-y: auto; box-sizing: border-box;
+  max-width: min(640px, calc(100% - 32px)); max-height: calc(100% - 32px); overflow-y: auto; box-sizing: border-box;
   padding: 16px; border-radius: 8px; background: #222b38; border: 1px solid #4a5d78;
 }
 .editor__share-card h2 { font-size: 16px; margin: 0 0 8px; }
 .editor__share-body { display: flex; flex-direction: column; align-items: stretch; }
 .editor__share-qr { align-self: center; image-rendering: pixelated; }
+.editor__share-qr-area { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 12px; }
+.editor__share-qr-area .editor__share-qr { flex: none; }
+.editor__share-monitor { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; max-width: 200px; }
 .editor__share-body .editor__row input[type="text"] { flex: 1; min-width: 0; }
 .editor__share-error { margin: 0; color: #ffb4a8; }
 .editor__share-reasons { margin: 4px 0 0; padding-left: 18px; font-size: 13px; }
@@ -428,6 +433,8 @@ export function startEditor(demoPlan: SchoolPlan = DEMO_SCHOOL): void {
   main.insertBefore(sharePanel.element, noticeBox);
   /** QR を出している校舎．これと違う校舎になったら窓を閉じる（古い QR を配らないように） */
   let sharedPlan: SchoolPlan | null = null;
+  /** 校舎の指紋から見守りの部屋の ID を引く（同じ校舎データの間は同じ ID．SPEC_01「見守り」） */
+  const resolveRoomId = createRoomIdResolver(storage, createRoomId);
 
   /** 今の校舎で生徒用の URL を作り，QR か理由を窓に出す */
   async function openShare(): Promise<void> {
@@ -438,6 +445,7 @@ export function startEditor(demoPlan: SchoolPlan = DEMO_SCHOOL): void {
     sharePanel.showPending();
     const result = await createShareLink(plan, {
       baseUrl: window.location.origin + window.location.pathname,
+      resolveRoomId,
     });
     // 作っている間に校舎が変わった・閉じられた時は出さない
     if (sharedPlan !== plan || !sharePanel.isOpen()) return;

@@ -1,4 +1,4 @@
-// 生徒用の URL と QR コードを出す窓の薄い殻（E6）．URL は share/ の createShareLink が作り，ここは表示とコピーだけを行う．
+// 生徒用の URL と QR コードを出す窓の薄い殻（E6）．URL は share/ の createShareLink が作り，ここは表示とコピーと見守り画面を開くだけを行う．
 // QR の模様は qrcode-generator で作り，Canvas 2D に描く（HTML の文字列を差し込まない）
 import qrcode from "qrcode-generator";
 import { isLoopbackHost } from "../share/shareUrl";
@@ -13,9 +13,12 @@ const QR_SIZE_PX = 360;
 /** QR コードの周りの余白（モジュールの数．規格の推奨は 4） */
 const QR_QUIET_ZONE = 4;
 
-/** 窓の中身．ok が false の時は QR を出さず，理由を並べる */
+/** 見守り画面を開く window.open の features．別のウィンドウ（タブでなく）で開き，エディタの window を渡さない */
+const MONITOR_WINDOW_FEATURES = "popup,noopener";
+
+/** 窓の中身．ok が false の時は QR を出さず，理由を並べる．monitorUrl がある時は「見守り画面を開く」を出す */
 export type ShareView =
-  | { readonly ok: true; readonly url: string }
+  | { readonly ok: true; readonly url: string; readonly monitorUrl?: string }
   | { readonly ok: false; readonly reasons: readonly string[] };
 
 /** 生徒用の URL と QR の窓 */
@@ -70,16 +73,23 @@ export function createSharePanel(notify: (message: string) => void): SharePanel 
   }
 
   function show(view: ShareView): void {
-    body.replaceChildren(...(view.ok ? urlView(view.url, notify) : reasonsView(view.reasons)));
+    body.replaceChildren(
+      ...(view.ok ? urlView(view.url, view.monitorUrl, notify) : reasonsView(view.reasons)),
+    );
     element.hidden = false;
   }
 
   return { element, showPending, show, hide, isOpen: () => !element.hidden };
 }
 
-/** QR コードと URL（コピーボタンつき） */
-function urlView(url: string, notify: (message: string) => void): HTMLElement[] {
+/** QR コードと URL（コピーボタンつき）．monitorUrl がある時は QR の横に「見守り画面を開く」を置く */
+function urlView(
+  url: string,
+  monitorUrl: string | undefined,
+  notify: (message: string) => void,
+): HTMLElement[] {
   const qr = qrCanvas(url);
+  const qrArea: HTMLElement = monitorUrl === undefined ? qr : qrWithMonitor(qr, monitorUrl);
   const hint = document.createElement("p");
   hint.className = "editor__hint";
   hint.textContent =
@@ -116,7 +126,7 @@ function urlView(url: string, notify: (message: string) => void): HTMLElement[] 
   const length = document.createElement("p");
   length.className = "editor__hint";
   length.textContent = `URL の長さ: ${url.length} 文字`;
-  const views: HTMLElement[] = [qr, hint, row, length];
+  const views: HTMLElement[] = [qrArea, hint, row, length];
   // QR と URL は出したまま，スマホから開けない配信先であることを知らせる（PC で開いて確かめる使い方は残す）
   if (isLoopbackHost(hostnameOf(url))) {
     const warning = document.createElement("p");
@@ -126,6 +136,29 @@ function urlView(url: string, notify: (message: string) => void): HTMLElement[] 
     views.splice(1, 0, warning);
   }
   return views;
+}
+
+/** QR の横に「見守り画面を開く ↗」のボタンと説明を並べた要素 */
+function qrWithMonitor(qr: HTMLCanvasElement, monitorUrl: string): HTMLElement {
+  const area = document.createElement("div");
+  area.className = "editor__share-qr-area";
+  const side = document.createElement("div");
+  side.className = "editor__share-monitor";
+  const openButton = document.createElement("button");
+  openButton.type = "button";
+  openButton.className = "editor__button";
+  openButton.textContent = "見守り画面を開く ↗";
+  openButton.addEventListener("click", () => {
+    // noopener を付けると戻り値は常に null になり，開けたかは分からない．クリックの中で呼ぶのでポップアップの制限には掛からない
+    window.open(monitorUrl, "_blank", MONITOR_WINDOW_FEATURES);
+  });
+  const note = document.createElement("p");
+  note.className = "editor__hint";
+  note.textContent =
+    "見守り画面を別のウィンドウで開きます．プロジェクタの画面へ移して F で全画面にしてください．閉じて開き直しても，この QR の生徒につながります";
+  side.append(openButton, note);
+  area.append(qr, side);
+  return area;
 }
 
 /** URL の host の名前（読めない URL は空の文字列） */

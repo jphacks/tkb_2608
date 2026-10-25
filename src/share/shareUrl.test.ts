@@ -4,11 +4,13 @@
 // SPEC_01 の editor（E6: モードの選択と QR コードの表示）・PLAN_04 の E6 と Issue #130
 import { describe, expect, it } from "vitest";
 import type { CellRef, DrillMode, DrillSetup, SchoolPlan } from "../core/schoolPlan";
+import { createPlanFingerprintFromHash, getRoomIdFromHash, ROOM_HASH_KEY } from "./monitorIds";
 import { decodePlan, encodePlan } from "./planCodec";
 import { loadPlanFromHash, PLAN_HASH_KEY } from "./planHash";
 import { DEMO_SCHOOL, DEMO_SCHOOL_ROWS } from "./samples/demoSchool";
 import { createFloorFromRows } from "./samples/floorFromRows";
 import {
+  buildMonitorUrl,
   buildShareUrl,
   createShareLink,
   isLoopbackHost,
@@ -278,5 +280,207 @@ describe("isLoopbackHost", () => {
     "127.0.0.2",
   ])("%s は false", (host) => {
     expect(isLoopbackHost(host)).toBe(false);
+  });
+});
+
+// Issue #129: E6 の QR に `room=` を入れ，見守り画面の URL も作る（SPEC_01「見守り」の「部屋の ID と URL」，
+// SPEC_02「URL と QR への埋め込み」「長さの上限」（`room=` を含めた生徒用の URL で 1,500 文字まで））
+const ROOM_ID = "AbCdEfGh012345-_";
+
+describe("buildShareUrl（room=）", () => {
+  it("`<配信先>?app#p=<埋め込みデータ>&room=<部屋の ID>` の形にする（room= は p= の後ろ）", () => {
+    expect(buildShareUrl(BASE_URL, { plan: "abc", room: ROOM_ID })).toBe(
+      `${BASE_URL}?app#p=abc&room=${ROOM_ID}`,
+    );
+  });
+
+  it("room が無い時は room= を付けない", () => {
+    expect(buildShareUrl(BASE_URL, { plan: "abc" })).not.toContain(`${ROOM_HASH_KEY}=`);
+  });
+
+  it("room= を足すと 16 文字の ID で URL は 22 文字長くなる", () => {
+    const without = buildShareUrl(BASE_URL, { plan: "abc" });
+    const withRoom = buildShareUrl(BASE_URL, { plan: "abc", room: ROOM_ID });
+    expect(withRoom.length - without.length).toBe(22);
+  });
+
+  it("フラグメントから getRoomIdFromHash で部屋の ID を読める", () => {
+    const url = buildShareUrl(BASE_URL, { plan: "abc", room: ROOM_ID });
+    expect(getRoomIdFromHash(new URL(url).hash)).toBe(ROOM_ID);
+  });
+});
+
+describe("buildMonitorUrl", () => {
+  it("`<配信先>?monitor#p=<埋め込みデータ>&room=<部屋の ID>` の形にする", () => {
+    expect(buildMonitorUrl(BASE_URL, { plan: "abc", room: ROOM_ID })).toBe(
+      `${BASE_URL}?monitor#p=abc&room=${ROOM_ID}`,
+    );
+  });
+
+  it("生徒用の URL の `?app` を `?monitor` に替えたもの（フラグメントは同じ）", () => {
+    const fragment = { plan: "AZaz09-_".repeat(5), room: ROOM_ID };
+    const app = new URL(buildShareUrl(BASE_URL, fragment));
+    const monitor = new URL(buildMonitorUrl(BASE_URL, fragment));
+    expect(monitor.search).toBe("?monitor");
+    expect(monitor.hash).toBe(app.hash);
+    expect(monitor.origin + monitor.pathname).toBe(app.origin + app.pathname);
+    expect(buildMonitorUrl(BASE_URL, fragment)).toBe(
+      buildShareUrl(BASE_URL, fragment).replace("?app#", "?monitor#"),
+    );
+  });
+});
+
+describe("createShareLink（resolveRoomId を渡した時）", () => {
+  /** 渡された指紋を覚えて決まった ID を返す */
+  function recorder(roomId = ROOM_ID): {
+    resolve: (fp: string) => string;
+    fingerprints: string[];
+  } {
+    const fingerprints: string[] = [];
+    return {
+      resolve: (fp) => {
+        fingerprints.push(fp);
+        return roomId;
+      },
+      fingerprints,
+    };
+  }
+
+  function expectOkWithMonitor(result: ShareLinkResult): { url: string; monitorUrl: string } {
+    if (!result.ok) throw new Error(`URL が作れなかった: ${result.reasons.join(" / ")}`);
+    if (result.monitorUrl === undefined) throw new Error("monitorUrl が無い");
+    return { url: result.url, monitorUrl: result.monitorUrl };
+  }
+
+  it("生徒用の URL のフラグメントに p= の後ろへ room=<引いた ID> を入れる", async () => {
+    const r = recorder();
+    const { url } = expectOkWithMonitor(
+      await createShareLink(DEMO_SCHOOL, { baseUrl: BASE_URL, resolveRoomId: r.resolve }),
+    );
+    const encoded = await encodePlan(DEMO_SCHOOL);
+    expect(url).toBe(`${BASE_URL}?app#p=${encoded}&room=${ROOM_ID}`);
+    expect(getRoomIdFromHash(new URL(url).hash)).toBe(ROOM_ID);
+  });
+
+  it("見守り画面の URL は `?monitor` で，生徒用の URL と同じフラグメント", async () => {
+    const { url, monitorUrl } = expectOkWithMonitor(
+      await createShareLink(DEMO_SCHOOL, { baseUrl: BASE_URL, resolveRoomId: recorder().resolve }),
+    );
+    expect(new URL(monitorUrl).search).toBe("?monitor");
+    expect(new URL(monitorUrl).hash).toBe(new URL(url).hash);
+    expect(monitorUrl).toBe(url.replace("?app#", "?monitor#"));
+  });
+
+  it("resolveRoomId に渡す指紋は，生徒・見守り画面が URL の hash から求める指紋と同じ", async () => {
+    const r = recorder();
+    const { url, monitorUrl } = expectOkWithMonitor(
+      await createShareLink(DEMO_SCHOOL, { baseUrl: BASE_URL, resolveRoomId: r.resolve }),
+    );
+    expect(r.fingerprints).toHaveLength(1);
+    expect(r.fingerprints[0]).toBe(await createPlanFingerprintFromHash(new URL(url).hash));
+    expect(r.fingerprints[0]).toBe(await createPlanFingerprintFromHash(new URL(monitorUrl).hash));
+  });
+
+  it("外側の void を切り詰めた校舎でも，指紋は送る URL の p の値から求める（void の無い校舎と同じ指紋）", async () => {
+    const plain = recorder();
+    const padded = recorder();
+    await createShareLink(DEMO_SCHOOL, { baseUrl: BASE_URL, resolveRoomId: plain.resolve });
+    const { url } = expectOkWithMonitor(
+      await createShareLink(paddedDemo(4), { baseUrl: BASE_URL, resolveRoomId: padded.resolve }),
+    );
+    expect(padded.fingerprints[0]).toBe(plain.fingerprints[0]);
+    expect(padded.fingerprints[0]).toBe(await createPlanFingerprintFromHash(new URL(url).hash));
+  });
+
+  it("校舎を直す（埋め込みデータが変わる）と違う指紋で引く", async () => {
+    const a = recorder();
+    const b = recorder();
+    await createShareLink(planWith({}, { mode: "learn" }), {
+      baseUrl: BASE_URL,
+      resolveRoomId: a.resolve,
+    });
+    await createShareLink(planWith({}, { mode: "test" }), {
+      baseUrl: BASE_URL,
+      resolveRoomId: b.resolve,
+    });
+    expect(a.fingerprints[0]).not.toBe(b.fingerprints[0]);
+  });
+
+  it("同じ校舎なら同じ指紋で引く", async () => {
+    const r = recorder();
+    await createShareLink(DEMO_SCHOOL, { baseUrl: BASE_URL, resolveRoomId: r.resolve });
+    await createShareLink(DEMO_SCHOOL, { baseUrl: BASE_URL, resolveRoomId: r.resolve });
+    expect(r.fingerprints[0]).toBe(r.fingerprints[1]);
+  });
+
+  it.each<DrillMode>(["learn", "test"])(
+    "room= があっても loadPlanFromHash は同じ校舎（%s）を読む（生徒用・見守り画面の両方）",
+    async (mode) => {
+      const p = planWith({}, { mode });
+      const { url, monitorUrl } = expectOkWithMonitor(
+        await createShareLink(p, { baseUrl: BASE_URL, resolveRoomId: recorder().resolve }),
+      );
+      for (const u of [url, monitorUrl]) {
+        const loaded = await loadPlanFromHash(new URL(u).hash);
+        expect(loaded.planLoadError).toBeNull();
+        expect(loaded.plan).toEqual(p);
+      }
+    },
+  );
+
+  it("resolveRoomId を渡さない時は room= を付けず，monitorUrl も返さない（従来どおり）", async () => {
+    const result = await createShareLink(DEMO_SCHOOL, { baseUrl: BASE_URL });
+    if (!result.ok) throw new Error(result.reasons.join(" / "));
+    expect(result.url).not.toContain("room=");
+    expect(result.monitorUrl).toBeUndefined();
+  });
+
+  it("validatePlan の誤りがある時は URL を作らず，monitorUrl も無い", async () => {
+    const broken = planWith({}, { fireOrigins: [], assembly: [] });
+    const result = await createShareLink(broken, {
+      baseUrl: BASE_URL,
+      resolveRoomId: recorder().resolve,
+    });
+    expect(result.ok).toBe(false);
+    expect("monitorUrl" in result).toBe(false);
+  });
+
+  /** room= を含めた生徒用の URL がちょうど length 文字になる配信先 */
+  async function baseUrlForLengthWithRoom(length: number): Promise<string> {
+    const fixedPart = buildShareUrl("", {
+      plan: await encodePlan(DEMO_SCHOOL),
+      room: ROOM_ID,
+    }).length;
+    const prefix = "https://example.com/";
+    return prefix + "a".repeat(length - fixedPart - prefix.length);
+  }
+
+  it("room= を含めて URL 全体がちょうど 1,500 文字なら作れる", async () => {
+    const baseUrl = await baseUrlForLengthWithRoom(MAX_SHARE_URL_LENGTH);
+    const { url } = expectOkWithMonitor(
+      await createShareLink(DEMO_SCHOOL, { baseUrl, resolveRoomId: recorder().resolve }),
+    );
+    expect(url.length).toBe(MAX_SHARE_URL_LENGTH);
+  });
+
+  it("room= を含めると 1,501 文字になる時は作らない（room= 無しなら上限に収まる長さでも）", async () => {
+    const baseUrl = await baseUrlForLengthWithRoom(MAX_SHARE_URL_LENGTH + 1);
+    // room= が無ければ 1,479 文字で収まる
+    const plain = await createShareLink(DEMO_SCHOOL, { baseUrl });
+    expect(plain.ok).toBe(true);
+    const reasons = expectNg(
+      await createShareLink(DEMO_SCHOOL, { baseUrl, resolveRoomId: recorder().resolve }),
+    );
+    expect(reasons).toHaveLength(1);
+    expect(reasons[0]).toContain(SHARE_LINK_REASONS.tooLong);
+  });
+
+  it("デモの校舎は room= を含めても上限に収まる（SPEC_02 の実測 616 + 22 文字）", async () => {
+    const { url } = expectOkWithMonitor(
+      await createShareLink(DEMO_SCHOOL, { baseUrl: BASE_URL, resolveRoomId: recorder().resolve }),
+    );
+    expect(url.length).toBeLessThanOrEqual(MAX_SHARE_URL_LENGTH);
+    const plain = expectOk(await createShareLink(DEMO_SCHOOL, { baseUrl: BASE_URL }));
+    expect(url.length - plain.length).toBe(22);
   });
 });
