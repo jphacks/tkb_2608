@@ -43,3 +43,6 @@ coverage/
 
 # 開発時に実機（スマホ）から開発サーバーへ送られたログ・センサーの記録（ENV_01「実機のログの確認」）
 logs/
+
+# ブラウザでの自動検証（scripts/verify/run.mjs）のシナリオと結果（スクリーンショット・result.json）．.claude/verify-profile.md
+.verify/
