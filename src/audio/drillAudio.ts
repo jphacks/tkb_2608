@@ -59,8 +59,11 @@ export function createDrillAudio(options: DrillAudioOptions): DrillAudio {
         return;
       case "speak": {
         const { token } = action;
-        const ok = speech.speak(action.text, action.rate, () =>
-          dispatch({ type: "speechEnded", token }),
+        const ok = speech.speak(
+          action.text,
+          action.rate,
+          () => dispatch({ type: "speechEnded", token }),
+          action.pitch,
         );
         if (!ok) dispatch({ type: "speechUnavailable", token });
         return;

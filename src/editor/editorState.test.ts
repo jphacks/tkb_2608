@@ -10,6 +10,7 @@ import { canPersonStep, computeSpread, proposeRoute, type SpreadMap } from "../s
 import type { CellXZ } from "../sim/grid";
 import {
   addRoom,
+  areaBounds,
   beginRouteStroke,
   beginStroke,
   canRedo,
@@ -35,7 +36,9 @@ import {
   MAX_GRID_SIZE,
   type MarkerKind,
   markerRejection,
+  nextAssemblyForArea,
   openPlan,
+  outdoorCellsInArea,
   paintCell,
   placeMarker,
   placeStart,
@@ -52,6 +55,7 @@ import {
   startBlank,
   suggestRoute,
   toggleAssembly,
+  toggleAssemblyArea,
   toggleFireOrigin,
   undo,
   yawToGridDirection,
@@ -1148,6 +1152,169 @@ describe("toggleAssembly", () => {
     const added = toggleAssembly(s, at(1, 2)).state;
     expect(undo(added).plan).toBe(s.plan);
     expect(redo(undo(added)).plan).toBe(added.plan);
+  });
+});
+
+/** 範囲の指定のテスト用のマス目（4 × 4．屋外は 3 行目と 4 行目の左 2 マス） */
+const AREA_ROWS = ["00hh", "01hh", "oooo", "oohh"];
+const areaFloor = (): Floor => createFloorFromRows(1, AREA_ROWS);
+const area = (fx: number, fz: number, tx: number, tz: number) => ({
+  from: at(fx, fz),
+  to: at(tx, tz),
+});
+
+describe("areaBounds", () => {
+  it("どちらの角から選んでも同じ左上・右下になる", () => {
+    const f = areaFloor();
+    const expected = { minX: 1, minZ: 2, maxX: 3, maxZ: 3 };
+    expect(areaBounds(f, area(1, 2, 3, 3))).toEqual(expected);
+    expect(areaBounds(f, area(3, 3, 1, 2))).toEqual(expected);
+    expect(areaBounds(f, area(3, 2, 1, 3))).toEqual(expected);
+  });
+
+  it("1 マスだけの範囲", () => {
+    expect(areaBounds(areaFloor(), area(2, 2, 2, 2))).toEqual({
+      minX: 2,
+      minZ: 2,
+      maxX: 2,
+      maxZ: 2,
+    });
+  });
+
+  it.each(OUTSIDE_CELLS)("端がマス目の外 %o なら null", (cell) => {
+    // OUTSIDE_CELLS は既定の 4 × 3 マスに対する外
+    const f = editingFloor(state());
+    expect(areaBounds(f, { from: at(0, 0), to: cell })).toBeNull();
+    expect(areaBounds(f, { from: cell, to: at(0, 0) })).toBeNull();
+  });
+});
+
+describe("outdoorCellsInArea", () => {
+  it("範囲の中の屋外のマスだけを，上の行から左から順に返す", () => {
+    expect(outdoorCellsInArea(areaFloor(), area(3, 3, 1, 1))).toEqual([
+      at(1, 2),
+      at(2, 2),
+      at(3, 2),
+      at(1, 3),
+    ]);
+  });
+
+  it("屋外のマスが無い範囲は空", () => {
+    expect(outdoorCellsInArea(areaFloor(), area(0, 0, 3, 1))).toEqual([]);
+  });
+
+  it("マス目の外にかかる範囲は空", () => {
+    expect(outdoorCellsInArea(areaFloor(), area(0, 2, 4, 3))).toEqual([]);
+  });
+});
+
+describe("nextAssemblyForArea", () => {
+  it("集合場所でない屋外のマスを足す（屋外でないマス・すでにあるマスは足さない）", () => {
+    const result = nextAssemblyForArea(areaFloor(), [ref(2, 2)], area(1, 2, 3, 3));
+    expect(result.reason).toBeNull();
+    expect(result.assembly).toEqual([ref(2, 2), ref(1, 2), ref(3, 2), ref(1, 3)]);
+  });
+
+  it("範囲の屋外のマスがすべて集合場所なら，範囲の中の集合場所を外す（範囲の外は残す）", () => {
+    const assembly = [ref(0, 2), ref(1, 2), ref(2, 2), ref(1, 3)];
+    const result = nextAssemblyForArea(areaFloor(), assembly, area(1, 2, 2, 3));
+    expect(result.reason).toBeNull();
+    expect(result.assembly).toEqual([ref(0, 2)]);
+  });
+
+  it("外す時は，屋外でなくなったマスの集合場所も範囲の中なら外す", () => {
+    const assembly = [ref(2, 2), ref(2, 3), ref(0, 3)];
+    const result = nextAssemblyForArea(areaFloor(), assembly, area(2, 2, 3, 3));
+    // 屋外は (2, 2)・(3, 2)．(3, 2) が無いので，まず足す
+    expect(result.assembly).toEqual([...assembly, ref(3, 2)]);
+    const again = nextAssemblyForArea(areaFloor(), result.assembly, area(2, 2, 3, 3));
+    expect(again.assembly).toEqual([ref(0, 3)]);
+  });
+
+  it("屋外のマスが無い範囲でも，その中の集合場所は外せる", () => {
+    const result = nextAssemblyForArea(areaFloor(), [ref(3, 2), ref(2, 1)], area(2, 0, 3, 1));
+    expect(result.reason).toBeNull();
+    expect(result.assembly).toEqual([ref(3, 2)]);
+  });
+
+  it("屋外のマスも外す集合場所も無い範囲は，理由を返して変えない", () => {
+    const assembly = [ref(3, 2)];
+    const result = nextAssemblyForArea(areaFloor(), assembly, area(0, 0, 3, 1));
+    expect(result.reason).toBe(MARKER_REASONS.assemblyNotOutdoor);
+    expect(result.assembly).toBe(assembly);
+  });
+
+  it("マス目の外にかかる範囲は，理由を返して変えない", () => {
+    const assembly = [ref(3, 2)];
+    const result = nextAssemblyForArea(areaFloor(), assembly, area(0, 2, 4, 3));
+    expect(result.reason).toBe(MARKER_REASONS.outside);
+    expect(result.assembly).toBe(assembly);
+  });
+
+  it("別の階の集合場所は，同じ (x, z) でも足す・外すの判断に使わず残す", () => {
+    const assembly = [ref(1, 2, 1)];
+    const added = nextAssemblyForArea(areaFloor(), assembly, area(1, 2, 1, 2));
+    expect(added.assembly).toEqual([ref(1, 2, 1), ref(1, 2)]);
+    const removed = nextAssemblyForArea(areaFloor(), added.assembly, area(1, 2, 1, 2));
+    expect(removed.assembly).toEqual([ref(1, 2, 1)]);
+  });
+
+  it("同じマスが重なって入っていても，範囲で選べばまとめて外す", () => {
+    const result = nextAssemblyForArea(areaFloor(), [ref(0, 3), ref(0, 3)], area(0, 3, 0, 3));
+    expect(result.assembly).toEqual([]);
+  });
+});
+
+describe("toggleAssemblyArea", () => {
+  const areaState = (assembly: readonly CellRef[]) => drillState({ assembly }, { rows: AREA_ROWS });
+
+  it("ドラッグ 1 回分の範囲で足し，1 回分の履歴になる", () => {
+    const s = areaState([ref(3, 2)]);
+    const { state: next, reason } = toggleAssemblyArea(s, area(0, 2, 1, 3));
+    expect(reason).toBeNull();
+    expect(next.plan.drill.assembly).toEqual([
+      ref(3, 2),
+      ref(0, 2),
+      ref(1, 2),
+      ref(0, 3),
+      ref(1, 3),
+    ]);
+    expect(next.past).toEqual([s.plan]);
+    expectDrillOthersKept(s.plan, next.plan, ["assembly"]);
+    expect(validatePlan(next.plan)).toEqual([]);
+  });
+
+  it("同じ範囲をもう一度選ぶと外し，元に戻す 1 回で前に戻る", () => {
+    const s = areaState([ref(3, 2)]);
+    const added = toggleAssemblyArea(s, area(0, 2, 1, 3)).state;
+    const removed = toggleAssemblyArea(added, area(1, 3, 0, 2)).state;
+    expect(removed.plan.drill.assembly).toEqual([ref(3, 2)]);
+    expect(removed.past).toHaveLength(2);
+    expect(undo(removed).plan).toBe(added.plan);
+    expect(undo(undo(removed)).plan).toBe(s.plan);
+  });
+
+  it("置けない範囲は理由が返り，履歴に積まない", () => {
+    const s = areaState([ref(3, 2)]);
+    expectRejected(s, toggleAssemblyArea(s, area(0, 0, 1, 1)), MARKER_REASONS.assemblyNotOutdoor);
+    expectRejected(s, toggleAssemblyArea(s, area(0, 0, -1, 1)), MARKER_REASONS.outside);
+  });
+
+  it("塗っている途中なら塗り終えてから置く（塗りと範囲が別々の履歴になる）", () => {
+    let s = areaState([ref(3, 2)]);
+    s = selectTool(s, { kind: "outdoor" });
+    const painting = beginStroke(s, at(3, 3));
+    const { state: next } = toggleAssemblyArea(painting, area(3, 3, 3, 3));
+    expect(next.stroke).toBeNull();
+    expect(next.past).toHaveLength(2);
+    expect(next.plan.drill.assembly).toEqual([ref(3, 2), ref(3, 3)]);
+  });
+
+  it("入力の校舎を書き換えない", () => {
+    const s = areaState([ref(3, 2)]);
+    const snapshot = JSON.stringify(s.plan);
+    expect(() => toggleAssemblyArea(s, area(0, 2, 3, 3))).not.toThrow();
+    expect(JSON.stringify(s.plan)).toBe(snapshot);
   });
 });
 
