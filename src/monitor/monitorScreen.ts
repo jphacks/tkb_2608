@@ -1,6 +1,7 @@
 // 見守り画面（?monitor）の殻．中継から受け取った知らせと状態を MonitorSession に渡し，片目分の全画面（カメラ 1 つ）で
 // ロビー・校舎を描き直し，終わったら届いた記録の結果画面を出す．
-// 案内の文と赤い縁は DOM で重ねる．F でブラウザの全画面にする．音は出さない（SPEC_01「見守り」の「見守り画面」）
+// 案内の文と赤い縁は DOM で重ねる．F でブラウザの全画面にする．最初のクリックの後は，生徒の端末と同じ音を鳴らす
+// （SPEC_01「見守り」の「見守り画面」「音」）
 import * as THREE from "three";
 import type { DrillTrack } from "../core/drill";
 import type { SchoolPlan } from "../core/schoolPlan";
@@ -16,7 +17,7 @@ import {
 } from "./monitorDisplay";
 import { type MonitorEffect, MonitorSession } from "./monitorSession";
 import { RelayConnection } from "./relayConnection";
-import type { MonitorLobbyWorld, MonitorResultView, MonitorWorld } from "./types";
+import type { MonitorAudio, MonitorLobbyWorld, MonitorResultView, MonitorWorld } from "./types";
 
 /** 見守り画面を始めるのに要るもの（app/ が用意する） */
 export interface MonitorScreenOptions {
@@ -31,7 +32,12 @@ export interface MonitorScreenOptions {
   readonly createLobby: () => MonitorLobbyWorld;
   /** 結果画面（debrief/ から組み立てる） */
   readonly result: MonitorResultView;
+  /** 生徒と同じ音を鳴らす口（audio/ から組み立てる．省略すると音を出さず，クリックの案内も出さない） */
+  readonly audio?: MonitorAudio;
 }
+
+/** 音を使えるようにする前に出す案内 */
+const AUDIO_PROMPT = "クリックして音を出す";
 
 /** カメラの画角（度）．生徒の画面（app/）と同じ値にそろえる */
 const CAMERA_FOV_DEG = 70;
@@ -80,6 +86,57 @@ function bindFullscreenKey(): void {
     if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
     else void document.documentElement.requestFullscreen().catch(() => {});
   });
+}
+
+/** 音を使えるようにするまで，画面の下に出す案内の要素を作る（画面のどこをクリックしてもよい） */
+function createAudioPrompt(): HTMLDivElement {
+  const prompt = document.createElement("div");
+  prompt.textContent = AUDIO_PROMPT;
+  prompt.style.cssText = [
+    "position:fixed",
+    "left:50%",
+    "bottom:24px",
+    "transform:translateX(-50%)",
+    "padding:12px 28px",
+    "border-radius:999px",
+    "background:rgba(255,255,255,0.9)",
+    "color:#10141c",
+    "font:bold clamp(16px,2vw,28px)/1.4 system-ui,sans-serif",
+    "cursor:pointer",
+    "z-index:3",
+  ].join(";");
+  return prompt;
+}
+
+/**
+ * 最初のクリックで音を使えるようにする（ブラウザの自動再生の制限のため）．使えるようになったら true を返す関数を返す．
+ * 押すまでに届いた音の合図は捨てる（後から鳴らすと生徒の端末とずれるため）
+ */
+function bindAudioUnlock(audio: MonitorAudio): () => boolean {
+  let enabled = false;
+  const prompt = createAudioPrompt();
+  document.body.appendChild(prompt);
+  const onClick = (): void => {
+    window.removeEventListener("click", onClick);
+    prompt.remove();
+    try {
+      audio.enable();
+      enabled = true;
+    } catch {
+      // 音が使えなくても映像は続ける
+    }
+  };
+  window.addEventListener("click", onClick);
+  return () => enabled;
+}
+
+/** 音の口を呼ぶ（音の失敗で受け取りを止めない） */
+function safely(task: () => void): void {
+  try {
+    task();
+  } catch {
+    // 音が鳴らなくても映像は続ける
+  }
 }
 
 /** 見守り画面を始められない時（room= が無い・中継の住所が無い・校舎が読めない）に，案内だけを出す */
@@ -140,10 +197,28 @@ export function startMonitorScreen(options: MonitorScreenOptions): void {
 
   const floorCount = plan.floors.length;
   const session = new MonitorSession(options.planFingerprint, floorCount);
+  const audio = options.audio ?? null;
+  const isAudioEnabled = audio === null ? () => false : bindAudioUnlock(audio);
+  if (audio !== null) window.addEventListener("pagehide", () => safely(() => audio.dispose()));
   const applyEffect = (effect: MonitorEffect | null) => {
     if (effect === null) return;
-    if (effect.kind === "resetDoors") world.resetDoors();
-    else world.setDoorOpen(effect.cell, effect.open);
+    switch (effect.kind) {
+      case "resetDoors":
+        world.resetDoors();
+        return;
+      case "door":
+        world.setDoorOpen(effect.cell, effect.open);
+        return;
+      case "cue":
+        if (audio !== null && isAudioEnabled()) safely(() => audio.playCue(effect.cue));
+        return;
+      case "speech":
+        if (audio !== null && isAudioEnabled()) safely(() => audio.speak(effect.text, effect.rate));
+        return;
+      case "stopAudio":
+        if (audio !== null) safely(() => audio.stopAll());
+        return;
+    }
   };
 
   let relayStatus: RelayStatus = "connecting";
@@ -151,7 +226,10 @@ export function startMonitorScreen(options: MonitorScreenOptions): void {
   const connection = new RelayConnection(options.relayUrl, {
     onText: (text) => {
       const notice = parseMonitorNotice(text);
-      if (notice) applyEffect(session.receiveNotice(notice, performance.now()));
+      if (notice === null) return;
+      applyEffect(session.receiveNotice(notice, performance.now()));
+      // 映す生徒が替わった・違う校舎になった時は，前の音を鳴らし続けない
+      if (session.takeAudioStop() && audio !== null) safely(() => audio.stopAll());
     },
     onBinary: (data) => {
       const state = readMonitorState(data, floorCount);

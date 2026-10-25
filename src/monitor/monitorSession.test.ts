@@ -748,3 +748,224 @@ describe("MonitorSession: 終わりの記録", () => {
     expect(session.frame(300).track?.samples).toHaveLength(3);
   });
 });
+
+// ---- 音の知らせ（SPEC_01「見守り」段階 1「音」の「鳴らす条件」「止める時」） ----
+
+describe("MonitorSession: 音の知らせ", () => {
+  const cueNotice = (studentId = STUDENT): MonitorNotice => ({
+    type: "cue",
+    studentId,
+    cue: { type: "sound", id: "fire-bell", action: "play", loop: true },
+  });
+  const speechNotice = (studentId = STUDENT): MonitorNotice => ({
+    type: "speech",
+    studentId,
+    text: "しゃがんでください",
+    rate: 1.05,
+  });
+  const stopNotice = (studentId = STUDENT): MonitorNotice => ({ type: "stopAudio", studentId });
+
+  /** hello だけ受け取った（準備中の前・接続待ちから hello 済み）もの */
+  const helloSession = (fingerprint = LOCAL): MonitorSession => {
+    const session = new MonitorSession(LOCAL);
+    session.receiveNotice(hello(STUDENT, fingerprint), 0);
+    return session;
+  };
+
+  it("映す生徒の cue・speech・stopAudio を鳴らす側への効果として返す", () => {
+    const session = liveSession();
+    expect(session.receiveNotice(cueNotice(), 10)).toEqual({
+      kind: "cue",
+      cue: { type: "sound", id: "fire-bell", action: "play", loop: true },
+    });
+    expect(session.receiveNotice(speechNotice(), 10)).toEqual({
+      kind: "speech",
+      text: "しゃがんでください",
+      rate: 1.05,
+    });
+    expect(session.receiveNotice(stopNotice(), 10)).toEqual({ kind: "stopAudio" });
+  });
+
+  it("narration の params もそのまま渡す", () => {
+    const session = liveSession();
+    expect(
+      session.receiveNotice(
+        {
+          type: "cue",
+          studentId: STUDENT,
+          cue: { type: "narration", id: "fire-announcement", params: { roomName: "3年1組" } },
+        },
+        0,
+      ),
+    ).toEqual({
+      kind: "cue",
+      cue: { type: "narration", id: "fire-announcement", params: { roomName: "3年1組" } },
+    });
+  });
+
+  it.each<[string, (s: MonitorSession) => void]>([
+    ["hello の直後（phase の前）", () => {}],
+    ["準備中", (s) => s.receiveNotice(phase("lobby"), 0)],
+    ["体験中", (s) => s.receiveNotice(phase("drill"), 0)],
+    ["終わり（goal）", (s) => s.receiveNotice(phase("goal"), 0)],
+    ["結果（result）", (s) => s.receiveNotice(phase("result"), 0)],
+  ])("画面の状態では絞らない: %s でも鳴らす", (_label, prepare) => {
+    const session = helloSession();
+    prepare(session);
+    expect(session.receiveNotice(cueNotice(), 0)).toMatchObject({ kind: "cue" });
+    expect(session.receiveNotice(speechNotice(), 0)).toMatchObject({ kind: "speech" });
+    expect(session.receiveNotice(stopNotice(), 0)).toEqual({ kind: "stopAudio" });
+  });
+
+  it("避難の画面に入る途中の cue（phase drill より前に届く）も鳴らし，その後の drill でも画面は普通に変わる", () => {
+    const session = helloSession();
+    session.receiveNotice(phase("lobby"), 0);
+    expect(session.receiveNotice(cueNotice(), 0)).toMatchObject({ kind: "cue" });
+    expect(session.screen).toBe("preparing");
+    session.receiveNotice(phase("drill"), 0);
+    expect(session.screen).toBe("live");
+  });
+
+  it.each<[string, () => MonitorNotice]>([
+    ["cue", () => cueNotice()],
+    ["speech", () => speechNotice()],
+    ["stopAudio", () => stopNotice()],
+  ])("%s では画面の状態・板・ためた状態を変えない", (_label, make) => {
+    const session = helloSession();
+    session.receiveNotice(phase("lobby"), 0);
+    const lobby: MonitorLobbyNotice = {
+      type: "lobby",
+      studentId: STUDENT,
+      title: "t",
+      body: "b",
+      caption: "",
+      startButton: false,
+      alignMarker: false,
+    };
+    session.receiveNotice(lobby, 0);
+    session.receiveState(state({ seq: 1 }), 0);
+    const before = { screen: session.screen, buffered: session.bufferedCount };
+    session.receiveNotice(make(), 0);
+    expect(session.screen).toBe(before.screen);
+    expect(session.bufferedCount).toBe(before.buffered);
+    expect(session.frame(0).lobby).toMatchObject({ title: "t", body: "b" });
+
+    const live = liveSession();
+    live.receiveNotice(make(), 0);
+    expect(live.screen).toBe("live");
+    const ended = liveSession();
+    ended.receiveNotice(phase("goal"), 0);
+    ended.receiveNotice(make(), 0);
+    expect(ended.screen).toBe("ended");
+  });
+
+  it("hello の前に届いた音の知らせは捨て，接続待ちのまま", () => {
+    const session = new MonitorSession(LOCAL);
+    expect(session.receiveNotice(cueNotice(), 0)).toBeNull();
+    expect(session.receiveNotice(speechNotice(), 0)).toBeNull();
+    expect(session.receiveNotice(stopNotice(), 0)).toBeNull();
+    expect(session.screen).toBe("waiting");
+  });
+
+  it("ほかの生徒の音の知らせは捨てる", () => {
+    const session = liveSession();
+    expect(session.receiveNotice(cueNotice(OTHER), 0)).toBeNull();
+    expect(session.receiveNotice(speechNotice(OTHER), 0)).toBeNull();
+    expect(session.receiveNotice(stopNotice(OTHER), 0)).toBeNull();
+  });
+
+  it("映す生徒が替わったら，前の生徒の音の知らせは捨て，新しい生徒のものを返す", () => {
+    const session = liveSession();
+    session.receiveNotice(hello(OTHER), 0);
+    expect(session.receiveNotice(cueNotice(STUDENT), 0)).toBeNull();
+    expect(session.receiveNotice(cueNotice(OTHER), 0)).toMatchObject({ kind: "cue" });
+  });
+
+  it("違う校舎（mismatch）の間は音の知らせを捨てる", () => {
+    const session = helloSession("OTHERPLAN00");
+    session.receiveNotice(phase("drill"), 0);
+    expect(session.receiveNotice(cueNotice(), 0)).toBeNull();
+    expect(session.receiveNotice(speechNotice(), 0)).toBeNull();
+    expect(session.receiveNotice(stopNotice(), 0)).toBeNull();
+  });
+
+  it("同じ校舎の hello に変われば，また鳴らす", () => {
+    const session = helloSession("OTHERPLAN00");
+    session.receiveNotice(hello(), 0);
+    expect(session.receiveNotice(cueNotice(), 0)).toMatchObject({ kind: "cue" });
+  });
+
+  it("phase の知らせは音を止める効果を返さない", () => {
+    const session = helloSession();
+    session.takeAudioStop();
+    for (const value of ["lobby", "drill", "goal", "result"] as const) {
+      const effect = session.receiveNotice(phase(value), 0);
+      expect(effect?.kind).not.toBe("stopAudio");
+      expect(session.takeAudioStop()).toBe(false);
+    }
+  });
+});
+
+describe("MonitorSession.takeAudioStop", () => {
+  it("開いた直後（hello の前）は false", () => {
+    expect(new MonitorSession(LOCAL).takeAudioStop()).toBe(false);
+  });
+
+  it("初めての hello の後に 1 回だけ true", () => {
+    const session = new MonitorSession(LOCAL);
+    session.receiveNotice(hello(), 0);
+    expect(session.takeAudioStop()).toBe(true);
+    expect(session.takeAudioStop()).toBe(false);
+  });
+
+  it("別の生徒の hello の後に 1 回だけ true", () => {
+    const session = liveSession();
+    session.takeAudioStop();
+    session.receiveNotice(hello(OTHER), 0);
+    expect(session.takeAudioStop()).toBe(true);
+    expect(session.takeAudioStop()).toBe(false);
+  });
+
+  it("同じ生徒の同じ校舎の hello（つなぎ直し）では false", () => {
+    const session = liveSession();
+    session.takeAudioStop();
+    session.receiveNotice(hello(), 0);
+    expect(session.takeAudioStop()).toBe(false);
+  });
+
+  it("同じ生徒でも違う校舎（mismatch）の hello の後は 1 回だけ true", () => {
+    const session = liveSession();
+    session.takeAudioStop();
+    session.receiveNotice(hello(STUDENT, "OTHERPLAN00"), 0);
+    expect(session.takeAudioStop()).toBe(true);
+    expect(session.takeAudioStop()).toBe(false);
+  });
+
+  it("hello が続けて 2 回あっても，取り出すまで true は 1 回分", () => {
+    const session = new MonitorSession(LOCAL);
+    session.receiveNotice(hello(), 0);
+    session.receiveNotice(hello(OTHER), 0);
+    expect(session.takeAudioStop()).toBe(true);
+    expect(session.takeAudioStop()).toBe(false);
+  });
+
+  it("ほかの生徒の知らせ・状態・音の知らせでは true にならない", () => {
+    const session = liveSession();
+    session.takeAudioStop();
+    session.receiveNotice(phase("lobby", OTHER), 0);
+    session.receiveNotice(door(true, OTHER), 0);
+    session.receiveState(state({ studentId: OTHER, seq: 3 }), 0);
+    session.receiveState(state({ seq: 3 }), 0);
+    session.receiveNotice({ type: "stopAudio", studentId: STUDENT }, 0);
+    session.receiveNotice({ type: "speech", studentId: STUDENT, text: "a", rate: 1 }, 0);
+    expect(session.takeAudioStop()).toBe(false);
+  });
+
+  it("途切れ（1 秒届かない）では true にならない", () => {
+    const session = liveSession();
+    session.takeAudioStop();
+    session.receiveState(state({ seq: 1 }), 0);
+    session.frame(5000);
+    expect(session.takeAudioStop()).toBe(false);
+  });
+});
