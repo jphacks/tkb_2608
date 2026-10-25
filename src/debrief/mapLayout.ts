@@ -110,3 +110,12 @@ export function mapToCanvas(layout: MapLayout, point: MapPoint): CanvasPoint {
 function isPositiveFinite(value: number): boolean {
   return Number.isFinite(value) && value > 0;
 }
+
+/**
+ * startYaw（rad．0 が -Z（地図の上）向き，右回りに増える．core/schoolPlan.ts の DrillSetup.startYaw）が向く
+ * 地図の上の方向（u は右，v は下に増える．長さ 1）．エディタの開始地点の矢印と同じ約束．数でない時は null
+ */
+export function yawToMapDirection(yaw: number): MapPoint | null {
+  if (!Number.isFinite(yaw)) return null;
+  return { u: Math.sin(yaw), v: -Math.cos(yaw) };
+}

@@ -74,8 +74,8 @@ function styleText(theme: DebriefTheme): string {
 .debrief__swatch.is-line { width: 22px; height: 5px; border-radius: 3px; }
 .debrief__swatch.is-band { width: 22px; height: 11px; border-radius: 6px; }
 .debrief__swatch.is-dot { width: 12px; height: 12px; border-radius: 50%; border: 2px solid #fff; }
-.debrief__swatch.is-cell { width: 14px; height: 14px; }
-.debrief__swatch.is-ring { width: 14px; height: 14px; border-radius: 50%; background: #fff; border: 3px solid; }
+.debrief__swatch.is-flame { width: 12px; height: 12px; margin: 1px; border-radius: 50% 0 50% 50%; transform: rotate(-45deg); border: 2px solid #fff; }
+.debrief__swatch.is-person { width: 14px; height: 14px; border-radius: 50%; border: 2px solid #fff; background-image: radial-gradient(circle at 50% 34%, #fff 0 18%, transparent 20%), radial-gradient(ellipse at 50% 92%, #fff 0 30%, transparent 32%); }
 .debrief__swatch.is-frame { width: 14px; height: 14px; border: 3px solid; }
 .debrief__actions { display: flex; flex-wrap: wrap; gap: 10px; }
 .debrief button {
@@ -279,8 +279,9 @@ function createLegend(items: readonly LegendItem[]): HTMLElement {
     const li = document.createElement("li");
     const swatch = document.createElement("span");
     swatch.className = `debrief__swatch is-${item.shape}`;
-    if (item.shape === "ring" || item.shape === "frame") swatch.style.borderColor = item.color;
-    else swatch.style.background = item.color;
+    // 人の印は白い頭・胴を background-image で描くので，地の色だけを変える
+    if (item.shape === "frame") swatch.style.borderColor = item.color;
+    else swatch.style.backgroundColor = item.color;
     const text = document.createElement("span");
     text.textContent = item.label;
     li.append(swatch, text);

@@ -3,7 +3,8 @@
 // SPEC_02「座標」，src/core/drill.ts の型の約束（区間は両端の記録を含む），Issue #91 の決定（別の階・壊れた記録で線を分ける）
 import { describe, expect, it } from "vitest";
 import type { DrillEvaluation, DrillInterval, DrillSample, DrillTrack } from "../core/drill";
-import type { CellRef, SchoolPlan } from "../core/schoolPlan";
+import type { CellRef, Floor, SchoolPlan } from "../core/schoolPlan";
+import { wallEdges as editorWallEdges } from "../editor/editorLayout";
 import { DEMO_SCHOOL } from "../share/samples/demoSchool";
 import { createFloorFromRows } from "../share/samples/floorFromRows";
 import {
@@ -13,6 +14,7 @@ import {
   roomLabels,
   routePolylines,
   trackPolylines,
+  wallEdges,
 } from "./mapOverlay";
 
 const sample = (overrides: Partial<DrillSample> = {}): DrillSample => ({
@@ -387,4 +389,126 @@ describe("buildMapOverlay", () => {
     expect(overlay.start).toBeNull();
     expect(overlay.roomLabels).toEqual([]);
   });
+});
+
+// 基準は SPEC_02「壁の自動配置」（違う空間どうし・教室/廊下/開口とマス目の外の間に壁を置く．屋外とマス目の外の間は置かない）と，
+// SPEC_01 のモジュール表の debrief/（薄い壁が立つ辺の線をエディタと同じ見た目にそろえる），Issue #175
+describe("wallEdges", () => {
+  /** エディタの辺（x, z）を結果画面の辺（u, v）の形に直す */
+  const fromEditor = (floor: Floor) =>
+    editorWallEdges(floor).map((e) => ({ u1: e.x1, v1: e.z1, u2: e.x2, v2: e.z2 }));
+
+  it("屋外だけの階には壁が立たない（マス目の外との間も置かない）", () => {
+    expect(wallEdges(createFloorFromRows(0, ["oo", "oo"]))).toEqual([]);
+  });
+
+  it("void だけ・wall だけの階には壁が立たない", () => {
+    expect(wallEdges(createFloorFromRows(0, ["..", ".."]))).toEqual([]);
+    expect(wallEdges(createFloorFromRows(0, ["##", "##"]))).toEqual([]);
+  });
+
+  it("大きさ 0 の階は空", () => {
+    expect(wallEdges({ level: 0, width: 0, depth: 0, cells: [], roomOf: [] })).toEqual([]);
+  });
+
+  it("教室 1 マスはマス目の外との 4 辺に壁が立つ（縦の線→横の線の順）", () => {
+    expect(wallEdges(createFloorFromRows(0, ["0"]))).toEqual([
+      { u1: 0, v1: 0, u2: 0, v2: 1 },
+      { u1: 1, v1: 0, u2: 1, v2: 1 },
+      { u1: 0, v1: 0, u2: 1, v2: 0 },
+      { u1: 0, v1: 1, u2: 1, v2: 1 },
+    ]);
+  });
+
+  it("同じ教室どうしの間には壁が立たず，教室と別の教室の間には立つ", () => {
+    const same = wallEdges(createFloorFromRows(0, ["00"]));
+    expect(same).not.toContainEqual({ u1: 1, v1: 0, u2: 1, v2: 1 });
+    const other = wallEdges(createFloorFromRows(0, ["01"]));
+    expect(other).toContainEqual({ u1: 1, v1: 0, u2: 1, v2: 1 });
+  });
+
+  it("教室と廊下の間には立ち，ドアの両側には立たない", () => {
+    const walls = wallEdges(createFloorFromRows(0, ["0h", "dh"]));
+    // 教室 (0,0) と廊下 (1,0) の間の縦の線
+    expect(walls).toContainEqual({ u1: 1, v1: 0, u2: 1, v2: 1 });
+    // 教室 (0,0) とドア (0,1) の間の横の線
+    expect(walls).not.toContainEqual({ u1: 0, v1: 1, u2: 1, v2: 1 });
+    // ドア (0,1) と廊下 (1,1) の間の縦の線
+    expect(walls).not.toContainEqual({ u1: 1, v1: 1, u2: 1, v2: 2 });
+  });
+
+  it("廊下と屋外の間には立ち，屋外とマス目の外の間には立たない", () => {
+    const walls = wallEdges(createFloorFromRows(0, ["ho"]));
+    expect(walls).toContainEqual({ u1: 1, v1: 0, u2: 1, v2: 1 });
+    // 屋外の右端・上端・下端
+    expect(walls).not.toContainEqual({ u1: 2, v1: 0, u2: 2, v2: 1 });
+    expect(walls).not.toContainEqual({ u1: 1, v1: 0, u2: 2, v2: 0 });
+    expect(walls).not.toContainEqual({ u1: 1, v1: 1, u2: 2, v2: 1 });
+  });
+
+  it("どの辺も格子の線の上で長さ 1（縦か横）", () => {
+    for (const e of wallEdges(DEMO_SCHOOL.floors[0])) {
+      for (const n of [e.u1, e.v1, e.u2, e.v2]) expect(Number.isInteger(n)).toBe(true);
+      expect(Math.abs(e.u2 - e.u1) + Math.abs(e.v2 - e.v1)).toBe(1);
+    }
+  });
+
+  it.each([
+    ["教室と廊下", ["00h11", "00h11", "hhhhe"]],
+    ["屋外と出口", ["0dhho", "##eoo", "..ooo"]],
+    ["シャッター・void・wall", ["0s1.", "h#h.", "hhho"]],
+    ["1 列", ["0", "h", "o"]],
+  ])("小さな階（%s）でエディタの wallEdges と同じ辺・同じ並び", (_, rows) => {
+    const floor = createFloorFromRows(0, rows);
+    expect(wallEdges(floor)).toEqual(fromEditor(floor));
+  });
+
+  it.each(DEMO_SCHOOL.floors.map((f, i) => [i, f] as const))(
+    "デモの校舎の %d 階目でエディタの wallEdges と同じ辺・同じ並び",
+    (_, floor) => {
+      const walls = wallEdges(floor);
+      expect(walls.length).toBeGreaterThan(0);
+      expect(walls).toEqual(fromEditor(floor));
+    },
+  );
+});
+
+describe("buildMapOverlay の壁と開始時の向き", () => {
+  const plan = twoFloorPlan();
+  const track: DrillTrack = { samples: [] };
+  const ev = evaluation();
+
+  it("壁はその階の wallEdges", () => {
+    expect(buildMapOverlay(plan, 0, track, ev).walls).toEqual(wallEdges(plan.floors[0]));
+    expect(buildMapOverlay(plan, 1, track, ev).walls).toEqual(wallEdges(plan.floors[1]));
+  });
+
+  it.each([5, -1, 0.5, Number.NaN])("無い階（%s）の壁は空（例外を投げない）", (floor) => {
+    expect(buildMapOverlay(plan, floor, track, ev).walls).toEqual([]);
+  });
+
+  it.each([
+    [0, 0, -1],
+    [Math.PI / 2, 1, 0],
+    [Math.PI, 0, 1],
+    [-Math.PI / 2, -1, 0],
+  ])("開始地点の階では startYaw %s の向き", (startYaw, u, v) => {
+    const overlay = buildMapOverlay(twoFloorPlan({ startYaw }), 1, track, ev);
+    expect(overlay.startDirection?.u).toBeCloseTo(u);
+    expect(overlay.startDirection?.v).toBeCloseTo(v);
+  });
+
+  it("開始地点が別の階なら向きは null", () => {
+    expect(buildMapOverlay(twoFloorPlan({ startYaw: 0 }), 0, track, ev).startDirection).toBeNull();
+    expect(buildMapOverlay(twoFloorPlan({ startYaw: 0 }), 5, track, ev).startDirection).toBeNull();
+  });
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY])(
+    "startYaw が数でない（%s）時は向きは null，開始地点は出す",
+    (startYaw) => {
+      const overlay = buildMapOverlay(twoFloorPlan({ startYaw }), 1, track, ev);
+      expect(overlay.startDirection).toBeNull();
+      expect(overlay.start).toEqual({ u: 1.5, v: 0.5 });
+    },
+  );
 });
