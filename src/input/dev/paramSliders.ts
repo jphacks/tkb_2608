@@ -43,6 +43,27 @@ export const PARAM_SLIDERS: readonly ParamSliderSpec[] = [
   { key: "crouchDepthM", label: "しゃがみの深さ（m）", min: 0.1, max: 0.8, step: 0.02 },
   { key: "postureConfirmRatio", label: "確定の割合", min: 0.2, max: 1, step: 0.05 },
   { key: "standEscapeSteps", label: "逃げ道の歩数（0 で無効）", min: 0, max: 10, step: 1 },
+  {
+    key: "standWalkSteps",
+    label: "しゃがみ歩きから立つ歩数（0 で無効）",
+    min: 0,
+    max: 10,
+    step: 1,
+  },
+  {
+    key: "standWalkPeakStanding",
+    label: "立った足踏みの山（0 で無効）",
+    min: 0,
+    max: 5,
+    step: 0.05,
+  },
+  {
+    key: "standWalkPeakCrouching",
+    label: "しゃがみ歩きの山（0 で無効）",
+    min: 0,
+    max: 12,
+    step: 0.1,
+  },
 ];
 
 /**

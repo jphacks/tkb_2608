@@ -596,3 +596,41 @@ describe("頭の回転による加速度の差し引き（headRotCompensation）
     expect(s.rotAcc).toEqual({ x: 0, y: 0, z: 0 });
   });
 });
+
+describe("しゃがみ歩きから止まらずに立つ（updateStandWalk を毎サンプル呼ぶ）", () => {
+  // 立った足踏みの山 1.5・しゃがみ歩きの山 6（帯域通過後．2 Hz の振幅の 9 割ほど）．逃げ道 A は使わない
+  const SW = testParams({
+    standEscapeSteps: 0,
+    standWalkPeakStanding: 1.5,
+    standWalkPeakCrouching: 6,
+    standWalkSteps: 4,
+  });
+
+  function crouchWalkThenStandSteps(params: typeof P) {
+    const s = createBodyState(params, "crouching");
+    rest(s, 0, 2000, params);
+    const crouchWalk = feed(s, samplesOf(2000, 4000, DT, stepping(2, 6.8)), params);
+    const standSteps = feed(s, samplesOf(6000, 4000, DT, stepping(2, 1.7)), params);
+    return { s, crouchWalk, standSteps };
+  }
+
+  it("キャリブレーションの山が入っていれば，しゃがみ歩きの後に立った足踏みの大きさが 4 歩続くと stand-walk で立つ", () => {
+    const { s, crouchWalk, standSteps } = crouchWalkThenStandSteps(SW);
+    // しゃがみ歩きの間は立たない
+    expect(crouchWalk.every((x) => x.posture === "crouching")).toBe(true);
+    expect(crouchWalk.some((x) => x.walking)).toBe(true);
+    const stoodAt = standSteps.find((x) => x.posture === "standing");
+    expect(stoodAt).toBeDefined();
+    // 4 歩（0.5 秒おき）で立つので，切り替わってから 2.5 秒以内
+    expect((stoodAt?.t ?? Number.POSITIVE_INFINITY) - 6000).toBeLessThanOrEqual(2500);
+    expect(s.posture.lastOutcome).toBe("stand-walk");
+  });
+
+  it("山の大きさが 0（既定．キャリブレーションの無い時）なら同じ動きでしゃがんだまま", () => {
+    const { s, standSteps } = crouchWalkThenStandSteps(
+      testParams({ ...SW, standWalkPeakStanding: 0, standWalkPeakCrouching: 0 }),
+    );
+    expect(standSteps.every((x) => x.posture === "crouching")).toBe(true);
+    expect(s.posture.posture).toBe("crouching");
+  });
+});

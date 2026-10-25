@@ -1,11 +1,22 @@
 // しゃがみ・立ち上がりの判定（experiment_山﨑/05）．
-// ① 動作の候補: 静止の後（または静止の後の速度が小さいうち）に，ノイズより大きい同じ向きの上下の加速度が約 0.1 秒続く
+// ① 動作の候補: 静止の後（または静止の後の速度が小さいうち）に，ノイズより大きい同じ向きの上下の加速度が約 0.1 秒続く．
+//    立つ前に一度沈む・しゃがむ前に一度伸びる（反動）と，反動は今の姿勢から切り替わりえない向きなので捨てるが，
+//    静止の記録と静止からの速度は残し，続く逆向きの動作を（速度が小さくなくても）静止の後 1 秒の間は候補にする．
+//    Δh は反動の底（頂点）から測る（速度の向きが候補の向きに初めて変わった時点から．一度きりで，その後また
+//    切り替わりえない向きへ動けば何も残さず捨てる．連続して立つ・しゃがむと反動が入りやすく，以前は両方を見逃した）
 // ② 短い積分: 候補の始まりから加速度を 2 回積分して沈んだ量 Δh を求める（最長約 1.5 秒）
 // ③ ZUPT: 加速度・角速度（短い RMS）・積分中の速度が小さい状態が約 0.15 秒続いたら静止とみなし，積分を終える
 // ④ 確定: Δh がしゃがみの深さの約 50% を超えたら姿勢を切り替える．しゃがみ・立ち上がりの速さ（0.8 m/s 以上）で
 //    動いていれば静止を待たずに確定し，速度が 0 付近に戻ったらそこから積分を始め直して，続けて起きる動作を追う
 // 静止してから確定するため，しゃがみ歩きの揺れ（上へ動いてもすぐ下に戻る）を立ち上がりと取り違えない．
-// 立ち上がりを見逃した時の逃げ道は案 A（しゃがんだまま，立っている時の大きさの足踏みが続いたら立つ）
+// その代わり，しゃがみ歩きから止まらずに立ち上がると，足踏みの途中なので①の候補にならず，しゃがんだままになる．
+// そのための逃げ道が 2 つある（どちらも既定では使わない）:
+// - 案 A（onPostureStep．standEscapeSteps）: しゃがんだまま，立っている時の T_high を超える足踏みが続いたら立つ．
+//   しゃがみ歩きの山が立った足踏みより大きい人（20261024-175827_3uehweky: 5〜9 m/s^2 と 1〜2.4）では，
+//   しゃがみ歩きのまま数歩で立ったため使っていない
+// - 人ごとの境目（updateStandWalk．standWalk*）: キャリブレーションで測った，その人の立った足踏みとしゃがみ歩きの
+//   山の大きさの間に境目（幾何平均）を置き，しゃがみ歩きの途中で，山が境目より立った足踏みの側に入った歩が
+//   standWalkSteps 歩続いたら立つ．2 つの大きさの差が小さい人・測れなかった人では使わない
 import type { Posture } from "../../core/types";
 import type { InputParams } from "../params";
 
@@ -20,6 +31,8 @@ export type PostureOutcome =
   | "stand"
   /** 案 A の逃げ道で立った */
   | "stand-escape"
+  /** しゃがみ歩きの途中で，山の大きさが立った足踏みの側に変わったので立った（updateStandWalk） */
+  | "stand-walk"
   /** 積分が長すぎたので捨てた */
   | "timeout"
   /** 漏れ付きの長い積分（ゆっくりした・静止の無いしゃがみ）でしゃがんだ */
@@ -50,6 +63,18 @@ export interface PostureState {
   restMs: number;
   /** 最後の十分に長い静止が終わってからの速度（m/s．上下の加速度を積分した値．静止の間は 0） */
   restV: number;
+  /**
+   * 静止の後に，今の姿勢から切り替わりえない向きの動きとして捨てた積分の向き（+1: 上，-1: 下．無ければ 0）．
+   * 立つ前の沈み込み・しゃがむ前の伸び上がり（反動）の後に，逆向きの動作を候補にするために使う（updatePosture）
+   */
+  counterSign: number;
+  /** 今の候補・積分が，反動の後の逆向きの動作として始まったか */
+  fromCounter: boolean;
+  /**
+   * 反動の後の候補で，速度の向きが候補の向きに変わったか（反動の底・頂点を過ぎたか）．変わるまでは高さと
+   * 速度の最大を 0 に保ち，変わった後は普通に Δh を測る（一度きり．updatePosture）
+   */
+  counterTurned: boolean;
   /** 静止時の上下の加速度の 2 乗の平均（指数移動平均） */
   noiseVar: number;
   /** 静止の判定に使う，上下の加速度の 2 乗の短い平均（指数移動平均．QUIET_TAU_SEC） */
@@ -63,6 +88,15 @@ export interface PostureState {
   slowGyro: number;
   /** 案 A: しゃがんだまま立っている時の大きさの歩が続いた数 */
   escapeCount: number;
+  /** updateStandWalk: 帯域通過後の山の途中か，今の山の最大値（m/s^2）とその時刻（ms） */
+  walkPeakIn: boolean;
+  walkPeakValue: number;
+  walkPeakT: number;
+  /** updateStandWalk: 最後に見た山の時刻（ms）と大きさ（m/s^2．dev ページ用） */
+  walkLastPeakT: number;
+  walkLastPeak: number;
+  /** updateStandWalk: 山が立った足踏みの側に入った歩が続いた数 */
+  walkCount: number;
   /** 最後に終わった動作の Δh（m）と結果，その時刻（ms） */
   lastDeltaH: number;
   lastOutcome: PostureOutcome;
@@ -87,6 +121,9 @@ export function createPostureState(posture: Posture = "standing"): PostureState 
     restEndT: Number.NEGATIVE_INFINITY,
     restMs: 0,
     restV: 0,
+    counterSign: 0,
+    fromCounter: false,
+    counterTurned: false,
     noiseVar: 0,
     quietVar: 0,
     quietGyro: Number.NaN,
@@ -94,6 +131,12 @@ export function createPostureState(posture: Posture = "standing"): PostureState 
     slowH: 0,
     slowGyro: 0,
     escapeCount: 0,
+    walkPeakIn: false,
+    walkPeakValue: 0,
+    walkPeakT: 0,
+    walkLastPeakT: Number.NEGATIVE_INFINITY,
+    walkLastPeak: 0,
+    walkCount: 0,
     lastDeltaH: 0,
     lastOutcome: "none",
     lastOutcomeT: Number.NEGATIVE_INFINITY,
@@ -115,7 +158,26 @@ export function resetPostureMotion(s: PostureState): void {
   s.restEndT = Number.NEGATIVE_INFINITY;
   s.restMs = 0;
   s.restV = 0;
+  s.counterSign = 0;
+  s.fromCounter = false;
+  s.counterTurned = false;
   s.escapeCount = 0;
+}
+
+/**
+ * 動作の途中の状態を捨てるが，その動作の前の十分に長い静止の記録と，静止の後の速度（v．捨てた時点の積分の速度）は残す．
+ * 候補・積分の始まりで静止が続いていたなら，静止はその始まり（startT）で終わったとみなす
+ */
+function resetMotionKeepingRest(s: PostureState, v: number, params: PostureParams): void {
+  const inRest = !Number.isNaN(s.restSinceT);
+  const restMs = inRest ? s.startT - s.restSinceT : s.restMs;
+  const restEndT = inRest ? s.startT : s.restEndT;
+  resetPostureMotion(s);
+  if (restMs >= params.postureRestBeforeMs) {
+    s.restMs = restMs;
+    s.restEndT = restEndT;
+    s.restV = v;
+  }
 }
 
 type PostureParams = Pick<
@@ -135,6 +197,12 @@ type PostureParams = Pick<
   | "postureStepSuppressAfterMs"
   | "standEscapeSteps"
   | "postureSlowGyroDps"
+  | "standWalkPeakStanding"
+  | "standWalkPeakCrouching"
+  | "standWalkSteps"
+  | "stepRefractoryMs"
+  | "stepGyroWindowMs"
+  | "stepStopMaxMs"
 >;
 
 /**
@@ -211,6 +279,8 @@ function restartIntegration(s: PostureState, t: number): void {
   s.vPeak = 0;
   s.confirmedT = Number.NaN;
   s.chained = true;
+  s.fromCounter = false;
+  s.counterTurned = false;
   s.stillSinceT = Number.NaN;
   s.restSinceT = Number.NaN;
 }
@@ -302,6 +372,7 @@ function setPosture(s: PostureState, posture: Posture, outcome: PostureOutcome, 
   s.lastOutcome = outcome;
   s.lastOutcomeT = t;
   s.escapeCount = 0;
+  s.walkCount = 0;
 }
 
 /** 静止した時に Δh で姿勢を決める */
@@ -363,21 +434,35 @@ export function updatePosture(
         s.restEndT = t;
         s.restMs = ms;
         s.restV = 0;
+        s.counterSign = 0;
       }
       s.restSinceT = Number.NaN;
     }
     // 十分な長さの静止の途中なら速度は 0，その後は積分で追う
     const inLongRest =
       !Number.isNaN(s.restSinceT) && t - s.restSinceT >= params.postureRestBeforeMs;
-    if (inLongRest) s.restV = 0;
-    else s.restV += av * dtSec;
+    if (inLongRest) {
+      s.restV = 0;
+      s.counterSign = 0;
+    } else s.restV += av * dtSec;
     // 十分な長さの静止の途中か，その後 REST_TRACK_MS 以内で速度が小さいか
     const trackingRest =
       s.restMs >= params.postureRestBeforeMs &&
       t - s.restEndT <= REST_TRACK_MS &&
       Math.abs(s.restV) < params.zuptMaxVelocity;
     const restedBefore = params.postureRestBeforeMs <= 0 || inLongRest || trackingRest;
-    if (Math.abs(av) < th || !restedBefore) {
+    // 反動の後: 静止の後に切り替わりえない向きへ動いて捨てた積分（立つ前の沈み込み・しゃがむ前の伸び上がり）の後は，
+    // 逆向き（今の姿勢から切り替わる向き）の動作を，速度が小さくなくても REST_TRACK_MS の間は候補にする．
+    // 反動の底でも速度は 0 に戻りきらず（20261025-033733_ryi6nkay の 108.9 s: 約 -0.9 m/s のまま上へ加速し始めた），
+    // 上の trackingRest（速度が小さい）を満たさないため，以前は立ち上がりを見逃した．速度は静止から積分で追っている
+    // （restV）ので，その値から積分を始めれば Δh を求められる
+    const sign = av > 0 ? 1 : -1;
+    const afterCounter =
+      s.counterSign !== 0 &&
+      sign === -s.counterSign &&
+      s.restMs >= params.postureRestBeforeMs &&
+      t - s.restEndT <= REST_TRACK_MS;
+    if (Math.abs(av) < th || !(restedBefore || afterCounter)) {
       // ノイズの見積もりには，頭が回っていない時の基準のしきい値未満の値だけを入れる．
       // 以前は「今のしきい値」未満の値をすべて入れていたため，頷き・足踏み・しゃがみの揺れでノイズが育ち，
       // しきい値が上がるとさらに大きな値が入る，の繰り返しで候補のしきい値が 3〜11 m/s^2 まで上がり，
@@ -392,10 +477,13 @@ export function updatePosture(
       return s.posture !== before;
     }
     s.phase = "candidate";
-    s.sign = av > 0 ? 1 : -1;
+    s.sign = sign;
     s.startT = t - dtSec * 1000;
+    // 反動の後の候補か（その後にもう一度向きで捨てても，続けて候補にはしない．しゃがみ歩きの揺れで候補が続かないため）
+    s.fromCounter = s.counterSign !== 0;
+    s.counterTurned = false;
     // 静止の後の速度が分かっていればそこから始める（このサンプルの分は下で足すので差し引く）
-    s.v = inLongRest || !trackingRest ? 0 : s.restV - av * dtSec;
+    s.v = inLongRest || !(trackingRest || afterCounter) ? 0 : s.restV - av * dtSec;
     s.h = 0;
     s.stillSinceT = Number.NaN;
   }
@@ -403,22 +491,28 @@ export function updatePosture(
   // 積分（半陰的オイラー）
   s.v += av * dtSec;
   s.h += s.v * dtSec;
+  // 反動の後の候補は，反動の向きの速度が残ったまま始まる（沈み込みの途中で上へ加速し始める）．速度の向きが
+  // 候補の向きに初めて変わるまで（反動の底・頂点まで）は高さと速度の最大を 0 に保ち，Δh を反動の底から測る．
+  // 候補の始まりから測ると，残りの沈み込みで高さが下がり，下の「切り替わりえない向き」で捨てていた．
+  // 0 に保つのは一度きりで，向きが変わった後（counterTurned）は普通に Δh を測る．速度が反動の向きに戻るたびに
+  // 測り直すと，しゃがみ歩きの揺れで Δh が切り替わりえない向きにならず，候補が捨てられずに時間切れまで続いて
+  // 足踏みを抑止した．確定した後（姿勢が変わった後の減速）も測り直さない
+  if (s.fromCounter && !s.counterTurned && s.v * s.sign > 0) s.counterTurned = true;
+  const counterTurning = s.fromCounter && !s.counterTurned && Number.isNaN(s.confirmedT);
+  if (counterTurning) {
+    s.h = 0;
+    s.vPeak = 0;
+  }
 
   if (s.phase === "candidate") {
     // 同じ向きで，しきい値の半分より大きい間だけ候補を続ける（しきい値の上下の揺れで切らない）
     if (av * s.sign < th * 0.5) {
       // 候補に届かなかった短い揺れ（しゃがむ前の小さなぐらつき等）．直前の静止を消すと，続けてしゃがんだ時に
-      // 静止の後とみなせず見逃したため，静止の記録と，その後の速度（候補の間に積分した値）を残す
-      const inRest = !Number.isNaN(s.restSinceT);
-      const restMs = inRest ? s.startT - s.restSinceT : s.restMs;
-      const restEndT = inRest ? s.startT : s.restEndT;
-      const v = s.v;
-      resetPostureMotion(s);
-      if (restMs >= params.postureRestBeforeMs) {
-        s.restMs = restMs;
-        s.restEndT = restEndT;
-        s.restV = v;
-      }
+      // 静止の後とみなせず見逃したため，静止の記録と，その後の速度（候補の間に積分した値）を残す．
+      // 反動の後の候補なら，反動の向きも残す（揺れの後に逆向きの動作が続いても候補にできる）
+      const counterSign = s.counterSign;
+      resetMotionKeepingRest(s, s.v, params);
+      if (s.restMs > 0) s.counterSign = counterSign;
       return false;
     }
     if (t - s.startT >= params.postureCandidateMs) s.phase = "integrating";
@@ -450,13 +544,38 @@ export function updatePosture(
   // しゃがみ・立ち上がりではない（足踏みの始まり・体の揺れ）ので捨てる．続けると足踏みを数えなくなる
   // （20261024-175827_3uehweky の crouch_walk#2: 上向きの候補の積分が 2.5 秒続き，その間の歩をすべて抑止した）
   // 始め直した積分（chained）は速度の初めの値がずれうるため，向きでは捨てない（静止か時間切れで終える）．
-  // 確定した後は姿勢が変わっているので，向きは見ない
+  // 確定した後は姿勢が変わっているので，向きは見ない．
+  // ただし，立つ前に一度沈む・しゃがむ前に一度伸びる（反動）と，その沈み込み・伸び上がりがここで捨てられる．
+  // 以前は静止の記録も一緒に消していたため，直後の本当の立ち上がり・しゃがみが「静止の後」とみなされず候補に
+  // ならなかった（20261025-033733_ryi6nkay の 108〜110 s の立ち上がり．しゃがんだままになったので，続く 111.8 s の
+  // しゃがみも切り替わりえない向きとして捨てられ，両方を見逃した）．そこで静止の記録と，静止からの速度（restV）を残し，
+  // 反動の向き（counterSign）を覚えて，静止の後 REST_TRACK_MS の間は逆向きの動作を候補にできるようにする
+  // （上の idle の afterCounter）．反動の後の候補（fromCounter）は，反動の底・頂点を過ぎた（counterTurned）後に
+  // また向きで捨てた時は何も残さない．
+  // しゃがみ歩きの始まりの上下の揺れで，候補と捨てるのが繰り返し続かないようにするため（crouch_walk#2 の再発を防ぐ．
+  // 反動の後の候補も，数えた歩（onPostureStep）で捨てられ，向きは捨てた時の積分のとおりに見る）
+  // 反動の後の候補は Δh を反動の底（頂点）から測るので，しゃがみ歩きの揺れでは底に戻るだけで Δh が切り替わりえない
+  // 向きにならない．そこで，底を過ぎた後（counterTurned）に速度がまた反動の向きへはっきり戻った（zuptMaxVelocity を
+  // 超えた）ら，確定しないまま頂点（底）を過ぎた揺れとして，同じく向きで捨てる．本当の立ち上がり・しゃがみなら，
+  // その前に早めの確定か静止（速度が小さい）で終わる．捨てないと，揺れの間ずっと積分が続いて時間切れまで足踏みを抑止した
+  const counterReturned =
+    s.fromCounter &&
+    s.counterTurned &&
+    Number.isNaN(s.confirmedT) &&
+    s.v * s.sign < -params.zuptMaxVelocity;
   if (
     !s.chained &&
+    !counterTurning &&
     Number.isNaN(s.confirmedT) &&
-    towardOtherPosture(s) < -params.postureStepSuppressM
+    (counterReturned || towardOtherPosture(s) < -params.postureStepSuppressM)
   ) {
-    resetPostureMotion(s);
+    if (s.fromCounter) {
+      resetPostureMotion(s);
+    } else {
+      const counterSign = s.sign;
+      resetMotionKeepingRest(s, s.v, params);
+      if (s.restMs > 0) s.counterSign = counterSign;
+    }
     return false;
   }
   const absV = Math.abs(s.v);
@@ -517,7 +636,11 @@ export function shouldSuppressSteps(s: PostureState, t: number, params: PostureP
     // 始め直した積分は，初めの速度のずれ（0.2 m/s ほど）で高さがゆっくり変わる．しゃがみ・立ち上がりの
     // 速さに届かないうちは動作とみなさない（20261024-182402_ygakcbm7 の crouch_walk: しゃがんだ後の積分が
     // 0.17 m/s で上へずれ続け，しゃがみ歩きの始めの歩を 1.6 秒抑止した）
-    const moving = !s.chained || s.vPeak >= EARLY_CONFIRM_MIN_PEAK_VELOCITY * 0.5;
+    // 反動の後の候補は，反動の底（頂点）から測った速度が，しゃがみ・立ち上がりの速さに届くまでは動作とみなさない
+    // （しゃがみ歩きの揺れ（±6 cm・2 Hz で約 0.75 m/s）は底から 12 cm 上がるので，高さだけでは抑止してしまう）
+    const moving = s.chained
+      ? s.vPeak >= EARLY_CONFIRM_MIN_PEAK_VELOCITY * 0.5
+      : !s.fromCounter || s.vPeak >= EARLY_CONFIRM_MIN_PEAK_VELOCITY;
     if (moving && towardOtherPosture(s) > params.postureStepSuppressM) return true;
   }
   return (
@@ -559,4 +682,127 @@ export function onPostureStep(
     return true;
   }
   return false;
+}
+
+/**
+ * updateStandWalk を使う，立った足踏みとしゃがみ歩きの山の大きさの比（大きい方 / 小さい方）の下限．
+ * 境目（幾何平均）は，この比が 2 なら各中央値から √2 倍（約 41%）離れる．差が小さいと，しゃがみ歩きの 1 歩ごとの
+ * ばらつきで境目を越えるため使わない．20261025-021610_ylu8lb54 は 1.08 と 7.11（比 6.6）
+ */
+export const STAND_WALK_MIN_RATIO = 2;
+/** 山とみなす下限（2 つの中央値の小さい方に対する割合）．これより小さい揺れは歩として見ない */
+const STAND_WALK_FLOOR_RATIO = 0.5;
+/**
+ * 立った足踏みの側の山として数える下限（立った足踏みの山の中央値に対する割合．しゃがみ歩きの山の方が大きい人だけ）．
+ * これより小さい山は数えも数え直しもしない．しゃがみ歩きを止める時の弱まっていく山（20261025-021610_ylu8lb54 の
+ * crouch_still: 1.61・0.64・1.14 m/s^2．立った足踏みの中央値は 1.08）が 3 歩続き，数えると 4 歩まであと 1 歩だった
+ */
+const STAND_WALK_MIN_PEAK_RATIO = 0.7;
+/** 山から抜けたとみなす値（山に入る値に対する割合．calibration.ts の PEAK_EXIT_RATIO と同じ） */
+const STAND_WALK_EXIT_RATIO = 0.3;
+/**
+ * 歩が続いているかを見る時間（ms）．最後に数えた歩（足踏みの判定）からこの時間の内に来た山からだけ数え始める．
+ * しゃがみ歩きから立つと，立った足踏みの山はしゃがんでいる時の T_high（キャリブレーションで 4 m/s^2 ほどになる）に
+ * 届かず歩として数えられないため，歩いている状態は立ち上がりの間に止まりうる．止まってから少しの間は数え始めてよい
+ */
+export const STAND_WALK_RECENT_MS = 2000;
+
+/**
+ * 立った足踏みとしゃがみ歩きの山の境目（m/s^2．2 つの中央値の幾何平均）．使わない時（歩数・山の大きさが 0 以下，
+ * 比が STAND_WALK_MIN_RATIO 未満）は NaN
+ */
+export function standWalkBoundary(
+  params: Pick<InputParams, "standWalkPeakStanding" | "standWalkPeakCrouching" | "standWalkSteps">,
+): number {
+  const ps = params.standWalkPeakStanding;
+  const pc = params.standWalkPeakCrouching;
+  if (!(params.standWalkSteps > 0 && ps > 0 && pc > 0)) return Number.NaN;
+  if (Math.max(ps, pc) / Math.min(ps, pc) < STAND_WALK_MIN_RATIO) return Number.NaN;
+  return Math.sqrt(ps * pc);
+}
+
+/** updateStandWalk の山の途中と数を捨てる（姿勢は保つ．サンプルの間隔が飛んだ時等） */
+export function resetStandWalk(s: PostureState): void {
+  s.walkPeakIn = false;
+  s.walkPeakValue = 0;
+  s.walkPeakT = 0;
+  s.walkLastPeakT = Number.NEGATIVE_INFINITY;
+  s.walkCount = 0;
+}
+
+/**
+ * しゃがみ歩きから止まらずに立ち上がったことを，帯域通過後の山の大きさの変わり方で見る（1 サンプルごとに呼ぶ）．
+ * t は時刻（ms），bp は帯域通過後の上下の加速度（m/s^2），lastStepT は足踏みの判定が最後に歩を数えた時刻（ms），
+ * walking は歩いている（仮に歩くを含む）か，gyroHighT は頭が速く回った最後の時刻（ms．足踏みの判定と同じしきい値）．
+ * 足踏みの判定の山は使わない（しゃがんでいる時の T_high は立った足踏みの山より大きくなりうるため，立った後の歩を数えない）．
+ *
+ * 条件（しゃがんでいて，standWalkBoundary が NaN でない時だけ）:
+ * - 山: 帯域通過後の値が floor = 0.5 × min(Ps, Pc) を超えてから floor × 0.3 を下回るまでの最大値 P（Ps・Pc は
+ *   standWalkPeakStanding・standWalkPeakCrouching）
+ * - 境目 B = √(Ps × Pc)．立った足踏みの側は，Pc > Ps なら 0.7 × Ps ≤ P < B（0.7 × Ps 未満の山は見ない），
+ *   Pc < Ps なら P > B
+ * - しゃがみ歩きの側の山・頭が速く回った山（山の stepGyroWindowMs 前から後）は数を 0 に戻す
+ * - 立った足踏みの側の山は，前の山から stepRefractoryMs 未満なら見ない（大きな山の後の揺れ），
+ *   前に数えた歩から stepStopMaxMs を超えて空いたら数え直す．数え始めは，歩いている間か，最後に数えた歩から
+ *   STAND_WALK_RECENT_MS 以内の時だけ（しゃがんで静止の間の揺れから数え始めない）
+ * - 数が standWalkSteps に届いたら立つ（結果は "stand-walk"）
+ * 戻り値は姿勢が変わったか
+ */
+export function updateStandWalk(
+  s: PostureState,
+  t: number,
+  bp: number,
+  lastStepT: number,
+  walking: boolean,
+  gyroHighT: number,
+  params: PostureParams,
+): boolean {
+  const boundary = standWalkBoundary(params);
+  if (s.posture !== "crouching" || Number.isNaN(boundary)) {
+    if (s.walkPeakIn || s.walkCount !== 0) resetStandWalk(s);
+    return false;
+  }
+  if (!Number.isFinite(bp)) return false;
+  const ps = params.standWalkPeakStanding;
+  const pc = params.standWalkPeakCrouching;
+  const floor = STAND_WALK_FLOOR_RATIO * Math.min(ps, pc);
+  if (!s.walkPeakIn) {
+    if (bp > floor) {
+      s.walkPeakIn = true;
+      s.walkPeakValue = bp;
+      s.walkPeakT = t;
+    }
+    return false;
+  }
+  if (bp > s.walkPeakValue) {
+    s.walkPeakValue = bp;
+    s.walkPeakT = t;
+  }
+  if (bp >= floor * STAND_WALK_EXIT_RATIO) return false;
+
+  // 山が終わった
+  s.walkPeakIn = false;
+  const peak = s.walkPeakValue;
+  const peakT = s.walkPeakT;
+  const sincePrev = peakT - s.walkLastPeakT;
+  s.walkLastPeak = peak;
+  const standingSide = pc > ps ? peak < boundary : peak > boundary;
+  // しゃがみ歩きの山の方が大きい人では，立った足踏みより十分に小さい山（止まる時の弱まっていく揺れ）は見ない
+  if (standingSide && pc > ps && peak < STAND_WALK_MIN_PEAK_RATIO * ps) return false;
+  if (!standingSide || gyroHighT >= peakT - params.stepGyroWindowMs) {
+    s.walkCount = 0;
+    s.walkLastPeakT = peakT;
+    return false;
+  }
+  // 前の山の直後の小さな揺れは歩として見ない（前の山の時刻も動かさない）
+  if (sincePrev < params.stepRefractoryMs) return false;
+  s.walkLastPeakT = peakT;
+  if (s.walkCount > 0 && sincePrev > params.stepStopMaxMs) s.walkCount = 0;
+  if (s.walkCount === 0 && !walking && !(t - lastStepT <= STAND_WALK_RECENT_MS)) return false;
+  s.walkCount++;
+  if (s.walkCount < params.standWalkSteps) return false;
+  setPosture(s, "standing", "stand-walk", t);
+  // 立った時の動作の途中（積分）は捨てる（同じ動作で立ったことを二重に数えない）
+  resetPostureMotion(s);
+  return true;
 }

@@ -57,6 +57,9 @@ export const TEST_PARAMS: InputParams = {
   postureStepSuppressAfterMs: 500,
   standEscapeSteps: 4,
   postureSlowGyroDps: 0,
+  standWalkPeakStanding: 0,
+  standWalkPeakCrouching: 0,
+  standWalkSteps: 4,
 
   sensorTimeoutMs: 300,
   maxSampleGapMs: 200,

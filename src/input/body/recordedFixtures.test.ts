@@ -5,13 +5,16 @@
 // iphone15_goggles_look-around-false-walk.jsonl），記録の元のファイル名と場面の説明を期待の note かコメントに残す．
 // しきい値を変えた時に過去の誤判定が戻らないことを確かめるのが目的のため，ここだけは既定値（DEFAULT_INPUT_PARAMS）で判定する
 import { describe, expect, it } from "vitest";
-import { DEFAULT_INPUT_PARAMS } from "../params";
+import { DEFAULT_INPUT_PARAMS, mergeParams } from "../params";
 import { computeMetrics } from "../replay/metrics";
 import { parseRecording } from "../replay/parseRecording";
 import { checkExpectations, rejudgeJsonl, type WindowExpectation } from "../replay/regression";
+import { rejudgeRecords } from "../replay/rejudge";
 import { replayBody } from "../replay/replayBody";
 import { labelSegments, parseRecordsJsonl } from "../replay/replayLog";
 import { createBodyState, updateBody } from "./bodyTracker";
+// 実機の反動つきの立ち上がり・しゃがみの記録（下の「実機の反動」の説明を参照）
+import crouchReboundStandCrouch from "./fixtures/iphone_goggles_crouch_rebound_stand_crouch.jsonl?raw";
 // 実機の首振りの記録（下の「実機の首振り」の説明を参照）
 import headShakeFalseWalk from "./fixtures/iphone_goggles_head_shake_false_walk.jsonl?raw";
 // 注意: いまの fixtures/ は合成の波形だけで，実機の記録ではない（実機の記録がまだ無いため．仕組みが動くことを示すサンプル）．
@@ -114,4 +117,47 @@ describe("実機の首振り（iphone_goggles_head_shake_false_walk）", () => {
   });
 
   it.todo("SPEC_01 の目安: 首を振るだけでは歩き出さない（0 回）");
+});
+
+// 実機の記録: iPhone・ゴーグル装着・しゃがんだ状態から，一度沈み込んでから立ち上がり（反動），すぐにしゃがむ．
+// logs/input/20261025-033733_ryi6nkay の t=107824〜112811 ms（記録の始まりから 100.5〜105.5 秒．Issue #94）．
+// 反動の扱いを直す前は，沈み込みを「切り替わりえない向き」として捨てた時に静止の記録も消していたため，
+// 立ち上がりもしゃがみも見逃した（しゃがんだまま）．切り出しに params の行は無いので，しきい値はテストで渡す
+// （記録の時の params＝47367 ms の行のうち既定値と違う項目．キャリブレーションで求めた値）
+
+describe("実機の反動（iphone_goggles_crouch_rebound_stand_crouch）", () => {
+  const text = crouchReboundStandCrouch;
+  const RECORDED_PARAMS = mergeParams(DEFAULT_INPUT_PARAMS, {
+    stepHighStanding: 0.909,
+    stepLowStanding: 0.353,
+    stepHighCrouching: 4.471,
+    stepLowCrouching: 1.597,
+    standWalkPeakStanding: 1.515,
+    standWalkPeakCrouching: 7.451,
+  });
+  const expectations: readonly WindowExpectation[] = [
+    {
+      note: "全体で立つ・しゃがむの 2 回だけ切り替わる",
+      fromT: 107824,
+      toT: 112811,
+      postureChanges: { min: 2, max: 2 },
+    },
+    { note: "沈み込みの間はしゃがんだまま", fromT: 107824, toT: 109500, posture: "crouching" },
+    { note: "沈み込みの後に立ち上がる", fromT: 110500, toT: 112000, posture: "standing" },
+    { note: "立った直後にしゃがむ", fromT: 112500, toT: 112811, posture: "crouching" },
+  ];
+
+  it("記録を読める（壊れた行が無い）", () => {
+    const { records, skipped } = parseRecordsJsonl(text);
+    expect(skipped).toBe(0);
+    expect(records.filter((r) => r.type === "motion").length).toBeGreaterThan(250);
+  });
+
+  it.each([
+    ["既定のしきい値", DEFAULT_INPUT_PARAMS],
+    ["記録の時のしきい値（キャリブレーションの値）", RECORDED_PARAMS],
+  ])("%s: しゃがんだ状態から流すと，立ち上がりとしゃがみを両方判定する", (_name, params) => {
+    const result = rejudgeRecords(parseRecordsJsonl(text).records, params, "crouching");
+    expect(checkExpectations(result, expectations)).toEqual([]);
+  });
 });
