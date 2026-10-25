@@ -157,6 +157,7 @@ bash .devcontainer/check.sh   # 最後に「✓ すべて OK」と出れば成�
 
 3. 出力に表示される `https://<ランダムな文字列>.trycloudflare.com` の QR コードをスマホのカメラで読み取り，ブラウザで開く（iPhone は Safari，Android は Chrome）
 
+   - 引数なしの QR は何も付けない URL なので，教員用のホーム画面が開く
    - 特定の空間を開くときは `npm run tunnel -- train` のように空間の id を渡す（QR コードの URL に `?scene=train` が付く）
    - 特定のページを開くときは `npm run tunnel -- /src/input/dev/` のように `/` で始まるパスを渡す（QR コードの URL にそのパスが付く）
 

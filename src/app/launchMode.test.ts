@@ -2,8 +2,9 @@ import { describe, expect, it } from "vitest";
 import { resolveDebug, resolveLaunchMode, resolveStereo } from "./launchMode";
 
 describe("resolveLaunchMode", () => {
-  it("?app が無ければ従来のビューア", () => {
-    expect(resolveLaunchMode("")).toBe("viewer");
+  it("パラメータ無しは教員用のホーム画面，?scene=train は従来のビューア", () => {
+    expect(resolveLaunchMode("")).toBe("home");
+    expect(resolveLaunchMode("?")).toBe("home");
     expect(resolveLaunchMode("?scene=train")).toBe("viewer");
   });
 
@@ -13,10 +14,10 @@ describe("resolveLaunchMode", () => {
     expect(resolveLaunchMode("?scene=room&app")).toBe("app");
   });
 
-  it("?app=0 / ?app=false はビューア", () => {
-    expect(resolveLaunchMode("?app=0")).toBe("viewer");
-    expect(resolveLaunchMode("?app=false")).toBe("viewer");
-    expect(resolveLaunchMode("?app=FALSE")).toBe("viewer");
+  it("?app=0 / ?app=false だけならホーム画面", () => {
+    expect(resolveLaunchMode("?app=0")).toBe("home");
+    expect(resolveLaunchMode("?app=false")).toBe("home");
+    expect(resolveLaunchMode("?app=FALSE")).toBe("home");
   });
 });
 
@@ -28,8 +29,8 @@ describe("resolveLaunchMode（結果画面の単独起動 ?debrief）", () => {
     },
   );
 
-  it.each(["?debrief=0", "?debrief=false", "?debrief=FALSE"])("%s はビューア", (search) => {
-    expect(resolveLaunchMode(search)).toBe("viewer");
+  it.each(["?debrief=0", "?debrief=false", "?debrief=FALSE"])("%s だけならホーム画面", (search) => {
+    expect(resolveLaunchMode(search)).toBe("home");
   });
 
   it("?app と ?debrief の両方があれば ?app が優先", () => {
@@ -39,7 +40,7 @@ describe("resolveLaunchMode（結果画面の単独起動 ?debrief）", () => {
 
   it("?app=0 なら ?debrief が効く", () => {
     expect(resolveLaunchMode("?app=0&debrief")).toBe("debrief");
-    expect(resolveLaunchMode("?app=0&debrief=0")).toBe("viewer");
+    expect(resolveLaunchMode("?app=0&debrief=0")).toBe("home");
   });
 });
 
@@ -91,8 +92,8 @@ describe("resolveLaunchMode（教員用のエディタ ?editor）", () => {
     },
   );
 
-  it.each(["?editor=0", "?editor=false", "?editor=FALSE"])("%s はビューア", (search) => {
-    expect(resolveLaunchMode(search)).toBe("viewer");
+  it.each(["?editor=0", "?editor=false", "?editor=FALSE"])("%s だけならホーム画面", (search) => {
+    expect(resolveLaunchMode(search)).toBe("home");
   });
 
   it("?app が ?editor より優先", () => {
@@ -117,8 +118,8 @@ describe("resolveLaunchMode（避難の音の単独起動 ?audio）", () => {
     expect(resolveLaunchMode(search)).toBe("audio");
   });
 
-  it.each(["?audio=0", "?audio=false", "?audio=FALSE"])("%s はビューア", (search) => {
-    expect(resolveLaunchMode(search)).toBe("viewer");
+  it.each(["?audio=0", "?audio=false", "?audio=FALSE"])("%s だけならホーム画面", (search) => {
+    expect(resolveLaunchMode(search)).toBe("home");
   });
 
   it("?app・?debrief が ?audio より優先", () => {
@@ -140,8 +141,8 @@ describe("resolveLaunchMode（教員用の見守り画面 ?monitor）", () => {
     },
   );
 
-  it.each(["?monitor=0", "?monitor=false", "?monitor=FALSE"])("%s はビューア", (search) => {
-    expect(resolveLaunchMode(search)).toBe("viewer");
+  it.each(["?monitor=0", "?monitor=false", "?monitor=FALSE"])("%s だけならホーム画面", (search) => {
+    expect(resolveLaunchMode(search)).toBe("home");
   });
 
   it.each<[string, string]>([
@@ -165,4 +166,63 @@ describe("resolveLaunchMode（教員用の見守り画面 ?monitor）", () => {
     expect(resolveLaunchMode("?editor=false&monitor")).toBe("monitor");
     expect(resolveLaunchMode("?app=0&debrief=0&editor=0&monitor")).toBe("monitor");
   });
+});
+
+describe("resolveLaunchMode（教員用のホーム画面と開発用のビューア）", () => {
+  it.each(["", "?", "?stereo=1", "?debug", "?foo=bar", "?home"])(
+    "%s は起動のパラメータが無いのでホーム画面",
+    (search) => {
+      expect(resolveLaunchMode(search)).toBe("home");
+    },
+  );
+
+  it.each([
+    "?app=0&debrief=0&audio=0&editor=0&monitor=0",
+    "?app=false&editor=FALSE&viewer=0",
+    "?viewer=0",
+    "?viewer=false",
+    "?viewer=FALSE",
+  ])("%s は無効なパラメータだけなのでホーム画面", (search) => {
+    expect(resolveLaunchMode(search)).toBe("home");
+  });
+
+  it.each(["?viewer", "?viewer=1", "?viewer=true", "?viewer=abc"])("%s はビューア", (search) => {
+    expect(resolveLaunchMode(search)).toBe("viewer");
+  });
+
+  it.each([
+    "?scene=train",
+    "?scene=room",
+    "?input=mock",
+    "?input=device",
+    "?scene=train&input=mock",
+    "?scene=",
+    "?input=",
+    "?scene",
+    "?scene=0",
+    "?scene=false",
+    "?input=0",
+    "?viewer=0&scene=train",
+  ])("%s は値に関係なくビューア（開発の URL）", (search) => {
+    expect(resolveLaunchMode(search)).toBe("viewer");
+  });
+
+  it.each<[string, string]>([
+    ["?editor&viewer", "editor"],
+    ["?viewer&editor", "editor"],
+    ["?editor&scene=train", "editor"],
+    ["?monitor&scene=x", "monitor"],
+    ["?monitor&viewer", "monitor"],
+    ["?audio&input=mock", "audio"],
+    ["?debrief&viewer", "debrief"],
+    ["?app&viewer", "app"],
+    ["?app=0&scene=x", "viewer"],
+    ["?editor=0&viewer", "viewer"],
+    ["?app=0&debrief=0&audio=0&editor=0&monitor=0&input=mock", "viewer"],
+  ])(
+    "%s は優先順位（app → debrief → audio → editor → monitor → viewer）に従って %s",
+    (search, expected) => {
+      expect(resolveLaunchMode(search)).toBe(expected);
+    },
+  );
 });
