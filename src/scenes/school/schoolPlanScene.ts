@@ -1,6 +1,6 @@
 // SchoolPlan の 1 フロアから組み立てた校舎の空間（?scene=school）．並べ方は schoolPlanLayout.ts の純粋な関数で求め，
 // ここでは校舎のパーツ（schoolParts.ts）を置くだけ．動かない Mesh は最後にマテリアルごとに結合する．
-// 学習モードの床の矢印（routeArrows.ts）と火と煙（fireSmoke.ts）も足し，火と煙は毎フレームの update で時刻に合わせる．
+// 集合場所の床の印（assemblyMarker.ts）・学習モードの床の矢印（routeArrows.ts）・火と煙（fireSmoke.ts）も足し，火と煙は毎フレームの update で時刻に合わせる．
 // 赤い表示（common/redEdge.ts）も足す．出す・消すは redEdge.setActive で外（app/）から指示するか，autoRedEdge で自分で判定する
 
 import * as THREE from "three";
@@ -12,6 +12,7 @@ import { computeSpread, type SpreadMap } from "../../sim/spread";
 import { createBox, disposeObjectTree } from "../common/meshHelpers";
 import { createRedEdge, type RedEdge } from "../common/redEdge";
 import type { Space, SpaceBuildOptions } from "../types";
+import { type AssemblyMarker, createAssemblyMarker } from "./assemblyMarker";
 import { createFireCellBlockers, type FireCellBlockers } from "./fireCellCollision";
 import { createFireSmoke, type FireSmoke } from "./fireSmoke";
 import { createRouteArrows, type RouteArrows } from "./routeArrows";
@@ -57,6 +58,8 @@ export interface SchoolSpace extends Space {
   readonly plan: SchoolPlan;
   readonly layout: SchoolPlanLayout;
   readonly parts: SchoolPlanParts;
+  /** 集合場所の床の印（root の子．学習モードでもテストモードでも出す） */
+  readonly assemblyMarker: AssemblyMarker;
   /** 床の正解経路の矢印（root の子．テストモードでは null） */
   readonly routeArrows: RouteArrows | null;
   /** 火と煙（root の子．fog は fireSmoke.fog と同じもの） */
@@ -260,7 +263,9 @@ export function createSchoolScene(
 
   const mergeStats = mergeStaticMeshes(partsGroup, isDynamicSchoolObject);
 
-  // 矢印と火と煙は parts の外（root の直下）に置き，結合の対象にしない（それぞれ自分で解放するため）
+  // 集合場所の印と矢印と火と煙は parts の外（root の直下）に置き，結合の対象にしない（それぞれ自分で解放するため）
+  const assemblyMarker = createAssemblyMarker(plan);
+  root.add(assemblyMarker.object);
   const routeArrows = createRouteArrows(plan);
   if (routeArrows) root.add(routeArrows.object);
   const spread = computeSpread(plan);
@@ -291,6 +296,7 @@ export function createSchoolScene(
     plan,
     layout,
     parts: { parts: partsGroup, shutters, byId, mergeStats },
+    assemblyMarker,
     routeArrows,
     fireSmoke,
     fog: fireSmoke.fog,
@@ -319,8 +325,10 @@ export function createSchoolScene(
       redEdge.update(frame.dt);
     },
     dispose: () => {
-      // 矢印と火と煙は自分の dispose で解放する（火と煙の uniforms のテクスチャは disposeObjectTree では見つからないため）．
+      // 集合場所の印と矢印と火と煙は自分の dispose で解放する（火と煙の uniforms のテクスチャは disposeObjectTree では見つからないため）．
       // 二重に解放しないよう root から外してから残りをまとめて解放する
+      root.remove(assemblyMarker.object);
+      assemblyMarker.dispose();
       if (routeArrows) {
         root.remove(routeArrows.object);
         routeArrows.dispose();
