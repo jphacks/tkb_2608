@@ -8,7 +8,10 @@
 import type { CalibrationConfig, CalibrationState } from "./calibration";
 
 export interface NarrationPacingConfig {
-  /** 読み上げの速さの見積もり（1 秒あたりの文字数．日本語でおよそ 6〜8．rate 1.05 の時） */
+  /**
+   * 読み上げの速さの見積もり（1 秒あたりの文字数．日本語でおよそ 6〜8．rate 1.05 の時に測った値．
+   * narrator.ts の rate 1.0 では 5% ほど遅くなるが，上限には marginSeconds の余裕があるため変えない）
+   */
   readonly charsPerSecond: number;
   /** 上限の時間に足す余裕（s） */
   readonly marginSeconds: number;

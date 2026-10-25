@@ -144,3 +144,61 @@ export function drillMarkers(drill: DrillSetup, floorIndex: number, floor: Floor
     assembly: drill.assembly.filter(onFloor).map(toXZ),
   };
 }
+
+/** 集合場所のひとまとまり（上下左右につながった集合場所のマス）．エディタではマスごとではなく，まとまりで描く */
+export interface AssemblyZone {
+  /** まとまりのマス（上の行から，行の中は左から） */
+  readonly cells: readonly CellXZ[];
+  /** まとまりの外周の辺（隣が同じまとまりでない辺．穴があれば穴の縁も含む） */
+  readonly edges: readonly GridEdge[];
+  /** 旗を立てるマス（まとまりの最も上の行の，最も左のマス） */
+  readonly flag: CellXZ;
+}
+
+/**
+ * 集合場所のマスを，上下左右につながったまとまりに分ける（まとまりは旗のマスの上の行・左の順）．
+ * 同じマスが重なって入っていても 1 つとして数える
+ */
+export function assemblyZones(cells: readonly CellXZ[]): AssemblyZone[] {
+  const key = (x: number, z: number): string => `${x},${z}`;
+  const all = new Map<string, CellXZ>();
+  for (const c of cells) all.set(key(c.x, c.z), { x: c.x, z: c.z });
+  const sorted = [...all.values()].sort((a, b) => a.z - b.z || a.x - b.x);
+  const seen = new Set<string>();
+  const zones: AssemblyZone[] = [];
+  for (const first of sorted) {
+    if (seen.has(key(first.x, first.z))) continue;
+    // 上下左右につながったマスをたどる．sorted の順に始めるので，最初のマスが最も上・最も左になる
+    const members: CellXZ[] = [];
+    const queue: CellXZ[] = [first];
+    seen.add(key(first.x, first.z));
+    for (let c = queue.pop(); c !== undefined; c = queue.pop()) {
+      members.push(c);
+      for (const [dx, dz] of NEIGHBOR_STEPS) {
+        const k = key(c.x + dx, c.z + dz);
+        const next = all.get(k);
+        if (next === undefined || seen.has(k)) continue;
+        seen.add(k);
+        queue.push(next);
+      }
+    }
+    members.sort((a, b) => a.z - b.z || a.x - b.x);
+    const edges: GridEdge[] = [];
+    for (const { x, z } of members) {
+      if (!all.has(key(x, z - 1))) edges.push({ x1: x, z1: z, x2: x + 1, z2: z });
+      if (!all.has(key(x, z + 1))) edges.push({ x1: x, z1: z + 1, x2: x + 1, z2: z + 1 });
+      if (!all.has(key(x - 1, z))) edges.push({ x1: x, z1: z, x2: x, z2: z + 1 });
+      if (!all.has(key(x + 1, z))) edges.push({ x1: x + 1, z1: z, x2: x + 1, z2: z + 1 });
+    }
+    zones.push({ cells: members, edges, flag: first });
+  }
+  return zones;
+}
+
+/** 上下左右の隣への差（x, z） */
+const NEIGHBOR_STEPS: readonly (readonly [number, number])[] = [
+  [0, -1],
+  [0, 1],
+  [-1, 0],
+  [1, 0],
+];

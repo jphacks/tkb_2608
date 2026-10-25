@@ -7,6 +7,7 @@ import {
   estimateSpeechSeconds,
   fillTemplate,
   NARRATION_SCRIPTS,
+  SPEECH_PITCH,
   SPEECH_RATE,
   speechTimeoutSeconds,
 } from "./narrationText";
@@ -105,9 +106,17 @@ describe("fillTemplate", () => {
   });
 });
 
+describe("SPEECH_PITCH", () => {
+  it("普通のナレーションは 1.0，校内放送はそれより少し低い", () => {
+    expect(SPEECH_PITCH.narration).toBe(1.0);
+    expect(SPEECH_PITCH.announcement).toBeLessThan(SPEECH_PITCH.narration);
+    expect(SPEECH_PITCH.announcement).toBeGreaterThan(0);
+  });
+});
+
 describe("SPEECH_RATE", () => {
-  it("普通のナレーションは 1.05，校内放送はそれより遅い", () => {
-    expect(SPEECH_RATE.narration).toBe(1.05);
+  it("普通のナレーションは 1.0，校内放送はそれより遅い", () => {
+    expect(SPEECH_RATE.narration).toBe(1.0);
     expect(SPEECH_RATE.announcement).toBeLessThan(SPEECH_RATE.narration);
     expect(SPEECH_RATE.announcement).toBeGreaterThan(0);
   });

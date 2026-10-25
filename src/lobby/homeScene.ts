@@ -64,6 +64,7 @@ export const HOME_HAND_START_MARGIN_PX = 16;
 export const HOME_GOGGLE_GUIDE: readonly string[] = [
   "「スタート」を押したら，スマホを横向きにしてゴーグルに入れ，ゴーグルを着けてください",
   "このあとは画面に触らずに進みます",
+  "画面の回転ロックはオフにしてください（オンのままだと，画面が逆さまになることがあります）",
 ];
 
 const STYLE = `

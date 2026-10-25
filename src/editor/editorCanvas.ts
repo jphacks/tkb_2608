@@ -2,8 +2,15 @@
 import type { Floor, Room } from "../core/schoolPlan";
 import type { SpreadMap } from "../sim";
 import type { CellXZ } from "../sim/grid";
-import { type DrillMarkers, type GridLayout, roomLabels, wallEdges } from "./editorLayout";
-import { yawToGridDirection } from "./editorState";
+import {
+  assemblyZones,
+  type DrillMarkers,
+  type GridEdge,
+  type GridLayout,
+  roomLabels,
+  wallEdges,
+} from "./editorLayout";
+import { type AreaBounds, yawToGridDirection } from "./editorState";
 import {
   CELL_COLORS,
   EDITOR_COLORS,
@@ -40,7 +47,8 @@ export interface RouteOverlay {
  * 1 つの階のマス目・壁・教室の名前・訓練条件の印・マウスの下のマスを描く．ctx は CSS の px で描ける変換
  * （devicePixelRatio を掛けた setTransform）にしておく．underlay があれば，マスの塗り（void も含めて淡くした色）の上に
  * 写真を白黒の乗算で重ね，図面の線だけを乗せる（延焼のプレビュー・マス線・壁・名前・経路・印は写真より上）．
- * photoOnly なら写真がある時だけ，マスの塗りと延焼のプレビューを隠して白地に写真だけを見せる
+ * photoOnly なら写真がある時だけ，マスの塗りと延焼のプレビューを隠して白地に写真だけを見せる．
+ * assemblyArea があれば，集合場所の道具でドラッグしている範囲を破線の枠で重ねる（印より上）
  */
 export function drawEditorGrid(
   ctx: CanvasRenderingContext2D,
@@ -56,6 +64,7 @@ export function drawEditorGrid(
   routeOverlay: RouteOverlay | null = null,
   underlay: UnderlayOverlay | null = null,
   photoOnly = false,
+  assemblyArea: AreaBounds | null = null,
 ): void {
   ctx.fillStyle = EDITOR_COLORS.background;
   ctx.fillRect(0, 0, canvasCssWidth, canvasCssHeight);
@@ -117,6 +126,7 @@ export function drawEditorGrid(
   // 経路は印の下に描く（開始地点・集合場所の印が経路の端で隠れないように）
   if (routeOverlay !== null) drawRoute(ctx, floor, layout, routeOverlay);
   drawMarkers(ctx, layout, markers, startYaw);
+  if (assemblyArea !== null) drawAssemblyArea(ctx, layout, assemblyArea);
 
   if (hover !== null && hover.x < floor.width && hover.z < floor.depth) {
     ctx.strokeStyle = EDITOR_COLORS.hover;
@@ -294,7 +304,7 @@ function drawGridLines(
   ctx.stroke();
 }
 
-/** 訓練条件の印を描く（集合場所の枠 → 火元 → 開始地点の順．同じマスに重なっても開始地点が上に見える） */
+/** 訓練条件の印を描く（集合場所のまとまり → 火元 → 開始地点の順．同じマスに重なっても開始地点が上に見える） */
 function drawMarkers(
   ctx: CanvasRenderingContext2D,
   layout: GridLayout,
@@ -305,35 +315,7 @@ function drawMarkers(
   const outline = Math.max(1, cellPx * 0.06);
   ctx.lineJoin = "round";
 
-  for (const { x, z } of markers.assembly) {
-    const left = offsetX + x * cellPx;
-    const top = offsetY + z * cellPx;
-    // 緑の枠（白で縁取り，屋外の色の上でも見える）
-    const inset = Math.max(2, cellPx * 0.1);
-    ctx.lineWidth = Math.max(2, cellPx * 0.1) + outline * 2;
-    ctx.strokeStyle = EDITOR_COLORS.markerOutline;
-    ctx.strokeRect(left + inset, top + inset, cellPx - inset * 2, cellPx - inset * 2);
-    ctx.lineWidth = Math.max(2, cellPx * 0.1);
-    ctx.strokeStyle = EDITOR_COLORS.assembly;
-    ctx.strokeRect(left + inset, top + inset, cellPx - inset * 2, cellPx - inset * 2);
-    // 小さな旗（竿と三角）
-    const poleX = left + cellPx * 0.38;
-    const poleTop = top + cellPx * 0.25;
-    const poleBottom = top + cellPx * 0.75;
-    ctx.lineWidth = Math.max(1, cellPx * 0.05);
-    ctx.strokeStyle = EDITOR_COLORS.assembly;
-    ctx.beginPath();
-    ctx.moveTo(poleX, poleBottom);
-    ctx.lineTo(poleX, poleTop);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(poleX, poleTop);
-    ctx.lineTo(left + cellPx * 0.68, top + cellPx * 0.36);
-    ctx.lineTo(poleX, top + cellPx * 0.47);
-    ctx.closePath();
-    ctx.fillStyle = EDITOR_COLORS.assembly;
-    ctx.fill();
-  }
+  drawAssemblyZones(ctx, layout, markers.assembly, outline);
 
   for (const { x, z } of markers.fireOrigins) {
     const cx = offsetX + (x + 0.5) * cellPx;
@@ -389,6 +371,85 @@ function drawMarkers(
     ctx.closePath();
     ctx.fill();
   }
+}
+
+/**
+ * 集合場所を，上下左右につながったまとまりごとに描く（淡い緑の塗り・外周の緑の枠・旗 1 つ）．
+ * マスごとに枠と旗を並べると，広い校庭のどこまでが集合場所か読み取りにくいため（Issue #167）
+ */
+function drawAssemblyZones(
+  ctx: CanvasRenderingContext2D,
+  layout: GridLayout,
+  cells: readonly CellXZ[],
+  outline: number,
+): void {
+  const { cellPx, offsetX, offsetY } = layout;
+  const width = Math.max(2, cellPx * 0.1);
+  for (const zone of assemblyZones(cells)) {
+    ctx.fillStyle = EDITOR_COLORS.assemblyFill;
+    for (const { x, z } of zone.cells) {
+      ctx.fillRect(offsetX + x * cellPx, offsetY + z * cellPx, cellPx, cellPx);
+    }
+    // 外周の枠（白で縁取り，屋外の色の上でも見える）
+    ctx.lineCap = "square";
+    edgePath(ctx, layout, zone.edges);
+    ctx.lineWidth = width + outline * 2;
+    ctx.strokeStyle = EDITOR_COLORS.markerOutline;
+    ctx.stroke();
+    edgePath(ctx, layout, zone.edges);
+    ctx.lineWidth = width;
+    ctx.strokeStyle = EDITOR_COLORS.assembly;
+    ctx.stroke();
+    // 小さな旗（竿と三角）をまとまりの左上のマスに 1 つ
+    const left = offsetX + zone.flag.x * cellPx;
+    const top = offsetY + zone.flag.z * cellPx;
+    const poleX = left + cellPx * 0.38;
+    const poleTop = top + cellPx * 0.25;
+    const poleBottom = top + cellPx * 0.75;
+    ctx.lineWidth = Math.max(1, cellPx * 0.05);
+    ctx.strokeStyle = EDITOR_COLORS.assembly;
+    ctx.beginPath();
+    ctx.moveTo(poleX, poleBottom);
+    ctx.lineTo(poleX, poleTop);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(poleX, poleTop);
+    ctx.lineTo(left + cellPx * 0.68, top + cellPx * 0.36);
+    ctx.lineTo(poleX, top + cellPx * 0.47);
+    ctx.closePath();
+    ctx.fillStyle = EDITOR_COLORS.assembly;
+    ctx.fill();
+  }
+}
+
+function edgePath(ctx: CanvasRenderingContext2D, layout: GridLayout, edges: readonly GridEdge[]) {
+  const { cellPx, offsetX, offsetY } = layout;
+  ctx.beginPath();
+  for (const edge of edges) {
+    ctx.moveTo(offsetX + edge.x1 * cellPx, offsetY + edge.z1 * cellPx);
+    ctx.lineTo(offsetX + edge.x2 * cellPx, offsetY + edge.z2 * cellPx);
+  }
+}
+
+/** 集合場所の道具でドラッグしている範囲（破線の枠．離すとこの範囲で足す・外す） */
+function drawAssemblyArea(
+  ctx: CanvasRenderingContext2D,
+  layout: GridLayout,
+  area: AreaBounds,
+): void {
+  const { cellPx, offsetX, offsetY } = layout;
+  const x = offsetX + area.minX * cellPx;
+  const y = offsetY + area.minZ * cellPx;
+  const w = (area.maxX - area.minX + 1) * cellPx;
+  const h = (area.maxZ - area.minZ + 1) * cellPx;
+  ctx.fillStyle = EDITOR_COLORS.assemblyFill;
+  ctx.fillRect(x, y, w, h);
+  const width = Math.max(2, cellPx * 0.08);
+  ctx.setLineDash([width * 2, width * 1.5]);
+  ctx.lineWidth = width;
+  ctx.strokeStyle = EDITOR_COLORS.assembly;
+  ctx.strokeRect(x + width / 2, y + width / 2, w - width, h - width);
+  ctx.setLineDash([]);
 }
 
 /** 炎の形（下が丸く上がとがったしずく形）の道．(cx, cy) が中心，size が半分の高さ（px） */

@@ -29,6 +29,29 @@ describe("DEFAULT_HAND_PARAMS", () => {
   });
 });
 
+describe("DEFAULT_HAND_PARAMS（届く範囲の倍率．Issue #163）", () => {
+  it("横 1.2・縦 1.4: カメラ（4:3 で横 65°）の端が，表示（縦 70°・片目の横約 74°）の端の近くに来る控えめな値", () => {
+    const p = DEFAULT_HAND_PARAMS;
+    expect(p.reachGainX).toBe(1.2);
+    expect(p.reachGainY).toBe(1.4);
+    const camHalfTanX = Math.tan((p.cameraHfovDeg * Math.PI) / 360);
+    const camHalfTanY = camHalfTanX * 0.75;
+    const viewHalfTanY = Math.tan((70 * Math.PI) / 360);
+    const viewHalfTanX = viewHalfTanY * (2532 / 2 / 1170); // iPhone 14 の横向きの片目
+    // 広げた後もカメラの端が表示の外へ大きくはみ出さない（はみ出すと手を少し動かしただけで視界から消える）
+    expect(camHalfTanX * p.reachGainX).toBeLessThanOrEqual(viewHalfTanX * 1.05);
+    expect(camHalfTanY * p.reachGainY).toBeLessThanOrEqual(viewHalfTanY * 1.05);
+    expect(camHalfTanY * p.reachGainY).toBeGreaterThan(viewHalfTanY * 0.9);
+  });
+
+  it("URL で倍率を 1 に戻せる（main と比べるため）", () => {
+    expect(handParamsFromSearch("?reachGainX=1&reachGainY=1")).toEqual({
+      reachGainX: 1,
+      reachGainY: 1,
+    });
+  });
+});
+
 describe("mergeHandParams", () => {
   it("null・undefined なら元のまま", () => {
     expect(mergeHandParams(DEFAULT_HAND_PARAMS, null)).toBe(DEFAULT_HAND_PARAMS);
