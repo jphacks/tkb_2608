@@ -12,7 +12,12 @@ import {
   type NarrationState,
   reduceNarration,
 } from "./narrationFlow";
-import { estimateSpeechSeconds, SPEECH_RATE, speechTimeoutSeconds } from "./narrationText";
+import {
+  estimateSpeechSeconds,
+  SPEECH_PITCH,
+  SPEECH_RATE,
+  speechTimeoutSeconds,
+} from "./narrationText";
 
 // ---- テスト用のデータ ----
 
@@ -50,7 +55,13 @@ describe("reduceNarration（普通のナレーション）", () => {
   it("何も読んでいなければすぐ読み始め，見積もり＋4 秒の上限を頼む", () => {
     const step = reduceNarration(IDLE_NARRATION, { type: "request", item: item() });
     expect(step.actions).toEqual([
-      { type: "speak", token: 1, text: INTRO_TEXT, rate: SPEECH_RATE.narration },
+      {
+        type: "speak",
+        token: 1,
+        text: INTRO_TEXT,
+        rate: SPEECH_RATE.narration,
+        pitch: SPEECH_PITCH.narration,
+      },
       {
         type: "wait",
         token: 1,
@@ -66,7 +77,7 @@ describe("reduceNarration（普通のナレーション）", () => {
     const step = reduceNarration(IDLE_NARRATION, { type: "request", item: item() });
     const wait = step.actions.find((a) => a.type === "wait");
     expect(wait?.type === "wait" && wait.seconds).toBeCloseTo(
-      estimateSpeechSeconds(INTRO_TEXT, 1.05) + 4,
+      estimateSpeechSeconds(INTRO_TEXT, SPEECH_RATE.narration) + 4,
     );
   });
 
@@ -181,7 +192,13 @@ describe("reduceNarration（校内放送）", () => {
     expect(r.actions).toEqual([
       { type: "chime", kind: "start" },
       { type: "wait", token: 1, event: "preChimeDone", seconds: chimeWaitSeconds("start") },
-      { type: "speak", token: 1, text: ANNOUNCE_TEXT, rate: SPEECH_RATE.announcement },
+      {
+        type: "speak",
+        token: 1,
+        text: ANNOUNCE_TEXT,
+        rate: SPEECH_RATE.announcement,
+        pitch: SPEECH_PITCH.announcement,
+      },
       {
         type: "wait",
         token: 1,
