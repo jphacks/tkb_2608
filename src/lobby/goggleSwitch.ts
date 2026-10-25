@@ -103,6 +103,13 @@ export function goggleOnGuideLines(
   ];
 }
 
+/** デモ用の起動（?app&demo）で，開始画面の後の付ける案内に出す箇条書き（ロビーを通らず避難が始まる） */
+export const GOGGLE_ON_DEMO_LINES: readonly string[] = [
+  "スマホは横向きのまま，画面をゴーグルの奥に向けて入れてください",
+  "ゴーグルを着けたら，まっすぐ前を向いて待ってください．その向きが正面になります",
+  "画面が左右 2 つに切り替わると，非常ベルが鳴って避難訓練が始まります",
+];
+
 /** 付ける案内の残り秒数の表示 */
 export function goggleOnCaption(remainingSeconds: number): string {
   return `${remainingSeconds} 秒後にゴーグルの画面に切り替わります`;

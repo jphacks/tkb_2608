@@ -64,76 +64,90 @@ const PLACE_NAME_BY_KIND: Partial<Record<CellKind, string>> = {
 /** 場所が分からない時の名前（仮の文面） */
 const UNKNOWN_PLACE_NAME = "校舎の中";
 
+/** buildDrillScenario の選び方 */
+export interface DrillScenarioOptions {
+  /** true なら ① 授業中の教室を除き，② 非常ベルと校内放送から始める（デモ用の起動） */
+  readonly skipClassroom?: boolean;
+}
+
 /**
  * 校舎データから火災訓練のシナリオを組み立てる．
  * 逃げ遅れ（③ の時間切れ）は，evacuate の StepRecord の outcome が "timedOut" になることで表す
  * （そのまま終了し，締めの場面には進まない）
  */
-export function buildDrillScenario(plan: SchoolPlan): ScenarioDefinition {
+export function buildDrillScenario(
+  plan: SchoolPlan,
+  options: DrillScenarioOptions = {},
+): ScenarioDefinition {
   const fireRoomName = fireOriginName(plan);
   const evacuateSeconds = Math.max(
     plan.drill.timeLimitSeconds - ALARM_SECONDS,
     MIN_EVACUATE_SECONDS,
   );
+  const steps: ScenarioDefinition["steps"] = [
+    {
+      id: DRILL_STEP.classroom,
+      onEnter: [
+        { type: "sound", id: DRILL_CUE_ID.classroomAmbience, action: "play", loop: true },
+        { type: "narration", id: DRILL_CUE_ID.classroomIntro },
+      ],
+      goal: { type: "elapsed", seconds: CLASSROOM_SECONDS },
+    },
+    {
+      id: DRILL_STEP.alarm,
+      onEnter: [
+        // ベルが鳴ったら授業の音は止める
+        { type: "sound", id: DRILL_CUE_ID.classroomAmbience, action: "stop" },
+        { type: "sound", id: DRILL_CUE_ID.fireAlarm, action: "play", loop: true },
+        { type: "happening", id: DRILL_CUE_ID.fireStart },
+        // 校内放送の文面に火元の名前を差し込む（audio/ が params.roomName を読む）
+        {
+          type: "narration",
+          id: DRILL_CUE_ID.fireAnnouncement,
+          params: { roomName: fireRoomName },
+        },
+      ],
+      goal: {
+        type: "any",
+        conditions: [
+          { type: "signal", name: FIRE_ANNOUNCEMENT_ENDED_SIGNAL },
+          { type: "elapsed", seconds: ALARM_SECONDS },
+        ],
+      },
+    },
+    {
+      id: DRILL_STEP.evacuate,
+      onEnter: [{ type: "narration", id: DRILL_CUE_ID.evacuateStart }],
+      goal: { type: "inArea", areaId: ASSEMBLY_AREA_ID, holdSeconds: ASSEMBLY_HOLD_SECONDS },
+      // 逃げ遅れ: 締めに進まず打ち切る．ベルは結果画面へ持ち越さないよう止める
+      timeout: {
+        seconds: evacuateSeconds,
+        cues: [{ type: "sound", id: DRILL_CUE_ID.fireAlarm, action: "stop" }],
+        next: null,
+      },
+      report: {
+        label: "火と煙を避けて集合場所まで避難する",
+        advice: "火元から離れる道を選び，煙の中では低い姿勢で進みましょう",
+      },
+    },
+    {
+      id: DRILL_STEP.ending,
+      onEnter: [
+        { type: "sound", id: DRILL_CUE_ID.fireAlarm, action: "stop" },
+        { type: "narration", id: DRILL_CUE_ID.ending },
+      ],
+      goal: { type: "elapsed", seconds: ENDING_SECONDS },
+      next: null,
+    },
+  ];
   return {
     id: "fire-drill",
     title: plan.name === "" ? "火災避難訓練" : `火災避難訓練（${plan.name}）`,
-    steps: [
-      {
-        id: DRILL_STEP.classroom,
-        onEnter: [
-          { type: "sound", id: DRILL_CUE_ID.classroomAmbience, action: "play", loop: true },
-          { type: "narration", id: DRILL_CUE_ID.classroomIntro },
-        ],
-        goal: { type: "elapsed", seconds: CLASSROOM_SECONDS },
-      },
-      {
-        id: DRILL_STEP.alarm,
-        onEnter: [
-          // ベルが鳴ったら授業の音は止める
-          { type: "sound", id: DRILL_CUE_ID.classroomAmbience, action: "stop" },
-          { type: "sound", id: DRILL_CUE_ID.fireAlarm, action: "play", loop: true },
-          { type: "happening", id: DRILL_CUE_ID.fireStart },
-          // 校内放送の文面に火元の名前を差し込む（audio/ が params.roomName を読む）
-          {
-            type: "narration",
-            id: DRILL_CUE_ID.fireAnnouncement,
-            params: { roomName: fireRoomName },
-          },
-        ],
-        goal: {
-          type: "any",
-          conditions: [
-            { type: "signal", name: FIRE_ANNOUNCEMENT_ENDED_SIGNAL },
-            { type: "elapsed", seconds: ALARM_SECONDS },
-          ],
-        },
-      },
-      {
-        id: DRILL_STEP.evacuate,
-        onEnter: [{ type: "narration", id: DRILL_CUE_ID.evacuateStart }],
-        goal: { type: "inArea", areaId: ASSEMBLY_AREA_ID, holdSeconds: ASSEMBLY_HOLD_SECONDS },
-        // 逃げ遅れ: 締めに進まず打ち切る．ベルは結果画面へ持ち越さないよう止める
-        timeout: {
-          seconds: evacuateSeconds,
-          cues: [{ type: "sound", id: DRILL_CUE_ID.fireAlarm, action: "stop" }],
-          next: null,
-        },
-        report: {
-          label: "火と煙を避けて集合場所まで避難する",
-          advice: "火元から離れる道を選び，煙の中では低い姿勢で進みましょう",
-        },
-      },
-      {
-        id: DRILL_STEP.ending,
-        onEnter: [
-          { type: "sound", id: DRILL_CUE_ID.fireAlarm, action: "stop" },
-          { type: "narration", id: DRILL_CUE_ID.ending },
-        ],
-        goal: { type: "elapsed", seconds: ENDING_SECONDS },
-        next: null,
-      },
-    ],
+    // 場面は並びの順に進むため，① を除けば ② から始まる（② の授業の音を止める演出は鳴っていなくても害が無い）
+    steps:
+      options.skipClassroom === true
+        ? steps.filter((step) => step.id !== DRILL_STEP.classroom)
+        : steps,
   };
 }
 

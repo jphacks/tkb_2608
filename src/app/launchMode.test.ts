@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveDebug, resolveLaunchMode, resolveStereo } from "./launchMode";
+import { resolveDebug, resolveDemo, resolveLaunchMode, resolveStereo } from "./launchMode";
 
 describe("resolveLaunchMode", () => {
   it("パラメータ無しは教員用のホーム画面，?scene=train は従来のビューア", () => {
@@ -223,6 +223,27 @@ describe("resolveLaunchMode（教員用のホーム画面と開発用のビュ�
     "%s は優先順位（app → debrief → audio → editor → monitor → viewer）に従って %s",
     (search, expected) => {
       expect(resolveLaunchMode(search)).toBe(expected);
+    },
+  );
+});
+
+describe("resolveDemo（デモ用の起動 ?app&demo．Issue #181）", () => {
+  it.each(["", "?app", "?app&debug"])("%s は無効", (search) => {
+    expect(resolveDemo(search)).toBe(false);
+  });
+
+  it.each(["?demo", "?app&demo", "?app&demo=1", "?demo=yes"])("%s は有効", (search) => {
+    expect(resolveDemo(search)).toBe(true);
+  });
+
+  it.each(["?app&demo=0", "?demo=false", "?demo=FALSE", "?demo=False"])("%s は無効", (search) => {
+    expect(resolveDemo(search)).toBe(false);
+  });
+
+  it.each(["?demo", "?demo=0", "?demo=false", "?demo=FALSE", "?demo=1", ""])(
+    "%s は resolveDebug と同じ規則",
+    (search) => {
+      expect(resolveDemo(search)).toBe(resolveDebug(search.replace("demo", "debug")));
     },
   );
 });
