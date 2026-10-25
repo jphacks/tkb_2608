@@ -20,7 +20,13 @@ import {
   type OneEuroVec3,
   stepOneEuroVec3,
 } from "./oneEuro";
-import { type CameraModel, estimateDepth, focalLengthPx, imageToHead } from "./projection";
+import {
+  type CameraModel,
+  estimateDepth,
+  focalLengthPx,
+  imageToHead,
+  reachShift,
+} from "./projection";
 import {
   HAND_LANDMARK_COUNT,
   type HandObservation,
@@ -152,17 +158,24 @@ function skeletonToHead(
 /**
  * 頭の座標系の手のひらの中心・人差し指の先・描く用の 21 点．求められなければ null
  * （21 点のどれか 1 つでも求められない時も null．形の崩れた手を描かないため）．
- * 手のひらの中心・人差し指の先は見積もった奥行き，21 点は固定の奥行き（skeletonToHead）に置く
+ * 手のひらの中心・人差し指の先は見積もった奥行き，21 点は固定の奥行き（skeletonToHead）に置く．
+ * どれも，手全体を画像の中心から離す向きに reachGainX・reachGainY の分だけ動かしてから置く（reachShift）
  */
 export function handPositions(
   obs: HandObservation,
   cam: CameraModel,
   params: HandParams,
 ): { palm: Vec3; tip: Vec3; landmarks: Vec3[]; depth: number } | null {
-  const lm = obs.landmarks;
-  if (lm.length < HAND_LANDMARK_COUNT) return null;
-  const depth = estimateDepth(lm, cam, params.palmLengthM, params.minDepthM, params.maxDepthM);
+  const raw = obs.landmarks;
+  if (raw.length < HAND_LANDMARK_COUNT) return null;
+  // 奥行きは点どうしの差（手の大きさ）だけで決まるため，動かす前の点で見積もっても同じ
+  const depth = estimateDepth(raw, cam, params.palmLengthM, params.minDepthM, params.maxDepthM);
   if (!Number.isFinite(depth)) return null;
+  const shift = reachShift(palmCenter(raw), params.reachGainX, params.reachGainY);
+  const lm =
+    shift.x === 0 && shift.y === 0
+      ? raw
+      : raw.map((p) => ({ x: p.x + shift.x, y: p.y + shift.y, z: p.z }));
   const center = palmCenter(lm);
   const palm = imageToHead(center, depth, cam);
   if (palm === null) return null;

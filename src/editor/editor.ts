@@ -12,8 +12,10 @@ import { canvasToCell, computeGridLayout, drillMarkers, type GridLayout } from "
 import {
   addRoom,
   applyFloorDraft,
+  areaBounds,
   beginRouteStroke,
   beginStroke,
+  type CellArea,
   canRedo,
   canUndo,
   clearRoute,
@@ -43,6 +45,7 @@ import {
   setTimeLimit,
   startBlank,
   suggestRoute,
+  toggleAssemblyArea,
   undo,
 } from "./editorState";
 import {
@@ -198,7 +201,7 @@ export function startEditor(demoPlan: SchoolPlan = DEMO_SCHOOL, options: EditorO
   const style = document.createElement("style");
   style.textContent = STYLE;
   document.head.appendChild(style);
-  document.title = "校舎エディタ | 防災体験VR（仮称）";
+  document.title = "校舎エディタ | ひなんクラフトVR";
 
   const storage = browserPlanStorage();
   const saved = loadSavedPlan(storage);
@@ -208,6 +211,8 @@ export function startEditor(demoPlan: SchoolPlan = DEMO_SCHOOL, options: EditorO
   /** 自動保存できているか（できなくなった時に一度だけ案内を出す） */
   let autoSaveOk = saved.kind !== "failed" || saved.storageUsable;
   let hover: CellXZ | null = null;
+  /** 集合場所の道具でドラッグしている範囲（離した時に足す・外す）．ドラッグしていなければ null */
+  let assemblyDrag: CellArea | null = null;
   let layout: GridLayout = { cellPx: 1, offsetX: 0, offsetY: 0 };
 
   const root = el("div", "editor");
@@ -350,7 +355,7 @@ export function startEditor(demoPlan: SchoolPlan = DEMO_SCHOOL, options: EditorO
   });
   const markerHint = el("p", "editor__hint");
   markerHint.textContent =
-    "クリックで置く．火元・集合場所はもう一度クリックで外す．開始地点は 1 つだけで，置き直すと移る．開始時の向きは上のボタンで選ぶ";
+    "クリックで置く．火元はもう一度クリックで外す．集合場所は校庭をドラッグした範囲の屋外のマスに置き，すべて集合場所の範囲をもう一度選ぶと外す．開始地点は 1 つだけで，置き直すと移る．開始時の向きは上のボタンで選ぶ";
   side.append(heading("開始時の向き"), facingRow, markerHint);
 
   /** 延焼の計算結果（校舎が変わった時だけ計算し直す．延焼のプレビューと E5 の経路の提案で同じものを使う） */
@@ -567,7 +572,14 @@ export function startEditor(demoPlan: SchoolPlan = DEMO_SCHOOL, options: EditorO
     }
     const cell = cellAt(e);
     if (cell === null) return;
-    // 訓練条件はクリックで 1 マスずつ置く・外す（ドラッグで続けると，足す・外すが混ざって分かりにくいため）
+    // 集合場所は範囲で置く・外す．離した時に 1 回だけ決めるので，ドラッグの途中で足す・外すが混ざらない
+    if (state.tool.kind === "assembly") {
+      canvas.setPointerCapture(e.pointerId);
+      assemblyDrag = { from: cell, to: cell };
+      render();
+      return;
+    }
+    // 火元・開始地点はクリックで 1 マスずつ置く・外す（ドラッグで続けると，足す・外すが混ざって分かりにくいため）
     if (isMarkerTool(state.tool)) {
       const result = placeMarker(state, cell);
       update(result.state);
@@ -590,6 +602,9 @@ export function startEditor(demoPlan: SchoolPlan = DEMO_SCHOOL, options: EditorO
       // 写真が動けば onChange で描き直す．動かない時もマウスの下のマスの表示を直す
       underlayPanel.dragTo(gridPointAt(e));
       render();
+    } else if (assemblyDrag !== null) {
+      if (cell !== null) assemblyDrag = { from: assemblyDrag.from, to: cell };
+      render();
     } else if (cell !== null && state.stroke !== null && isRouteTool(state.tool)) {
       const result = continueRouteStroke(state, cell);
       update(result.state);
@@ -599,10 +614,21 @@ export function startEditor(demoPlan: SchoolPlan = DEMO_SCHOOL, options: EditorO
   });
   const finish = () => {
     underlayPanel.endDrag();
+    if (assemblyDrag !== null) {
+      const area = assemblyDrag;
+      assemblyDrag = null;
+      const result = toggleAssemblyArea(state, area);
+      update(result.state);
+      if (result.reason !== null) showNotice(result.reason);
+    }
     if (state.stroke !== null) update(endStroke(state));
   };
   canvas.addEventListener("pointerup", finish);
-  canvas.addEventListener("pointercancel", finish);
+  canvas.addEventListener("pointercancel", () => {
+    // 範囲の選択は途中で取り消されたら置かない（タッチの中断等で意図しない範囲を置かないように）
+    assemblyDrag = null;
+    finish();
+  });
   canvas.addEventListener("lostpointercapture", finish);
   canvas.addEventListener("pointerleave", () => {
     hover = null;
@@ -845,6 +871,7 @@ export function startEditor(demoPlan: SchoolPlan = DEMO_SCHOOL, options: EditorO
         { cells: state.plan.drill.route, badSteps: routeCheck.badSteps },
         underlayPanel.overlay(),
         photoOnly,
+        assemblyDrag === null ? null : areaBounds(floor, assemblyDrag),
       );
     }
 
