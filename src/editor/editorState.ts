@@ -9,7 +9,9 @@ import type {
   Room,
   SchoolPlan,
 } from "../core/schoolPlan";
-import type { CellXZ } from "../sim/grid";
+import { proposeRoute, type SpreadMap } from "../sim";
+import { type CellXZ, isAdjacent } from "../sim/grid";
+import { ROUTE_REASONS, routeStepRejection } from "./routeCheck";
 
 /** 塗る道具．教室の時はどの教室（SchoolPlan.rooms の添字）で塗るかを持つ */
 export type PaintTool =
@@ -24,8 +26,13 @@ export interface MarkerTool {
   readonly kind: MarkerKind;
 }
 
-/** エディタで選べる道具（マスを塗る道具か，訓練条件を置く道具） */
-export type EditorTool = PaintTool | MarkerTool;
+/** 正解経路（E5）を引く道具（マスは塗らない．経路の最後に隣り合うマスで伸ばし，途中のマスで切り詰める） */
+export interface RouteTool {
+  readonly kind: "route";
+}
+
+/** エディタで選べる道具（マスを塗る道具か，訓練条件を置く道具か，正解経路を引く道具） */
+export type EditorTool = PaintTool | MarkerTool | RouteTool;
 
 /** 開始時の向きの選び方（エディタの画面の上下左右） */
 export type Facing = "up" | "right" | "down" | "left";
@@ -84,7 +91,18 @@ export const MARKER_REASONS = {
   assemblyNotOutdoor: "集合場所は屋外（校庭）のマスにだけ置けます",
 } as const;
 
-/** ドラッグで塗っている途中の記録（1 回のドラッグを 1 回分の「元に戻す」にまとめるため） */
+/** 正解経路の操作の結果．経路を変えられなかった時は reason に画面に出す理由（日本語の 1 文）を持つ（MarkerResult と同じ形） */
+export type RouteResult = MarkerResult;
+
+/** 経路の提案・操作で出す理由の文（一歩ごとの理由は routeCheck.ts の ROUTE_REASONS） */
+export const ROUTE_EDIT_REASONS = {
+  noAssembly: "集合場所が開始地点と同じ階にないため，経路を提案できません",
+  startOutside: "開始地点がマス目の外にあるため，経路を提案できません",
+  unreachable:
+    "開始地点から集合場所までたどり着ける経路がありません（壁・ドア・出口と，火で通れなくなるマスを確かめてください）",
+} as const;
+
+/** ドラッグで塗っている途中の記録（1 回のドラッグを 1 回分の「元に戻す」にまとめるため．経路を引くドラッグも同じ記録を使う） */
 export interface PaintStroke {
   /** ドラッグを始める前の校舎（履歴に積むもの） */
   readonly before: SchoolPlan;
@@ -135,6 +153,11 @@ export function createEditorState(plan: SchoolPlan): EditorState {
 /** 編集中の階（1 フロア目） */
 export function editingFloor(state: EditorState): Floor {
   return state.plan.floors[EDIT_FLOOR];
+}
+
+/** 道具が正解経路を引く道具か */
+export function isRouteTool(tool: EditorTool): tool is RouteTool {
+  return tool.kind === "route";
 }
 
 /** 道具が訓練条件を置く道具か */
@@ -369,6 +392,91 @@ export function setTimeLimit(state: EditorState, seconds: number): EditorState {
   return commit(settled, withDrill(settled.plan, { ...drill, timeLimitSeconds: seconds }));
 }
 
+/**
+ * 正解経路を proposeRoute() の提案に置き換える（E5．元に戻せる）．延焼は spreadOf で引く（エディタのキャッシュを渡す）．
+ * たどり着けない時は理由を返して校舎を変えない．提案が今の経路と同じなら何もしない
+ */
+export function suggestRoute(
+  state: EditorState,
+  spreadOf: (plan: SchoolPlan) => SpreadMap,
+): RouteResult {
+  const settled = endStroke(state);
+  const plan = settled.plan;
+  const drill = plan.drill;
+  const floor = plan.floors[drill.start.floor];
+  if (floor === undefined || !isInsideFloor(floor, drill.start)) {
+    return { state: settled, reason: ROUTE_EDIT_REASONS.startOutside };
+  }
+  if (!drill.assembly.some((ref) => ref.floor === drill.start.floor && isInsideFloor(floor, ref))) {
+    return { state: settled, reason: ROUTE_EDIT_REASONS.noAssembly };
+  }
+  const proposal = proposeRoute(plan, spreadOf(plan));
+  if (proposal === null) return { state: settled, reason: ROUTE_EDIT_REASONS.unreachable };
+  if (sameRoute(drill.route, proposal)) return { state: settled, reason: null };
+  return {
+    state: commit(settled, withDrill(plan, { ...drill, route: [...proposal] })),
+    reason: null,
+  };
+}
+
+/** 正解経路を空にする（元に戻せる．空の時は生徒側で proposeRoute() の提案を使う）．もう空なら何もしない */
+export function clearRoute(state: EditorState): EditorState {
+  const settled = endStroke(state);
+  const drill = settled.plan.drill;
+  if (drill.route.length === 0) return settled;
+  return commit(settled, withDrill(settled.plan, { ...drill, route: [] }));
+}
+
+/**
+ * 経路の道具でマスを押した（ドラッグの始まり）．続きは continueRouteStroke，終わりは endStroke で知らせ，
+ * ドラッグ全体を 1 回分の「元に戻す」にする．
+ *
+ * - 経路の途中のマス: そのマスまでに切り詰める（最後のマスなら変えない．そのままドラッグで伸ばせる）
+ * - 経路の最後のマスに隣り合うマス: 人が一歩で進めれば足す．壁をまたぐ・人の入れないマスなら足さずに理由を返す
+ * - 経路が空: 開始地点から始める（開始地点を押せば開始地点だけ，その隣を押せば開始地点とそのマス）
+ *
+ * 道具が経路の道具でない時は何もしない
+ */
+export function beginRouteStroke(state: EditorState, cell: CellXZ): RouteResult {
+  const settled = endStroke(state);
+  if (!isRouteTool(settled.tool)) return { state: settled, reason: null };
+  const { route, reason } = stepRoute(settled.plan, settled.plan.drill.route, cell);
+  return {
+    state: {
+      ...settled,
+      plan: withRoute(settled.plan, route),
+      stroke: { before: settled.plan, last: cell },
+    },
+    reason,
+  };
+}
+
+/**
+ * 経路の道具でドラッグして次のマスへ動いた．前のマスとの間のマスも順に見る（マウスが速く動いても途切れないように）．
+ * 経路の途中のマスに戻れば切り詰め，最後のマスに隣り合うマスなら伸ばす（beginRouteStroke と同じ規則）．
+ * 足せないマスがあれば，そこで止めて理由を返す．ドラッグの途中でなければ何もしない
+ */
+export function continueRouteStroke(state: EditorState, cell: CellXZ): RouteResult {
+  const stroke = state.stroke;
+  if (stroke === null || !isRouteTool(state.tool)) return { state, reason: null };
+  if (stroke.last.x === cell.x && stroke.last.z === cell.z) return { state, reason: null };
+  let route = state.plan.drill.route;
+  let reason: string | null = null;
+  for (const next of cellsBetween(stroke.last, cell)) {
+    const step = stepRoute(state.plan, route, next);
+    route = step.route;
+    if (step.reason !== null) {
+      reason = step.reason;
+      break;
+    }
+  }
+  // ドラッグで元の経路に戻った時は，ドラッグ前の校舎のままにする（変わっていない操作を履歴に積まないため）
+  const plan = sameRoute(route, stroke.before.drill.route)
+    ? stroke.before
+    : withRoute(state.plan, route);
+  return { state: { ...state, plan, stroke: { before: stroke.before, last: cell } }, reason };
+}
+
 /** 元に戻す（ドラッグの途中なら先に塗り終える）．戻す先が無ければ何もしない */
 export function undo(state: EditorState): EditorState {
   const settled = endStroke(state);
@@ -422,7 +530,7 @@ function normalizeTool(plan: SchoolPlan, tool: EditorTool): EditorTool {
 
 /** マスを道具で塗った校舎．何も変わらなければ同じ plan を返す（履歴に積まないため） */
 function paintCells(plan: SchoolPlan, tool: EditorTool, targets: readonly CellXZ[]): SchoolPlan {
-  if (isMarkerTool(tool)) return plan;
+  if (isMarkerTool(tool) || isRouteTool(tool)) return plan;
   if (tool.kind === "classroom" && !isRoomIndex(plan, tool.room)) return plan;
   const floor = plan.floors[EDIT_FLOOR];
   const room = tool.kind === "classroom" ? tool.room : -1;
@@ -492,6 +600,54 @@ function editRef(cell: CellXZ): CellRef {
 
 const sameRef = (a: CellRef, b: CellRef): boolean =>
   a.floor === b.floor && a.x === b.x && a.z === b.z;
+
+/**
+ * 経路の上でマスを 1 つ選んだ時の次の経路（beginRouteStroke の規則）．変わらなければ同じ配列を返す．
+ * 足せない時は route のまま理由を返す
+ */
+function stepRoute(
+  plan: SchoolPlan,
+  route: readonly CellRef[],
+  cell: CellXZ,
+): { readonly route: readonly CellRef[]; readonly reason: string | null } {
+  const floor = plan.floors[EDIT_FLOOR];
+  const ref = editRef(cell);
+  const at = route.findIndex((r) => sameRef(r, ref));
+  if (at >= 0)
+    return { route: at === route.length - 1 ? route : route.slice(0, at + 1), reason: null };
+  if (route.length === 0) {
+    const start = plan.drill.start;
+    if (start.floor !== EDIT_FLOOR || !isInsideFloor(floor, start)) {
+      return { route, reason: ROUTE_REASONS.startOutside };
+    }
+    if (sameRef(start, ref)) return { route: [start], reason: null };
+    if (!isAdjacent(start, cell)) return { route, reason: ROUTE_REASONS.startNotNext(start) };
+    const reason = routeStepRejection(floor, start, cell);
+    return reason === null ? { route: [start, ref], reason: null } : { route, reason };
+  }
+  const last = route[route.length - 1];
+  const reason = routeStepRejection(floor, last, cell);
+  return reason === null ? { route: [...route, ref], reason: null } : { route, reason };
+}
+
+function withRoute(plan: SchoolPlan, route: readonly CellRef[]): SchoolPlan {
+  return route === plan.drill.route ? plan : withDrill(plan, { ...plan.drill, route });
+}
+
+function sameRoute(a: readonly CellRef[], b: readonly CellRef[]): boolean {
+  return a.length === b.length && a.every((r, i) => sameRef(r, b[i]));
+}
+
+function isInsideFloor(floor: Floor, cell: CellXZ): boolean {
+  return (
+    Number.isInteger(cell.x) &&
+    Number.isInteger(cell.z) &&
+    cell.x >= 0 &&
+    cell.x < floor.width &&
+    cell.z >= 0 &&
+    cell.z < floor.depth
+  );
+}
 
 function withDrill(plan: SchoolPlan, drill: DrillSetup): SchoolPlan {
   return { ...plan, drill };

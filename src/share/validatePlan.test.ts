@@ -242,9 +242,19 @@ describe("validatePlan（訓練条件の誤り）", () => {
   });
 });
 
+describe("validatePlan（空の正解経路）", () => {
+  // Issue #133 の仕様変更: 経路は空でもよい．空なら生徒側で proposeRoute() の提案を使う（SPEC_01「結果の評価」）
+  it("経路が空は誤りにしない", () => {
+    expect(validatePlan(withDrill({ route: [] }))).toEqual([]);
+  });
+
+  it("経路が空でも，経路以外の誤りは従来どおり返す", () => {
+    expect(validatePlan(withDrill({ route: [], start: at(8, 10) })).length).toBeGreaterThan(0);
+  });
+});
+
 describe("validatePlan（正解経路の誤り）", () => {
   it.each<[string, SchoolPlan]>([
-    ["経路が空", withDrill({ route: [] })],
     ["開始地点から始まらない（最初のマスを抜いた）", withDrill({ route: route.slice(1) })],
     [
       "開始地点から始まらない（同じ x・z でも別の階）",

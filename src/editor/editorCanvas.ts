@@ -22,6 +22,13 @@ export interface SpreadOverlay {
   readonly atSeconds: number;
 }
 
+/** 重ねる正解経路（E5）．cells は経路のマスの列（その階の分．route と同じ順） */
+export interface RouteOverlay {
+  readonly cells: readonly CellXZ[];
+  /** 置けない一歩（i なら cells[i - 1] → cells[i]．routeCheck.ts の RouteCheck.badSteps） */
+  readonly badSteps: readonly number[];
+}
+
 /**
  * 1 つの階のマス目・壁・教室の名前・訓練条件の印・マウスの下のマスを描く．ctx は CSS の px で描ける変換
  * （devicePixelRatio を掛けた setTransform）にしておく
@@ -37,6 +44,7 @@ export function drawEditorGrid(
   markers: DrillMarkers,
   startYaw: number,
   spreadOverlay: SpreadOverlay | null = null,
+  routeOverlay: RouteOverlay | null = null,
 ): void {
   ctx.fillStyle = EDITOR_COLORS.background;
   ctx.fillRect(0, 0, canvasCssWidth, canvasCssHeight);
@@ -81,6 +89,8 @@ export function drawEditorGrid(
     ctx.fillText(label.name, offsetX + label.x * cellPx, offsetY + label.z * cellPx);
   }
 
+  // 経路は印の下に描く（開始地点・集合場所の印が経路の端で隠れないように）
+  if (routeOverlay !== null) drawRoute(ctx, floor, layout, routeOverlay);
   drawMarkers(ctx, layout, markers, startYaw);
 
   if (hover !== null && hover.x < floor.width && hover.z < floor.depth) {
@@ -119,6 +129,102 @@ function drawSpread(
       ctx.fillStyle = state === "fire" ? EDITOR_COLORS.spreadFire : EDITOR_COLORS.spreadSmoke;
       ctx.fillRect(offsetX + x * cellPx, offsetY + z * cellPx, cellPx, cellPx);
     }
+  }
+}
+
+/**
+ * 正解経路をマスの中心を結ぶ線で描き，一歩ごとに進む向きの矢印を付ける（どちらへ逃げる経路か分かるように）．
+ * 置けない一歩は橙の破線にする．マス目の外のマスにつながる一歩は描かない
+ */
+function drawRoute(
+  ctx: CanvasRenderingContext2D,
+  floor: Floor,
+  layout: GridLayout,
+  overlay: RouteOverlay,
+): void {
+  const { cellPx, offsetX, offsetY } = layout;
+  const { cells } = overlay;
+  const bad = new Set(overlay.badSteps);
+  const inside = (c: CellXZ): boolean =>
+    c.x >= 0 && c.x < floor.width && c.z >= 0 && c.z < floor.depth;
+  const px = (c: CellXZ): { x: number; y: number } => ({
+    x: offsetX + (c.x + 0.5) * cellPx,
+    y: offsetY + (c.z + 0.5) * cellPx,
+  });
+  const lineWidth = Math.max(2, cellPx * 0.16);
+  const outline = Math.max(1, cellPx * 0.05);
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+
+  // 置ける一歩をつないだ線（白で縁取り，教室・廊下・屋外のどの色の上でも見える）
+  const goodPath = (): void => {
+    ctx.beginPath();
+    for (let i = 1; i < cells.length; i++) {
+      if (bad.has(i) || !inside(cells[i - 1]) || !inside(cells[i])) continue;
+      const a = px(cells[i - 1]);
+      const b = px(cells[i]);
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+    }
+  };
+  goodPath();
+  ctx.lineWidth = lineWidth + outline * 2;
+  ctx.strokeStyle = EDITOR_COLORS.markerOutline;
+  ctx.stroke();
+  goodPath();
+  ctx.lineWidth = lineWidth;
+  ctx.strokeStyle = EDITOR_COLORS.route;
+  ctx.stroke();
+
+  ctx.setLineDash([lineWidth, lineWidth]);
+  ctx.beginPath();
+  for (const i of bad) {
+    if (i < 1 || i >= cells.length || !inside(cells[i - 1]) || !inside(cells[i])) continue;
+    const a = px(cells[i - 1]);
+    const b = px(cells[i]);
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+  }
+  ctx.lineWidth = lineWidth;
+  ctx.strokeStyle = EDITOR_COLORS.routeBadStep;
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // 一歩ごとの向きの矢印（一歩の真ん中＝マスの境目に置く）
+  const half = Math.max(3, cellPx * 0.18);
+  for (let i = 1; i < cells.length; i++) {
+    if (bad.has(i) || !inside(cells[i - 1]) || !inside(cells[i])) continue;
+    const a = px(cells[i - 1]);
+    const b = px(cells[i]);
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    if (len === 0) continue;
+    const dx = (b.x - a.x) / len;
+    const dy = (b.y - a.y) / len;
+    const mx = (a.x + b.x) / 2;
+    const my = (a.y + b.y) / 2;
+    ctx.beginPath();
+    ctx.moveTo(mx + dx * half, my + dy * half);
+    ctx.lineTo(mx - dx * half - dy * half, my - dy * half + dx * half);
+    ctx.lineTo(mx - dx * half + dy * half, my - dy * half - dx * half);
+    ctx.closePath();
+    ctx.lineWidth = outline * 2;
+    ctx.strokeStyle = EDITOR_COLORS.markerOutline;
+    ctx.stroke();
+    ctx.fillStyle = EDITOR_COLORS.route;
+    ctx.fill();
+  }
+
+  // 経路の最後のマス（ここから伸ばす）に丸を付ける
+  const end = cells.at(-1);
+  if (end !== undefined && inside(end)) {
+    const p = px(end);
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, Math.max(3, cellPx * 0.16), 0, Math.PI * 2);
+    ctx.lineWidth = outline * 2;
+    ctx.strokeStyle = EDITOR_COLORS.markerOutline;
+    ctx.stroke();
+    ctx.fillStyle = EDITOR_COLORS.route;
+    ctx.fill();
   }
 }
 

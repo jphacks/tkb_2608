@@ -1,6 +1,11 @@
 // 生徒用の URL と QR コードを出す窓の薄い殻（E6）．URL は share/ の createShareLink が作り，ここは表示とコピーだけを行う．
 // QR の模様は qrcode-generator で作り，Canvas 2D に描く（HTML の文字列を差し込まない）
 import qrcode from "qrcode-generator";
+import { isLoopbackHost } from "../share/shareUrl";
+
+/** 自分の PC だけを指す配信先（localhost 等）で URL を作った時の注意 */
+export const LOOPBACK_WARNING =
+  "この URL はスマホから開けません．npm run tunnel の公開 URL に ?editor を付けてエディタを開き直してください";
 
 /** QR コードの絵の 1 辺の大きさ（CSS の px．余白を含む） */
 const QR_SIZE_PX = 360;
@@ -111,7 +116,25 @@ function urlView(url: string, notify: (message: string) => void): HTMLElement[] 
   const length = document.createElement("p");
   length.className = "editor__hint";
   length.textContent = `URL の長さ: ${url.length} 文字`;
-  return [qr, hint, row, length];
+  const views: HTMLElement[] = [qr, hint, row, length];
+  // QR と URL は出したまま，スマホから開けない配信先であることを知らせる（PC で開いて確かめる使い方は残す）
+  if (isLoopbackHost(hostnameOf(url))) {
+    const warning = document.createElement("p");
+    warning.className = "editor__hint editor__warning";
+    warning.setAttribute("role", "alert");
+    warning.textContent = LOOPBACK_WARNING;
+    views.splice(1, 0, warning);
+  }
+  return views;
+}
+
+/** URL の host の名前（読めない URL は空の文字列） */
+function hostnameOf(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return "";
+  }
 }
 
 /** QR を出せない理由の一覧 */

@@ -113,6 +113,8 @@ export interface SpreadSettings {
 
 既定値（エディタの初期値．デモで調整する）は `fireSecondsPerCell: 6`・`smokeSecondsPerCell: 2`・`timeLimitSeconds: 150`・`mode: "learn"`．
 
+`route` は空でもよい．空の時は生徒側が `proposeRoute()` の提案を正解経路として使う（SPEC_01「結果の評価」）．エディタは経路が空でも QR を出せる．
+
 ## 壁の自動配置 (Wall Rules)
 
 隣り合う 2 つのマスの間（辺）に，薄い壁（厚さ 0.1 m・高さ 3 m）を置くかどうかを次の規則で決める．3D の組み立て（`scenes/school/`）・人の当たり判定・延焼の計算は**すべて同じ規則**を使うため，関数は `src/sim/walls.ts` に 1 つだけ置く．
@@ -180,7 +182,7 @@ https://<配信先>/?app#p=<埋め込みデータ>&room=<部屋の ID>
   2. `CompressionStream("deflate-raw")` で圧縮する（iPhone の Safari 16.4 以降・Chrome で使える．ライブラリは入れない）
   3. base64url（`+` → `-`，`/` → `_`，末尾の `=` を除く）にする
 
-- 読み込み時は逆の順に戻し，`validatePlan` で中身を確かめる（配列の長さ・添字の範囲・開始地点が教室か・集合場所が屋外か・経路が隣り合うマスの列か）．誤りがあれば結果画面ではなく開始画面に「QR コードを読み直してください」と理由を出す
+- 読み込み時は逆の順に戻し，`validatePlan` で中身を確かめる（配列の長さ・添字の範囲・開始地点が教室か・集合場所が屋外か・経路が隣り合うマスの列か．経路は空でない時だけ確かめる）．誤りがあれば結果画面ではなく開始画面に「QR コードを読み直してください」と理由を出す
 - `decodePlan` は例外を投げず，`{ ok: true, plan }` か `{ ok: false, kind, reason }` を返す．開始画面は `kind` で案内を選び，`reason` を理由として添える
 
   | `kind` | 起きたこと | 開始画面の案内 |
@@ -189,7 +191,7 @@ https://<配信先>/?app#p=<埋め込みデータ>&room=<部屋の ID>
   | `unsupportedVersion` | `version` が今の版より新しい（形の検査より先に判定する） | 新しい版のアプリで開いてください |
   | `invalidPlan` | 形は読めたが `validatePlan` に通らない | QR コードを読み直してください |
 
-- 壁をまたぐ経路（ドアを通らずに教室から廊下へ抜ける等）は `validatePlan` では確かめない（壁の規則は `src/sim/walls.ts` にあり，`share/` からは使わないため）．エディタが経路を確かめる時に `src/sim/` の関数で見る
+- 壁をまたぐ経路（ドアを通らずに教室から廊下へ抜ける等）は `validatePlan` では確かめない（壁の規則は `src/sim/walls.ts` にあり，`share/` からは使わないため）．エディタが経路を確かめる時に `src/sim/` の関数で見る（`src/editor/routeCheck.ts` が `wallBetween()` 等で一歩ずつ確かめ，壁をまたぐ一歩を図に出す．QR を出すのは止めない）
 - `encodePlan` は中身を確かめない．エディタは QR を出す前に `validatePlan` を呼ぶ
 - `?app` だけで `#p=` が無い時は，同梱のデモの校舎（`src/share/samples/`）で起動する（デモと開発で QR を使わずに試せるようにする）
 - フラグメントからの読み出しは `src/share/planHash.ts` の `loadPlanFromHash()` が行い，app/ は起動時に結果を `Session.plan`・`Session.planLoadError` に書いてから開始画面へ進む．フラグメントは `URLSearchParams` の形で読む（`#x=1&p=...` のように他の値と並べてもよい）

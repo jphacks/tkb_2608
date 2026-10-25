@@ -11,6 +11,7 @@ import { createFloorFromRows } from "./samples/floorFromRows";
 import {
   buildShareUrl,
   createShareLink,
+  isLoopbackHost,
   MAX_SHARE_URL_LENGTH,
   SHARE_LINK_REASONS,
   type ShareLinkResult,
@@ -246,5 +247,36 @@ describe("createShareLink", () => {
     const snapshot = JSON.parse(JSON.stringify(padded));
     await createShareLink(padded, { baseUrl: BASE_URL });
     expect(JSON.parse(JSON.stringify(padded))).toEqual(snapshot);
+  });
+});
+
+// Issue #133: 正解経路は空でもよい（空なら生徒側で proposeRoute() の提案を使う．SPEC_01「結果の評価」）
+describe("createShareLink（空の正解経路）", () => {
+  it("経路が空の校舎でも URL を作れ，読み戻すと経路は空のまま", async () => {
+    const p = planWith({}, { route: [] });
+    const url = expectOk(await createShareLink(p, { baseUrl: BASE_URL }));
+    const loaded = await loadPlanFromHash(new URL(url).hash);
+    expect(loaded.planLoadError).toBeNull();
+    expect(loaded.plan?.drill.route).toEqual([]);
+  });
+});
+
+describe("isLoopbackHost", () => {
+  it.each<string>(["localhost", "127.0.0.1", "[::1]", "::1", "LOCALHOST", "LocalHost"])(
+    "%s は自分の PC だけを指す名前（true）",
+    (host) => {
+      expect(isLoopbackHost(host)).toBe(true);
+    },
+  );
+
+  it.each<string>([
+    "",
+    "staging.tkb2608.pages.dev",
+    "example.trycloudflare.com",
+    "192.168.0.10",
+    "localhost.example.com",
+    "127.0.0.2",
+  ])("%s は false", (host) => {
+    expect(isLoopbackHost(host)).toBe(false);
   });
 });
