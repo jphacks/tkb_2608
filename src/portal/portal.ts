@@ -5,9 +5,6 @@ import { buildEditorHref, resolveHeroImageUrls } from "./portalLinks";
 /** ページの題名（タブ・ブックマークに出る） */
 const PAGE_TITLE = "ひなんクラフトVR";
 
-/** ボタンの下に添える説明 */
-const EDITOR_HINT = "校舎を作って，生徒用の QR コードを出します";
-
 /** 背景の画像の大きさ（px．public/home/hero.webp・hero.jpg と同じ） */
 const HERO_SIZE = { width: 1672, height: 941 } as const;
 
@@ -56,10 +53,6 @@ const STYLE = `
 }
 .portal__open:active { transform: translateY(1px); }
 .portal__open:focus-visible { outline: 3px solid #ffffff; outline-offset: 4px; }
-.portal__hint {
-  margin: 0; padding: 4px 14px; border-radius: 999px; background: rgba(4, 14, 36, 0.6);
-  font-size: 15px; text-align: center; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
-}
 @media (max-aspect-ratio: 6/5) {
   .portal__hero { inset: auto; left: 50%; top: max(16%, env(safe-area-inset-top)); width: 150%; transform: translateX(-50%); }
   .portal__hero img {
@@ -100,9 +93,7 @@ export function startPortal(): void {
   const open = el("a", "portal__open");
   open.href = buildEditorHref(window.location.pathname);
   open.textContent = "エディタを開く";
-  const hint = el("p", "portal__hint");
-  hint.textContent = EDITOR_HINT;
-  actions.append(open, hint);
+  actions.append(open);
 
   root.append(backdrop, hero, title, actions);
   document.body.appendChild(root);
