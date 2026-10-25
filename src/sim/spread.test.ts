@@ -3,6 +3,7 @@
 // SPEC_01「受け渡すデータ」（SpreadMap: 着かなければ Infinity），PLAN_04 の E4（防火シャッターで延焼が止まる）
 import { describe, expect, it } from "vitest";
 import type { CellRef, DrillSetup, SchoolPlan, SpreadSettings } from "../core/schoolPlan";
+import { decodePlan, encodePlan } from "../share/planCodec";
 import { DEMO_SCHOOL } from "../share/samples/demoSchool";
 import { createFloorFromRows } from "../share/samples/floorFromRows";
 import { computeSpread, isNearFire } from "./spread";
@@ -137,6 +138,101 @@ describe("computeSpread", () => {
     expect(spread.fireAt(at(3, 0))).toBe(6);
     expect(spread.fireAt(at(2, 0))).toBe(12);
     expect(spread.fireAt(at(1, 0))).toBe(6);
+  });
+
+  it("煙の発生源（extraSmokes）は atSeconds に煙が出始め，smokeSecondsPerCell で広がる．火は出ない", () => {
+    // 火元 (0, 0) とはシャッターで隔てた側に発生源を置く
+    const spread = computeSpread(
+      makePlan(["hshhhh"], { spread: { extraSmokes: [{ cell: at(3, 0), atSeconds: 20 }] } }),
+    );
+    expect([2, 3, 4, 5].map((x) => spread.smokeAt(at(x, 0)))).toEqual([22, 20, 22, 24]);
+    expect([2, 3, 4, 5].map((x) => spread.fireAt(at(x, 0)))).toEqual([
+      Infinity,
+      Infinity,
+      Infinity,
+      Infinity,
+    ]);
+    expect(spread.smokeAt(at(1, 0))).toBe(Infinity); // シャッター
+    expect(spread.smokeAt(at(0, 0))).toBe(0); // 火元の側はいつもどおり
+  });
+
+  it("煙の発生源のマスは燃えない（火元からの火が着く時刻は発生源の有無で変わらない）", () => {
+    const rows = ["hhhhhh"];
+    const without = computeSpread(makePlan(rows));
+    const withSource = computeSpread(
+      makePlan(rows, { spread: { extraSmokes: [{ cell: at(4, 0), atSeconds: 0 }] } }),
+    );
+    expect(withSource.fireSeconds).toEqual(without.fireSeconds);
+    expect(withSource.fireAt(at(4, 0))).toBe(24);
+    expect(withSource.smokeAt(at(4, 0))).toBe(0);
+  });
+
+  it("煙の発生源からの煙は壁（別の教室との間）・void・wall で止まる", () => {
+    const spread = computeSpread(
+      makePlan(["hh.h", "#h00", "1h00"], {
+        fireOrigins: [at(3, 0)],
+        spread: { extraSmokes: [{ cell: at(1, 0), atSeconds: 5 }] },
+      }),
+    );
+    expect(spread.smokeAt(at(0, 0))).toBe(7);
+    expect(spread.smokeAt(at(1, 2))).toBe(9);
+    expect(spread.smokeAt(at(2, 0))).toBe(Infinity); // void
+    expect(spread.smokeAt(at(0, 1))).toBe(Infinity); // wall
+    expect(spread.smokeAt(at(2, 1))).toBe(Infinity); // 廊下と教室 0 の間の壁
+    expect(spread.smokeAt(at(0, 2))).toBe(Infinity); // 廊下と教室 1 の間の壁
+  });
+
+  it("煙の発生源より先に火元からの煙が着くマスは，早いほうの時刻", () => {
+    const spread = computeSpread(
+      makePlan(["hhhh"], { spread: { extraSmokes: [{ cell: at(3, 0), atSeconds: 100 }] } }),
+    );
+    expect(spread.smokeAt(at(3, 0))).toBe(6);
+    expect(spread.smokeAt(at(2, 0))).toBe(4);
+  });
+
+  it("煙の発生源がマス目の外・無い階を指していても例外を投げず，無視する", () => {
+    const rows = ["hhh"];
+    const spread = computeSpread(
+      makePlan(rows, {
+        spread: {
+          extraSmokes: [
+            { cell: at(9, 9), atSeconds: 0 },
+            { cell: at(0, 0, 3), atSeconds: 0 },
+          ],
+        },
+      }),
+    );
+    expect(spread.smokeSeconds).toEqual(computeSpread(makePlan(rows)).smokeSeconds);
+  });
+
+  it("煙の発生源の項目が無い（古いデータ）・空の時は，今までどおり燃えているマスからだけ煙が広がる", () => {
+    const rows = ["hhhhh"];
+    const empty = computeSpread(makePlan(rows, { spread: { extraSmokes: [] } }));
+    const plan = makePlan(rows);
+    expect(plan.drill.spread).not.toHaveProperty("extraSmokes");
+    expect(computeSpread(plan).smokeSeconds).toEqual(empty.smokeSeconds);
+    expect(empty.smokeSeconds[0]).toEqual([0, 2, 4, 6, 8]);
+  });
+
+  it("煙の発生源を含む校舎を URL に埋め込んで読み直しても，同じ広がりになる", async () => {
+    const plan: SchoolPlan = {
+      ...DEMO_SCHOOL,
+      drill: {
+        ...DEMO_SCHOOL.drill,
+        spread: { ...DEMO_SCHOOL.drill.spread, extraSmokes: [{ cell: at(8, 6), atSeconds: 10 }] },
+      },
+    };
+    const decoded = await decodePlan(await encodePlan(plan));
+    expect(decoded.ok).toBe(true);
+    if (!decoded.ok) return;
+    const before = computeSpread(plan);
+    const after = computeSpread(decoded.plan);
+    expect(after.fireSeconds).toEqual(before.fireSeconds);
+    expect(after.smokeSeconds).toEqual(before.smokeSeconds);
+    // シャッターより西の廊下は，発生源が無ければ煙が来ない（発生源の煙が届いている）
+    expect(computeSpread(DEMO_SCHOOL).smokeAt(at(4, 6))).toBe(Infinity);
+    expect(after.smokeAt(at(4, 6))).toBe(18);
+    expect(after.fireAt(at(4, 6))).toBe(Infinity);
   });
 
   it("煙が火より遅い設定でも，燃えているマスには遅くとも同じ時刻に煙がある", () => {

@@ -167,6 +167,23 @@ describe("isInSmoke", () => {
   });
 });
 
+describe("errorBehaviorsAt（煙の発生源．Issue #148）", () => {
+  // 廊下 1 列（幅 6）．火元は無く，(5,0) が 10 秒に煙を出し始める発生源．(x,0) に煙が着くのは 10 + (5 - x) * 2 秒
+  const spread = computeSpread(
+    makePlan(["hhhhhh"], { spread: { extraSmokes: [{ cell: at(5, 0), atSeconds: 10 }] } }),
+  );
+
+  it("発生源から来た煙の中で立っていれば煙の中で立っている，しゃがめば無し", () => {
+    expect(errorBehaviorsAt(spread, at(3, 0), 14, "standing")).toEqual(SMOKE_ONLY);
+    expect(errorBehaviorsAt(spread, at(3, 0), 14, "crouching")).toEqual(NONE);
+    expect(errorBehaviorsAt(spread, at(3, 0), 13.9, "standing")).toEqual(NONE);
+  });
+
+  it("発生源のマスは燃えないので，そこに立っても火に近づいたことにならない", () => {
+    expect(errorBehaviorsAt(spread, at(5, 0), 100, "standing")).toEqual(SMOKE_ONLY);
+  });
+});
+
 describe("errorBehaviorsAt", () => {
   describe("4 通りの組み合わせ", () => {
     it.each<[string, CellRef, number, Posture, ErrorBehaviors]>([
