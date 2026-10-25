@@ -29,8 +29,11 @@ import {
   isDynamicSchoolObject,
   type SchoolPartContext,
   setFireShutterClosed,
+  setFireShutterWicketOpen,
   setSchoolDoorOpen,
+  updateFireShutterWicket,
 } from "./schoolParts";
+import { WICKET_AUTO } from "./shutterWicket";
 
 /** 何もしない 2D コンテキスト（メソッドは空の関数，グラデーション等は空のオブジェクト） */
 function fakeContext(): CanvasRenderingContext2D {
@@ -426,6 +429,258 @@ describe("createSchoolEdge の防火シャッター", () => {
     expect(box.max.y).toBeLessThanOrEqual(3 - 0.4 + 1e-6);
     expect(Math.abs(box.min.z)).toBeLessThanOrEqual(WALL_THICKNESS / 2);
     expect(Math.abs(box.max.z)).toBeLessThanOrEqual(WALL_THICKNESS / 2);
+  });
+});
+
+describe("防火シャッターのくぐり戸の扉（SPEC_02「通れる・燃え広がる」）", () => {
+  // 基準: 目がくぐり戸の中心から水平に 1.5 m 以内で開き始め，1.9 m を超えると閉じ始める．閉から全開まで 0.4 s・全開 90°．
+  // 体験者のいる側と反対へ開く（閉じ切った状態から開く時に決める）．シャッターが開いている時は扉を閉じておく
+  function shutter(overrides: Partial<EdgeBuildOptions> = {}) {
+    const group = createSchoolEdge(
+      context,
+      edgeOptions({ kind: "fireShutter", id: "s", length: 3, closed: true, ...overrides }),
+    );
+    group.updateMatrixWorld(true);
+    const data = group.userData as FireShutterUserData;
+    const leaf = group.getObjectByName(data.wicketLeafName);
+    const curtain = group.getObjectByName(data.curtainName);
+    if (!leaf || !curtain) throw new Error("くぐり戸の扉がない");
+    return { group, data, leaf, curtain };
+  }
+
+  /** くぐり戸の中心から，ローカルの (dx, dz) だけ離れた目の位置（ワールド座標．立った目の高さ） */
+  function eyeAt(group: THREE.Object3D, dx: number, dz: number) {
+    const data = group.userData as FireShutterUserData;
+    return group.localToWorld(new THREE.Vector3(data.wicket.centerX + dx, 1.5, dz));
+  }
+
+  /** 扉の蝶番の反対の端（+X の端）の，シャッターのローカルの Z */
+  function freeEndZ(group: THREE.Object3D, leaf: THREE.Object3D): number {
+    group.updateMatrixWorld(true);
+    const data = group.userData as FireShutterUserData;
+    const p = leaf.localToWorld(new THREE.Vector3(data.wicket.width, 1, 0));
+    return group.worldToLocal(p).z;
+  }
+
+  it("扉は幕の中にあり，名前は <id>-wicket-leaf．扉の板と取っ手は扉の中，座板は幕の直下", () => {
+    const { data, leaf, curtain } = shutter();
+    expect(data.wicketLeafName).toBe("s-wicket-leaf");
+    expect(leaf.parent).toBe(curtain);
+    expect(leaf.getObjectByName("s-wicket")).toBeDefined();
+    expect(leaf.getObjectByName("s-handle")).toBeDefined();
+    expect(curtain.getObjectByName("s-curtain-bottom-bar")?.parent).toBe(curtain);
+    expect(leaf.getObjectByName("s-curtain-bottom-bar")).toBeUndefined();
+  });
+
+  it("扉の原点はくぐり戸の -X の縦の辺（蝶番）", () => {
+    const { data, leaf } = shutter();
+    expect(leaf.position.x).toBeCloseTo(data.wicket.centerX - data.wicket.width / 2);
+    expect(leaf.position.z).toBeCloseTo(0);
+  });
+
+  it("閉じた扉はくぐり戸の開口をふさぐ（扉の板の外接箱がくぐり戸の範囲と重なる）", () => {
+    const { group, data, leaf } = shutter();
+    const wicketMesh = leaf.getObjectByName("s-wicket");
+    if (!wicketMesh) throw new Error("扉の板がない");
+    const box = localBox(group, (o) => o === wicketMesh);
+    expect(box.min.x).toBeCloseTo(data.wicket.centerX - data.wicket.width / 2);
+    expect(box.max.x).toBeCloseTo(data.wicket.centerX + data.wicket.width / 2);
+    expect(box.min.y).toBeCloseTo(data.wicket.bottom);
+    expect(box.max.y).toBeCloseTo(data.wicket.bottom + data.wicket.height);
+  });
+
+  it("作った時は扉が閉じている（開き具合 0・回転 0・近づいていない）", () => {
+    const { data, leaf } = shutter();
+    expect(data).toMatchObject({ wicketOpen: false, wicketOpenAmount: 0, wicketApproached: false });
+    expect(leaf.rotation.y).toBeCloseTo(0);
+  });
+
+  it("扉は動く物（静的な結合から外れる）", () => {
+    const { leaf } = shutter();
+    // 扉自身か，それを含む幕が動く物であること
+    expect(
+      isDynamicSchoolObject(leaf) || isDynamicSchoolObject(leaf.parent as THREE.Object3D),
+    ).toBe(true);
+  });
+
+  describe("setFireShutterWicketOpen", () => {
+    it("全開で 90° 回り，userData が開いた状態になる", () => {
+      const { group, data, leaf } = shutter();
+      setFireShutterWicketOpen(group, 1, 1);
+      expect(data).toMatchObject({ wicketOpen: true, wicketOpenAmount: 1, wicketSwing: 1 });
+      expect(Math.abs(leaf.rotation.y)).toBeCloseTo(Math.PI / 2);
+    });
+
+    it("swing 1 は -Z の側へ，-1 は +Z の側へ開く", () => {
+      const a = shutter();
+      setFireShutterWicketOpen(a.group, 1, 1);
+      expect(freeEndZ(a.group, a.leaf)).toBeLessThan(-0.5);
+      const b = shutter();
+      setFireShutterWicketOpen(b.group, 1, -1);
+      expect(freeEndZ(b.group, b.leaf)).toBeGreaterThan(0.5);
+    });
+
+    it("0 で閉じる（回転 0・wicketOpen が false）", () => {
+      const { group, data, leaf } = shutter();
+      setFireShutterWicketOpen(group, 1, -1);
+      setFireShutterWicketOpen(group, 0);
+      expect(data).toMatchObject({ wicketOpen: false, wicketOpenAmount: 0 });
+      expect(leaf.rotation.y).toBeCloseTo(0);
+    });
+
+    it("swing を省くと今の向きのまま", () => {
+      const { group, data } = shutter();
+      setFireShutterWicketOpen(group, 0.5, -1);
+      setFireShutterWicketOpen(group, 1);
+      expect(data.wicketSwing).toBe(-1);
+    });
+
+    it.each([
+      [2, 1],
+      [-1, 0],
+      [Number.NaN, 0],
+    ])("範囲外の開き具合 %s は %s に切り詰める", (input, expected) => {
+      const { group, data } = shutter();
+      setFireShutterWicketOpen(group, input, 1);
+      expect(data.wicketOpenAmount).toBe(expected);
+      expect(data.wicketOpen).toBe(expected > 0);
+    });
+  });
+
+  describe("updateFireShutterWicket", () => {
+    it("1.5 m 以内に入ると開き始め，0.4 s で全開になる", () => {
+      const { group, data, leaf } = shutter();
+      const eye = eyeAt(group, 0, 1.4);
+      updateFireShutterWicket(group, eye, 0.1);
+      expect(data.wicketOpenAmount).toBeCloseTo(0.25);
+      expect(data.wicketOpen).toBe(true);
+      updateFireShutterWicket(group, eye, 0.1);
+      updateFireShutterWicket(group, eye, 0.1);
+      updateFireShutterWicket(group, eye, 0.1);
+      expect(data.wicketOpenAmount).toBeCloseTo(1);
+      expect(Math.abs(leaf.rotation.y)).toBeCloseTo(WICKET_AUTO.maxAngle);
+    });
+
+    it("距離は水平（XZ）で測る．目の高さは見ない", () => {
+      const { group, data } = shutter();
+      const eye = eyeAt(group, 0, 1.4);
+      eye.y = 10;
+      updateFireShutterWicket(group, eye, 0.1);
+      expect(data.wicketOpenAmount).toBeGreaterThan(0);
+    });
+
+    it("距離は辺に沿う向き（X）のずれも含めて，くぐり戸の中心から測る", () => {
+      const { group, data } = shutter();
+      // 中心から X に 1.2・Z に 1.2（水平の距離は約 1.70 m．1.5 m より遠い）
+      updateFireShutterWicket(group, eyeAt(group, 1.2, 1.2), 0.1);
+      expect(data.wicketOpenAmount).toBe(0);
+      // 中心から X に 1.0・Z に 1.0（約 1.41 m）
+      updateFireShutterWicket(group, eyeAt(group, 1.0, 1.0), 0.1);
+      expect(data.wicketOpenAmount).toBeGreaterThan(0);
+    });
+
+    it("くぐり戸がずれていても，ずれた中心から測る", () => {
+      const { group, data } = shutter({ wicketOffset: 0.6, length: 4 });
+      expect(data.wicket.centerX).toBeCloseTo(0.6);
+      // 辺の中心から 1.4 m（くぐり戸の中心からは X に 0.6 ずれて約 1.52 m）
+      updateFireShutterWicket(group, group.localToWorld(new THREE.Vector3(0, 1.5, 1.4)), 0.1);
+      expect(data.wicketOpenAmount).toBe(0);
+    });
+
+    it("1.5 m より遠くて閉じている時は開かない", () => {
+      const { group, data } = shutter();
+      updateFireShutterWicket(group, eyeAt(group, 0, 1.7), 0.1);
+      expect(data).toMatchObject({ wicketOpenAmount: 0, wicketOpen: false });
+    });
+
+    it("開いた後は 1.5〜1.9 m の間では開いたまま，1.9 m を超えると閉じ始め 0.4 s で閉じる", () => {
+      const { group, data, leaf } = shutter();
+      updateFireShutterWicket(group, eyeAt(group, 0, 1.0), 1);
+      expect(data.wicketOpenAmount).toBe(1);
+      updateFireShutterWicket(group, eyeAt(group, 0, 1.8), 0.1);
+      expect(data.wicketOpenAmount).toBe(1);
+      updateFireShutterWicket(group, eyeAt(group, 0, 2.0), 0.1);
+      expect(data.wicketOpenAmount).toBeCloseTo(0.75);
+      // 1.9 m より内へ戻っても，閉じ始めた後は 1.5 m より内へ来るまで閉じ続ける
+      updateFireShutterWicket(group, eyeAt(group, 0, 1.8), 0.1);
+      expect(data.wicketOpenAmount).toBeCloseTo(0.5);
+      updateFireShutterWicket(group, eyeAt(group, 0, 2.0), 0.1);
+      updateFireShutterWicket(group, eyeAt(group, 0, 2.0), 0.1);
+      expect(data.wicketOpenAmount).toBeCloseTo(0);
+      expect(data.wicketOpen).toBe(false);
+      expect(leaf.rotation.y).toBeCloseTo(0);
+    });
+
+    it.each([
+      ["+Z の側", 1.0],
+      ["-Z の側", -1.0],
+    ])("%s から近づくと反対の側へ開く", (_, z) => {
+      const { group, leaf } = shutter();
+      updateFireShutterWicket(group, eyeAt(group, 0, z), 1);
+      const end = freeEndZ(group, leaf);
+      expect(Math.sign(end)).toBe(-Math.sign(z));
+      expect(Math.abs(end)).toBeGreaterThan(0.5);
+    });
+
+    it("開いている途中で反対の側へ回り込んでも向きは変わらない（閉じ切ってから決め直す）", () => {
+      const { group, data } = shutter();
+      updateFireShutterWicket(group, eyeAt(group, 0, 1.0), 0.1);
+      expect(data.wicketSwing).toBe(1);
+      updateFireShutterWicket(group, eyeAt(group, 0, -1.0), 0.1);
+      updateFireShutterWicket(group, eyeAt(group, 0, -1.0), 1);
+      expect(data.wicketSwing).toBe(1);
+      // 離れて閉じ切った後に -Z の側から近づくと +Z の側へ開く
+      updateFireShutterWicket(group, eyeAt(group, 0, -3), 1);
+      expect(data.wicketOpenAmount).toBe(0);
+      updateFireShutterWicket(group, eyeAt(group, 0, -1.0), 0.1);
+      expect(data.wicketSwing).toBe(-1);
+    });
+
+    it("シャッターがワールドで回っていても，シャッターのローカルで距離と側を測る", () => {
+      const parent = new THREE.Group();
+      const { group, data, leaf } = shutter();
+      parent.add(group);
+      parent.position.set(10, 0, 5);
+      parent.rotation.y = Math.PI / 2;
+      parent.updateMatrixWorld(true);
+      const eye = eyeAt(group, 0, 1.2);
+      updateFireShutterWicket(group, eye, 1);
+      expect(data.wicketOpenAmount).toBe(1);
+      expect(Math.sign(freeEndZ(group, leaf))).toBe(-1);
+    });
+
+    it("dt が無ければ瞬時に開閉する", () => {
+      const { group, data } = shutter();
+      updateFireShutterWicket(group, eyeAt(group, 0, 1.0));
+      expect(data.wicketOpenAmount).toBe(1);
+      updateFireShutterWicket(group, eyeAt(group, 0, 3.0));
+      expect(data.wicketOpenAmount).toBe(0);
+    });
+
+    it("目が無い（null）なら閉じる", () => {
+      const { group, data } = shutter();
+      updateFireShutterWicket(group, eyeAt(group, 0, 1.0), 1);
+      expect(data.wicketOpenAmount).toBe(1);
+      updateFireShutterWicket(group, null, 1);
+      expect(data).toMatchObject({ wicketOpenAmount: 0, wicketOpen: false });
+    });
+
+    it("シャッターが開いている時は，近づいても扉は閉じたまま", () => {
+      const { group, data, leaf } = shutter({ closed: false });
+      updateFireShutterWicket(group, eyeAt(group, 0, 0.5), 1);
+      expect(data).toMatchObject({ wicketOpenAmount: 0, wicketOpen: false });
+      expect(leaf.rotation.y).toBeCloseTo(0);
+    });
+
+    it("扉が開いた後にシャッターを開けると，扉は閉じた状態に戻る", () => {
+      const { group, data, leaf } = shutter();
+      updateFireShutterWicket(group, eyeAt(group, 0, 1.0), 1);
+      expect(data.wicketOpenAmount).toBe(1);
+      setFireShutterClosed(group, false);
+      updateFireShutterWicket(group, eyeAt(group, 0, 1.0), 0.01);
+      expect(data).toMatchObject({ wicketOpenAmount: 0, wicketOpen: false });
+      expect(leaf.rotation.y).toBeCloseTo(0);
+    });
   });
 });
 

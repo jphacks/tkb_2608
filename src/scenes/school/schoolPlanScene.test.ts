@@ -6,6 +6,7 @@ import * as THREE from "three";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { SchoolPlan } from "../../core/schoolPlan";
 import { IDLE_PLAYER_INPUT, type Posture } from "../../core/types";
+import { DEMO_PITCH_SCHOOL } from "../../share/samples/demoPitchSchool";
 import { DEMO_SCHOOL } from "../../share/samples/demoSchool";
 import { detectErrorBehaviors, type ErrorBehaviors } from "../../sim/errorBehavior";
 import { computeSpread } from "../../sim/spread";
@@ -763,5 +764,94 @@ describe("createSchoolScene（赤い表示）", () => {
     space = undefined;
     expect(edge.parent).toBeNull();
     expect(disposed.sort()).toEqual(["geometry", "material"]);
+  });
+});
+
+describe("校舎の空間のくぐり戸の扉（update で目の位置に合わせて開閉）", () => {
+  // 基準は SPEC_02「通れる・燃え広がる」: 目がくぐり戸の中心から水平に 1.5 m 以内で開き始め，1.9 m を超えると閉じ始める．
+  // 0.4 s で全開・90°．シャッターが開いている時は扉は閉じた状態．当たり判定は変わらない（くぐり戸は常に通れる）
+  function setup(options: { shuttersClosed?: boolean } = {}) {
+    const s = build(options);
+    s.root.updateMatrixWorld(true);
+    const shutter = s.parts.shutters[0];
+    if (!shutter) throw new Error("シャッターがない");
+    const data = shutter.userData as FireShutterUserData;
+    const wicketCenter = shutter.localToWorld(new THREE.Vector3(data.wicket.centerX, 0, 0));
+    return { s, shutter, data, wicketCenter };
+  }
+
+  it("組み上げた校舎のシャッターにくぐり戸の扉（<id>-wicket-leaf）が残っている（静的な結合で消えない）", () => {
+    const { shutter, data } = setup();
+    expect(shutter.getObjectByName(data.wicketLeafName)).toBeDefined();
+  });
+
+  it("目がくぐり戸に近づくと扉が開き，離れると閉じる", () => {
+    const { s, data, wicketCenter } = setup();
+    frame(s, 0, { x: wicketCenter.x - 3, z: wicketCenter.z }, "standing", 0.1);
+    expect(data.wicketOpenAmount).toBe(0);
+    for (let i = 0; i < 4; i++)
+      frame(s, 0, { x: wicketCenter.x - 1, z: wicketCenter.z }, "standing", 0.1);
+    expect(data.wicketOpenAmount).toBeCloseTo(1);
+    expect(data.wicketOpen).toBe(true);
+    for (let i = 0; i < 4; i++)
+      frame(s, 0, { x: wicketCenter.x - 3, z: wicketCenter.z }, "standing", 0.1);
+    expect(data.wicketOpenAmount).toBeCloseTo(0);
+    expect(data.wicketOpen).toBe(false);
+  });
+
+  it("目が無い（null）フレームでは扉を閉じる", () => {
+    const { s, data, wicketCenter } = setup();
+    frame(s, 0, { x: wicketCenter.x - 1, z: wicketCenter.z }, "standing", 1);
+    expect(data.wicketOpenAmount).toBe(1);
+    frame(s, 0, null, "standing", 1);
+    expect(data.wicketOpenAmount).toBe(0);
+  });
+
+  it("シャッターを開けて作った校舎では，近づいても扉は閉じたまま", () => {
+    const { s, data, wicketCenter } = setup({ shuttersClosed: false });
+    frame(s, 0, { x: wicketCenter.x - 0.5, z: wicketCenter.z }, "standing", 1);
+    expect(data.wicketOpenAmount).toBe(0);
+    expect(data.wicketOpen).toBe(false);
+  });
+
+  it("扉が開いても閉じても，くぐり戸の当たり判定は変わらない（くぐり戸は常に通れ，外の幕は通れない）", () => {
+    const { s, wicketCenter } = setup();
+    const w = createWalkWorld(s);
+    const check = () => {
+      expect(reached(walk(w, { x: 11.5, z: 7.0 }, { x: 13.5, z: 7.0 }), { x: 13.5, z: 7.0 })).toBe(
+        true,
+      );
+      expect(reached(walk(w, center(11, 6), center(13, 6)), center(13, 6))).toBe(false);
+    };
+    check();
+    frame(s, 0, { x: wicketCenter.x - 1, z: wicketCenter.z }, "standing", 1);
+    check();
+    frame(s, 0, { x: wicketCenter.x - 5, z: wicketCenter.z }, "standing", 1);
+    check();
+  });
+});
+
+describe("発表のデモ用の校舎（DEMO_PITCH_SCHOOL）の空間", () => {
+  it("正解経路のマスの中心を順にたどると，閉じたシャッターのくぐり戸を通って集合場所まで歩ける", () => {
+    space = createSchoolScene({ maxAnisotropy: 1 }, DEMO_PITCH_SCHOOL);
+    const s = space;
+    expect((s.parts.shutters[0]?.userData as FireShutterUserData | undefined)?.closed).toBe(true);
+    const w = createWalkWorld(s);
+    const route = DEMO_PITCH_SCHOOL.drill.route;
+    for (let i = 1; i < route.length; i++) {
+      const a = route[i - 1];
+      const b = route[i];
+      if (!a || !b) continue;
+      // シャッターのマスは辺の中心ではなくくぐり戸の z = 7.0 を通る
+      const pa = a.x === 12 || b.x === 12 ? { x: a.x + 0.5, z: 7.0 } : center(a.x, a.z);
+      const pb = a.x === 12 || b.x === 12 ? { x: b.x + 0.5, z: 7.0 } : center(b.x, b.z);
+      expect(reached(walk(w, pa, pb), pb), `(${a.x}, ${a.z}) → (${b.x}, ${b.z})`).toBe(true);
+    }
+  });
+
+  it("西の昇降口があった (2,7) から校庭へは出られない", () => {
+    space = createSchoolScene({ maxAnisotropy: 1 }, DEMO_PITCH_SCHOOL);
+    const w = createWalkWorld(space);
+    expect(reached(walk(w, center(2, 7), center(2, 9)), center(2, 9))).toBe(false);
   });
 });

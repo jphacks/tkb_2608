@@ -38,6 +38,13 @@ import {
   type SchoolMaterials,
 } from "./schoolMaterials";
 import { SCHOOL_TILE_SIZE } from "./schoolTextures";
+import {
+  stepWicketOpenAmount,
+  type WicketSwing,
+  wicketLeafRotationY,
+  wicketShouldOpen,
+  wicketSwingFrom,
+} from "./shutterWicket";
 
 /** パーツ間で共有するマテリアルと単位立方体 */
 export interface SchoolPartContext {
@@ -464,6 +471,7 @@ function createFireShutter(
   const closed = options.closed ?? false;
   const curtainName = `${id}-curtain`;
   const openBarName = `${id}-open-bar`;
+  const wicketLeafName = `${id}-wicket-leaf`;
   const { wicket } = shutter;
   const userData: FireShutterUserData = {
     kind: "schoolEdge",
@@ -479,9 +487,13 @@ function createFireShutter(
       height: wicket.v1 - wicket.v0,
     },
     wicketOpen: false,
+    wicketOpenAmount: 0,
+    wicketSwing: 1,
+    wicketApproached: false,
     wicketOffset: options.wicketOffset ?? 0,
     curtainName,
     openBarName,
+    wicketLeafName,
   };
   const group = edgeGroup(id, userData);
   const boxY = layout.height - FIRE_SHUTTER.boxHeight / 2;
@@ -511,7 +523,7 @@ function createFireShutter(
   openBar.visible = !closed;
   group.add(openBar);
 
-  // 閉じた時の幕（くぐり戸の分を空けた板＋くぐり戸の扉＋取っ手＋座板）
+  // 閉じた時の幕（くぐり戸の分を空けた板＋くぐり戸の扉と取っ手＋座板）
   const curtain = new THREE.Group();
   curtain.name = curtainName;
   curtain.userData = { kind: "fireShutterCurtain", shutterId: id };
@@ -524,9 +536,31 @@ function createFireShutter(
     { u0: wicket.u0, u1: wicket.u1, v0: 0, v1: wicket.v0 },
     { u0: wicket.u0, u1: wicket.u1, v0: wicket.v1, v1: shutter.boxBottom },
   ].filter((r) => r.u1 - r.u0 > 0 && r.v1 - r.v0 > 0);
-  const wicketX = shutter.wicketCenterX;
   const wicketW = wicket.u1 - wicket.u0;
   const wicketH = wicket.v1 - wicket.v0;
+  // くぐり戸の扉は -X の縦の辺（蝶番）を原点にした Group に入れ，Y 軸回りに回して開く（setFireShutterWicketOpen）．
+  // 取っ手は蝶番の反対の端に付ける
+  const leaf = new THREE.Group();
+  leaf.name = wicketLeafName;
+  leaf.userData = { kind: "fireShutterWicketLeaf", shutterId: id };
+  leaf.position.x = shutter.wicketCenterX - wicketW / 2;
+  addAll(leaf, [
+    mergedMesh(
+      [
+        {
+          size: [wicketW, wicketH, FIRE_SHUTTER.curtainThickness],
+          position: [wicketW / 2, wicket.v0 + wicketH / 2, 0],
+        },
+      ],
+      m.wicket,
+      `${id}-wicket`,
+    ),
+    mergedMesh(
+      [{ size: [0.12, 0.03, 0.08], position: [wicketW - 0.12, 1.0, 0] }],
+      m.handle,
+      `${id}-handle`,
+    ),
+  ]);
   addAll(curtain, [
     createMergedWall(
       [[curtainWall, curtainRects]],
@@ -534,23 +568,11 @@ function createFireShutter(
       SCHOOL_TILE_SIZE.shutter,
       `${curtainName}-panel`,
     ),
+    leaf,
     mergedMesh(
-      [
-        {
-          size: [wicketW, wicketH, FIRE_SHUTTER.curtainThickness],
-          position: [wicketX, wicket.v0 + wicketH / 2, 0],
-        },
-      ],
-      m.wicket,
-      `${id}-wicket`,
-    ),
-    mergedMesh(
-      [
-        { size: [0.12, 0.03, 0.08], position: [wicketX + wicketW / 2 - 0.12, 1.0, 0] },
-        { size: [layout.wallLength - 0.02, 0.05, 0.05], position: [0, 0.025, 0] },
-      ],
+      [{ size: [layout.wallLength - 0.02, 0.05, 0.05], position: [0, 0.025, 0] }],
       m.handle,
-      `${id}-handle`,
+      `${curtainName}-bottom-bar`,
     ),
   ]);
   group.add(curtain);
@@ -594,6 +616,61 @@ export function setSchoolDoorOpen(door: THREE.Object3D, open: boolean): boolean 
     leaf.position.x = slidingLeafX(leafData, data.openAmount);
   }
   return true;
+}
+
+/**
+ * 防火シャッターのくぐり戸の扉を開き具合 openAmount（0 で閉，1 で全開．範囲外は切り詰める）にする（扉の回転と userData を変える）．
+ * swing は開く向き（1 で -Z の側へ，-1 で +Z の側へ．省くと今の向き）．見た目だけで，当たり判定は変えない
+ */
+export function setFireShutterWicketOpen(
+  shutter: THREE.Object3D,
+  openAmount: number,
+  swing: WicketSwing = (shutter.userData as FireShutterUserData).wicketSwing,
+): void {
+  const data = shutter.userData as FireShutterUserData;
+  const amount = Number.isFinite(openAmount) ? Math.min(1, Math.max(0, openAmount)) : 0;
+  data.wicketOpenAmount = amount;
+  data.wicketOpen = amount > 0;
+  data.wicketSwing = swing;
+  const leaf = shutter.getObjectByName(data.wicketLeafName);
+  if (leaf) leaf.rotation.y = wicketLeafRotationY(amount, swing);
+}
+
+// 目の位置をシャッターのローカルに直す作業用（毎フレーム作らずに使い回す）
+const wicketEye = new THREE.Vector3();
+
+/**
+ * 閉じた防火シャッターのくぐり戸を，目の位置 eye（ワールド座標．m）が近づくと開き離れると閉じるよう dt（s）だけ動かす（毎フレーム呼ぶ）．
+ * 閉じ始めから開く時は人が来た側の反対へ開く（押して開ける向き）．eye が null なら閉じる．
+ * 開いているシャッター（幕が見えない）は扉を閉じた状態に戻す．shutter の matrixWorld は最新である前提（描画のたびに更新される）
+ */
+export function updateFireShutterWicket(
+  shutter: THREE.Object3D,
+  eye: { readonly x: number; readonly y: number; readonly z: number } | null,
+  dt?: number,
+): void {
+  const data = shutter.userData as FireShutterUserData;
+  if (!data.closed) {
+    data.wicketApproached = false;
+    if (data.wicketOpenAmount !== 0) setFireShutterWicketOpen(shutter, 0);
+    return;
+  }
+  let distance = Number.NaN;
+  if (eye !== null) {
+    shutter.worldToLocal(wicketEye.set(eye.x, eye.y, eye.z));
+    distance = Math.hypot(wicketEye.x - data.wicket.centerX, wicketEye.z);
+  }
+  const open = wicketShouldOpen(data.wicketApproached, distance);
+  data.wicketApproached = open;
+  // 向きは閉じ切っている時だけ決め直す（開いている途中で向きが反転しないように）
+  const swing =
+    open && data.wicketOpenAmount === 0 && eye !== null
+      ? wicketSwingFrom(wicketEye.z)
+      : data.wicketSwing;
+  const amount = stepWicketOpenAmount(data.wicketOpenAmount, open, dt);
+  if (amount !== data.wicketOpenAmount || swing !== data.wicketSwing) {
+    setFireShutterWicketOpen(shutter, amount, swing);
+  }
 }
 
 /** 防火シャッターを閉じる・開ける（幕と座板の表示と userData を変える） */

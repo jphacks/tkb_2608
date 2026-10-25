@@ -1,6 +1,7 @@
 // SchoolPlan の 1 フロアから組み立てた校舎の空間（?scene=school）．並べ方は schoolPlanLayout.ts の純粋な関数で求め，
 // ここでは校舎のパーツ（schoolParts.ts）を置くだけ．動かない Mesh は最後にマテリアルごとに結合する．
 // 集合場所の床の印（assemblyMarker.ts）・学習モードの床の矢印（routeArrows.ts）・火と煙（fireSmoke.ts）も足し，火と煙は毎フレームの update で時刻に合わせる．
+// 閉じた防火シャッターのくぐり戸も毎フレームの update で目の位置に合わせて開け閉めする（shutterWicket.ts）．
 // 赤い表示（common/redEdge.ts）も足す．出す・消すは redEdge.setActive で外（app/）から指示するか，autoRedEdge で自分で判定する
 
 import * as THREE from "three";
@@ -33,6 +34,7 @@ import {
   disposeSchoolPartContext,
   isDynamicSchoolObject,
   type SchoolPartContext,
+  updateFireShutterWicket,
 } from "./schoolParts";
 import { SCHOOL_PARTS_BACKGROUND } from "./schoolPartsPreview";
 import { SCHOOL_EYE_HEIGHT, type SchoolPlanLayout, schoolPlanLayout } from "./schoolPlanLayout";
@@ -309,6 +311,8 @@ export function createSchoolScene(
     update: (frame) => {
       fireCells.update(frame.seconds, frame.eye);
       fireSmoke.update(frame.seconds, frame.eye);
+      // 閉じたシャッターのくぐり戸は，目が近づくと開き離れると閉じる（見た目だけ．くぐり戸は常に通れる）
+      for (const shutter of shutters) updateFireShutterWicket(shutter, frame.eye, frame.dt);
       if (autoRedEdge) {
         if (frame.eye === null) {
           errorBehaviors = null;
