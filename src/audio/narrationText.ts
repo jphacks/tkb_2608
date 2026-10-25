@@ -40,9 +40,18 @@ export const NARRATION_SCRIPTS: Readonly<Record<NarrationId, NarrationScript>> =
   },
 };
 
-/** 読み上げの速さ（SpeechSynthesisUtterance.rate）．校内放送は少しゆっくり読む */
+/**
+ * 読み上げの速さ（SpeechSynthesisUtterance.rate）．ナレーションは等倍（速すぎると機械的に聞こえる），
+ * 校内放送は放送らしく少しゆっくり読む
+ */
 export const SPEECH_RATE: Readonly<Record<NarrationStyle, number>> = {
-  narration: 1.05,
+  narration: 1.0,
+  announcement: 0.9,
+};
+
+/** 読み上げの声の高さ（SpeechSynthesisUtterance.pitch）．校内放送は落ち着いて聞こえるよう少し低め */
+export const SPEECH_PITCH: Readonly<Record<NarrationStyle, number>> = {
+  narration: 1.0,
   announcement: 0.95,
 };
 
