@@ -57,7 +57,9 @@
       <label><input id="sound" type="checkbox" checked /> 判定の音（1 歩ごとのビープ・姿勢の切り替え）</label>
       <p class="note">
         横向きにしてゴーグルに入れる．開始の後に画面をタップすると正面と位置をリセットする．<br />
-        しきい値は URL パラメータで渡せる（例: ?stepHighStanding=1.5）
+        開始の後に 10 秒のカウントダウン（この間にゴーグルに入れて装着する．視界の中央に数字）の後，約 15 秒のキャリブレーション（立って静止 → 足踏み → しゃがむ → しゃがみ歩き．案内は音声と視界の板）を行い，<br />
+        求めたしきい値で判定する（?calib=0 でしない．長さは ?calibStandMs=3000&amp;calibStepMs=5000&amp;calibCrouchMs=3000&amp;calibCrouchWalkMs=4000&amp;calibPrepMs=3000，待ち時間は ?calibStartDelayMs=10000．0 で待たない）．<br />
+        しきい値は URL パラメータで渡せる（例: ?stepHighStanding=1.5．キャリブレーションの値より優先する）
       </p>
     </div>
     <script type="module" src="./gogglesPage.ts"></script>
