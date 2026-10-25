@@ -344,7 +344,9 @@ PLAN_04 の非機能要件「iPhone で 30 fps 以上」を守るため，処理
 | 担当C（`lobby/`） | 基準取りの流れと UI（何を何秒行わせるか，ナレーションと表示，時間切れの扱い）．各手順（立つ・しゃがむ・しゃがみ歩き・足踏み）の開始と終了を `segments` に記録して伝える |
 | 担当D（`input/`） | 手順の区間のセンサーの値をためて，判定のしきい値（または判定のモデル）を本人に当てはめることと，その結果の安定性．データが足りない・時間切れの時は既定の判定に戻し，既定より悪くしない |
 
-- #58 で lobby/ は区間（`segments`）を渡す形に改めた．input/ は区間でセンサーの値を切り出して，静止時の揺れ（`standing`）・しゃがみの深さと時間（`crouching`）・しゃがみ歩きの山（`crouchWalking`）・立った足踏みの山と間隔（`stepping`）を求める（`experiment_山﨑/04`・`05`・`09`）．`timeout`・`skipped` の区間やサンプルが足りない区間は捨てて既定の判定に戻す．input/ 側の実装は担当D の作業として残っている
+- #58 で lobby/ は区間（`segments`）を渡す形に改めた．input/ は区間でセンサーの値を切り出して，静止時の揺れ（`standing`）・しゃがみの深さと時間（`crouching`）・しゃがみ歩きの山（`crouchWalking`）・立った足踏みの山と間隔（`stepping`）を求める（`experiment_山﨑/04`・`05`・`09`）．`timeout`・`skipped` の区間やサンプルが足りない区間は捨てて既定の判定に戻す
+- 区間からしきい値を求める処理は `src/input/body/calibration.ts` の `calibrateParams()` にある（#94）．値は既定より判定を悪くしない向きにだけ動かす．立った足踏みとしゃがみ歩きの山が 2 倍以上違う人では，しゃがみ歩きから止まらずに立ち上がった時の判定（`standWalkPeakStanding`・`standWalkPeakCrouching`）も有効にする
+- ※ 体験の流れ（`app/`）にはまだつないでいない（`src/app/yawOnlyCalibration.ts` で正面だけを渡している．#58 の残り）．今は開発用のページ（`src/input/dev/goggles.html`）と `npm run replay -- --calib` で試せる
 
 ## 音の使い方 (Using Sounds)
 
