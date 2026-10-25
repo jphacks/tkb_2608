@@ -1,13 +1,13 @@
-// 発表のデモ用の校舎（`?app&demo`・`?monitor&demo` で `#p=` が無い時．Issue #189）．
-// 同梱のデモの校舎（demoSchool.ts）をもとに，火元をシャッターより西の 1年2組へ移し，西の昇降口をふさいで，
-// 煙の中を廊下へ出る → 燃えている 1年2組の前（火の前の警告）→ x = 12 の防火シャッターのくぐり戸 → 東の昇降口 → 東側の校庭，
+// 発表のデモ用の校舎（`?app` 系・`?monitor` 系で `#p=` が無い時の既定の校舎．app/fallbackPlan.ts．Issue #189）．
+// 同梱のデモの校舎（demoSchool.ts）をもとに，火元をシャッターより西の理科室へ移し，西の昇降口をふさいで，
+// 煙の中を廊下へ出る → 燃えている理科室の前（火の前の警告）→ x = 12 の防火シャッターのくぐり戸 → 東の昇降口 → 東側の校庭，
 // を 1 本の経路で見せる．実機で調整する値はこのファイル冒頭の定数にまとめる
 import type { CellRef, SchoolPlan } from "../../core/schoolPlan";
 import { createFloorFromRows } from "./floorFromRows";
 
 const at = (x: number, z: number): CellRef => ({ floor: 0, x, z });
 
-/** 火元（1年2組の奥の隅．ドア (7,5) から 9 マス．火 1 マス 3 秒でドア前の廊下 (7,6) に約 30 秒で着く） */
+/** 火元（理科室の奥の隅．ドア (7,5) から 9 マス．火 1 マス 3 秒でドア前の廊下 (7,6) に約 30 秒で着く） */
 const FIRE_ORIGIN = at(11, 0);
 /** 煙の発生源（1年1組のドアの前の廊下．放送の直後から煙がある） */
 const SMOKE_SOURCE = at(5, 6);
@@ -28,7 +28,7 @@ const START_YAW = (-3 * Math.PI) / 4;
 export const DEMO_PITCH_SCHOOL_ROWS: readonly string[] = [
   //           111111111
   // 0123456789012345678 ← x（0 から 18）
-  "000000111111#222222", // z = 0（各教室の黒板の側．1年2組の (11,0) が火元）
+  "000000111111#222222", // z = 0（各教室の黒板の側．理科室の (11,0) が火元）
   "000000111111#222222", // z = 1
   "000000111111#222222", // z = 2
   "000000111111#222222", // z = 3
@@ -43,7 +43,7 @@ export const DEMO_PITCH_SCHOOL_ROWS: readonly string[] = [
   "ooooooooooooooooooo", // z = 12
 ];
 
-/** 正解の経路: 1年1組 → ドア (4,5) → 廊下 (4,7) → z = 7 を東へ（1年2組の前）→ シャッター (12,7) → 東の昇降口 (16,7) → 集合場所 */
+/** 正解の経路: 1年1組 → ドア (4,5) → 廊下 (4,7) → z = 7 を東へ（理科室の前）→ シャッター (12,7) → 東の昇降口 (16,7) → 集合場所 */
 const ROUTE: readonly CellRef[] = [
   at(2, 2),
   at(2, 3),
@@ -64,7 +64,8 @@ export const DEMO_PITCH_SCHOOL: SchoolPlan = {
   name: "デモ小学校 北校舎",
   cellSize: 1,
   floors: [createFloorFromRows(1, DEMO_PITCH_SCHOOL_ROWS)],
-  rooms: [{ name: "1年1組" }, { name: "1年2組" }, { name: "理科室" }],
+  // 火元の教室（添字 1）を理科室，シャッターより東（添字 2）を 1年2組にする（理科室からの出火にするため．DEMO_SCHOOL とは名前の並びが違う）
+  rooms: [{ name: "1年1組" }, { name: "理科室" }, { name: "1年2組" }],
   drill: {
     mode: "learn",
     fireOrigins: [FIRE_ORIGIN],

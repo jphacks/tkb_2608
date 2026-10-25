@@ -31,9 +31,7 @@ import { SCHOOL_EYE_HEIGHT } from "../scenes/school/schoolPlanLayout";
 import { createSchoolScene } from "../scenes/school/schoolPlanScene";
 import { createPlanFingerprintFromHash, getRoomIdFromHash } from "../share/monitorIds";
 import { loadPlanFromHash } from "../share/planHash";
-import { DEMO_PITCH_SCHOOL } from "../share/samples/demoPitchSchool";
-import { DEMO_SCHOOL } from "../share/samples/demoSchool";
-import { resolveDemo } from "./launchMode";
+import { FALLBACK_PLAN } from "./fallbackPlan";
 
 /** 校舎を読めなかった時の案内 */
 const PLAN_LOAD_FAILED =
@@ -264,9 +262,8 @@ export async function startMonitorApp(): Promise<void> {
     return;
   }
 
-  // ?monitor&demo で #p= が無い時は，生徒の ?app&demo と同じ発表のデモ用の校舎を描く（Issue #189）
-  const fallback = resolveDemo(window.location.search) ? DEMO_PITCH_SCHOOL : DEMO_SCHOOL;
-  const { plan } = await loadPlanFromHash(hash, fallback);
+  // #p= が無い時は，生徒の ?app 系と同じ既定の校舎（発表のデモ用の校舎）を描く（?demo の有無によらない．fallbackPlan.ts）
+  const { plan } = await loadPlanFromHash(hash, FALLBACK_PLAN);
   if (plan === null) {
     showMonitorNotice(PLAN_LOAD_FAILED);
     return;
