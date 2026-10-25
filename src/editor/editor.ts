@@ -60,6 +60,7 @@ import {
   ROUTE_TOOL_LABEL,
   roomColor,
 } from "./editorStyle";
+import { FOLD_STYLE, makeSectionsFoldable } from "./foldableSections";
 import type { PlanPreview, PlanPreviewSession } from "./planPreview";
 import { browserPlanStorage, loadSavedPlan, PLAN_STORAGE_MESSAGES, savePlan } from "./planStorage";
 import { createRoomIdResolver } from "./roomStorage";
@@ -91,6 +92,8 @@ const STYLE = `
   background: #222b38; border-right: 1px solid #333f50;
 }
 .editor__side h1 { font-size: 16px; margin: 0 0 4px; }
+.editor__top-link { display: inline-block; margin: 0 0 4px; color: #8494a8; font-size: 12px; text-decoration: none; }
+.editor__top-link:hover { color: #c5d2e0; text-decoration: underline; }
 .editor__side h2 { font-size: 13px; margin: 14px 0 6px; color: #9fb0c4; font-weight: normal; }
 .editor__name { margin: 0 0 4px; color: #9fb0c4; font-size: 12px; }
 .editor__tools { display: flex; flex-direction: column; gap: 4px; }
@@ -116,6 +119,9 @@ const STYLE = `
 .editor__button:hover:not(:disabled) { background: #3f5372; }
 .editor__button:disabled { opacity: 0.4; cursor: default; }
 .editor__hint { color: #8494a8; font-size: 12px; margin: 4px 0 0; }
+.editor__hint-list { padding-left: 1.2em; }
+.editor__hint-list li { margin: 2px 0; }
+.editor__sublabel { font-size: 12px; color: #9fb0c4; margin: 10px 0 0; }
 .editor__main { position: relative; flex: 1; min-width: 0; }
 .editor__canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
 .editor__hover {
@@ -193,13 +199,21 @@ const VIEW_TOGGLE_LABELS = { edit: "3D で見る", view: "編集に戻る" } as 
 const DRAFT_CONFIRM =
   "今の階のマス目と教室を，下敷きの写真から作った下書きで置き換えます（元に戻すで戻せる）．よろしいですか";
 
+/** 訓練条件の置き方の説明（1 行ずつ．道具箱の訓練条件のボタンの下に出す） */
+const MARKER_HINT_LINES: readonly string[] = [
+  "マスをクリックで置く",
+  "火元: もう一度クリックで外す",
+  "開始地点: 1 つだけ．置き直すと移る",
+  "集合場所: 校庭をドラッグした範囲の屋外のマスに置く．すべて集合場所の範囲をもう一度選ぶと外す",
+];
+
 /**
  * エディタを立ち上げる（document.body に画面を置く）．localStorage に前回の編集があればそれを開き，
  * 無い・読めない時は demoPlan（デモの校舎）を開いた状態にする
  */
 export function startEditor(demoPlan: SchoolPlan = DEMO_SCHOOL, options: EditorOptions = {}): void {
   const style = document.createElement("style");
-  style.textContent = STYLE;
+  style.textContent = STYLE + FOLD_STYLE;
   document.head.appendChild(style);
   document.title = "校舎エディタ | ひなんクラフトVR";
 
@@ -221,11 +235,15 @@ export function startEditor(demoPlan: SchoolPlan = DEMO_SCHOOL, options: EditorO
   root.append(side, main);
   document.body.appendChild(root);
 
-  // 道具箱
+  // 道具箱．題の上に，トップの画面（パラメータもハッシュも無い URL）へ戻るリンクを小さく置く．
+  // 編集は変わるたびに localStorage へ書いているので（persist），移る前に確認は出さない
+  const topLink = el("a", "editor__top-link");
+  topLink.href = window.location.pathname || "/";
+  topLink.textContent = "← トップへ";
   const title = el("h1");
   title.textContent = "校舎エディタ";
   const planName = el("p", "editor__name");
-  side.append(title, planName);
+  side.append(topLink, title, planName);
 
   const draftProvider = options.draftProvider ?? null;
   // 下敷き（E1）．道具箱の下の方に置くが，道具を選んだ時にモードを終えるため先に作る．
@@ -342,7 +360,16 @@ export function startEditor(demoPlan: SchoolPlan = DEMO_SCHOOL, options: EditorO
     markerList.appendChild(b);
     return { kind: marker.kind, button: b };
   });
-  side.appendChild(markerList);
+  // 置き方の説明は印ごとに 1 行ずつ分け，置くボタンのすぐ下に出す
+  const markerHint = el("ul", "editor__hint editor__hint-list");
+  for (const line of MARKER_HINT_LINES) {
+    const item = el("li");
+    item.textContent = line;
+    markerHint.appendChild(item);
+  }
+  side.append(markerList, markerHint);
+  const facingLabel = el("p", "editor__sublabel");
+  facingLabel.textContent = "開始時の向き";
   const facingRow = el("div", "editor__facings");
   facingRow.setAttribute("role", "group");
   facingRow.setAttribute("aria-label", "開始時の向き");
@@ -353,10 +380,8 @@ export function startEditor(demoPlan: SchoolPlan = DEMO_SCHOOL, options: EditorO
     facingRow.appendChild(b);
     return { facing, button: b };
   });
-  const markerHint = el("p", "editor__hint");
-  markerHint.textContent =
-    "クリックで置く．火元はもう一度クリックで外す．集合場所は校庭をドラッグした範囲の屋外のマスに置き，すべて集合場所の範囲をもう一度選ぶと外す．開始地点は 1 つだけで，置き直すと移る．開始時の向きは上のボタンで選ぶ";
-  side.append(heading("開始時の向き"), facingRow, markerHint);
+  // 開始時の向きは訓練条件の一部なので，見出しを分けずに同じ項目に入れる（開閉もまとめて）
+  side.append(facingLabel, facingRow);
 
   /** 延焼の計算結果（校舎が変わった時だけ計算し直す．延焼のプレビューと E5 の経路の提案で同じものを使う） */
   const spreadOf = createSpreadCache();
@@ -477,6 +502,8 @@ export function startEditor(demoPlan: SchoolPlan = DEMO_SCHOOL, options: EditorO
   side.append(sizeRow, resizeRow, blankRow, sizeHint);
 
   side.appendChild(underlayPanel.element);
+  // 見出しごとに開閉できるようにする（道具箱の要素をすべて並べ終えてから包む）
+  makeSectionsFoldable(side, storage);
 
   // 上から見た図
   const canvas = el("canvas", "editor__canvas");
