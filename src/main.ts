@@ -17,6 +17,7 @@ import { createEventBus } from "./core/event-bus";
 import type { AppEvent } from "./core/events";
 import type { PlayerInput, Posture } from "./core/types";
 import { startEditor } from "./editor/editor";
+import { createGeminiDraftProvider } from "./editor/geminiDraftProvider";
 import { parseInputKind } from "./input/inputParam";
 import { createInputSource, type InputKind } from "./input/inputSource";
 import { InputPreview } from "./inputPreview";
@@ -253,8 +254,8 @@ if (launchMode === "app") {
   // 避難の音の dev 用の単独起動．本番のビルドには含めない
   void import("./app/audioPreview").then((m) => m.startAudioPreview());
 } else if (launchMode === "editor") {
-  // 教員用のエディタ（three.js の描画は立ち上げない）
-  startEditor();
+  // 教員用のエディタ（three.js の描画は立ち上げない）．配置の下書き（ES3）は AI（サーバー関数経由の Gemini）で作る
+  startEditor(undefined, { draftProvider: createGeminiDraftProvider() });
 } else if (launchMode === "monitor") {
   // 見守り画面（校舎の読み込みを待ってから描き始める）
   void startMonitorApp();

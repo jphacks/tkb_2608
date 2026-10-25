@@ -1,6 +1,6 @@
 // 教員用エディタ（?editor）の画面の薄い殻．道具箱・上から見た図（Canvas 2D）・校舎の誤りの表示を DOM で組み，
 // マウスとキーの操作を editorState.ts の純粋な関数に渡して，返ってきた状態で描き直す．VR・three.js は使わない
-import type { SchoolPlan } from "../core/schoolPlan";
+import type { FloorDraft, FloorDraftProvider, SchoolPlan } from "../core/schoolPlan";
 import { DEMO_SCHOOL } from "../share/samples/demoSchool";
 import { createShareLink } from "../share/shareUrl";
 import { validatePlan } from "../share/validatePlan";
@@ -9,6 +9,7 @@ import { drawEditorGrid } from "./editorCanvas";
 import { canvasToCell, computeGridLayout, drillMarkers, type GridLayout } from "./editorLayout";
 import {
   addRoom,
+  applyFloorDraft,
   beginRouteStroke,
   beginStroke,
   canRedo,
@@ -159,11 +160,21 @@ const STYLE = `
 .editor__photo-only[hidden] { display: none; }
 `;
 
+/** エディタの起動の設定 */
+export interface EditorOptions {
+  /** 配置の下書きを作る仕組み（ES3）．渡した時だけ下敷きの欄に下書きのボタンを出す．エディタは中身を知らない */
+  readonly draftProvider?: FloorDraftProvider | null;
+}
+
+/** 下書きを当てる前の確認の文 */
+const DRAFT_CONFIRM =
+  "今の階のマス目と教室を，下敷きの写真から作った下書きで置き換えます（元に戻すで戻せる）．よろしいですか";
+
 /**
  * エディタを立ち上げる（document.body に画面を置く）．localStorage に前回の編集があればそれを開き，
  * 無い・読めない時は demoPlan（デモの校舎）を開いた状態にする
  */
-export function startEditor(demoPlan: SchoolPlan = DEMO_SCHOOL): void {
+export function startEditor(demoPlan: SchoolPlan = DEMO_SCHOOL, options: EditorOptions = {}): void {
   const style = document.createElement("style");
   style.textContent = STYLE;
   document.head.appendChild(style);
@@ -191,6 +202,7 @@ export function startEditor(demoPlan: SchoolPlan = DEMO_SCHOOL): void {
   const planName = el("p", "editor__name");
   side.append(title, planName);
 
+  const draftProvider = options.draftProvider ?? null;
   // 下敷き（E1）．道具箱の下の方に置くが，道具を選んだ時にモードを終えるため先に作る．
   // 通知の帯・描き直しはこの後に作るので，呼ばれた時に引く
   const underlayPanel = createUnderlayPanel({
@@ -206,7 +218,57 @@ export function startEditor(demoPlan: SchoolPlan = DEMO_SCHOOL): void {
     },
     notify: (message) => showNotice(message, LONG_NOTICE_MS),
     storage,
+    draft:
+      draftProvider === null
+        ? null
+        : { label: draftProvider.label, run: () => runDraft(draftProvider) },
   });
+
+  /**
+   * 下敷きの写真から下書きを作って今の階に当てる（ES3．SPEC_02「配置の下書き」の流れ）．
+   * 失敗・当てられない時は理由を案内の帯に出す．下敷きの写真は表示したままにする
+   */
+  async function runDraft(provider: FloorDraftProvider): Promise<void> {
+    if (!window.confirm(DRAFT_CONFIRM)) return;
+    const floor = editingFloor(state);
+    const width = floor.width;
+    const depth = floor.depth;
+    const image = await underlayPanel.cropToGrid({ width, depth });
+    if (image === null) {
+      showNotice("下敷きの写真を切り出せませんでした．写真を選び直してください", LONG_NOTICE_MS);
+      return;
+    }
+    showNotice("下書きを作っています…", LONG_NOTICE_MS);
+    let draft: FloorDraft;
+    try {
+      draft = await provider.createDraft({ image, width, depth });
+    } catch (error) {
+      const message = error instanceof Error && error.message !== "" ? error.message : "";
+      showNotice(message || "下書きを作れませんでした．やり直してください", LONG_NOTICE_MS);
+      return;
+    }
+    // 待っている間にマス目の大きさが変わった時は，写真の切り出しと合わないので当てない
+    const now = editingFloor(state);
+    if (now.width !== width || now.depth !== depth) {
+      showNotice(
+        "下書きを作っている間にマス目の大きさが変わったため，当てませんでした．やり直してください",
+        LONG_NOTICE_MS,
+      );
+      return;
+    }
+    const result = applyFloorDraft(state, draft);
+    if (result.reason !== null) {
+      showNotice(result.reason, LONG_NOTICE_MS);
+      return;
+    }
+    update(result.state);
+    showNotice(
+      result.removed.length === 0
+        ? "下書きを当てました（元に戻すで戻せる）．写真と見比べて直してください"
+        : `下書きを当てました（元に戻すで戻せる）．${result.removed.join("・")}が条件に合わなくなったため，置き直してください`,
+      LONG_NOTICE_MS,
+    );
+  }
 
   /** 道具を選ぶ（下敷きを合わせている途中なら，合わせ終えて塗る操作に戻す） */
   const pickTool = (tool: EditorTool): void => {

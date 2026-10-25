@@ -103,3 +103,32 @@ export interface PlanLoadError {
   /** 画面に出す理由（日本語の 1 文） */
   readonly reason: string;
 }
+
+/** 配置の下書き（1 フロア分．ES3．SPEC_02「配置の下書き」）．Floor から階の番号を除き，教室の名前を足したもの */
+export interface FloorDraft {
+  /** X 方向のマスの数 */
+  readonly width: number;
+  /** Z 方向のマスの数 */
+  readonly depth: number;
+  /** マスの種類（長さ width * depth．添字は z * width + x） */
+  readonly cells: readonly CellKind[];
+  /** 教室のマスが属する教室（rooms の添字）．教室以外のマスは -1 */
+  readonly roomOf: readonly number[];
+  /** この下書きの中の教室．名前が読めなければ「教室1」等の仮の名前 */
+  readonly rooms: readonly Room[];
+}
+
+/** 下書きを作る仕組み（AI・ファイルの読み込み等）．エディタは種類を知らずにこれを呼ぶ */
+export interface FloorDraftProvider {
+  /** エディタのボタン等に出す名前（「AI で下書きを作る」等） */
+  readonly label: string;
+  /**
+   * image: 下敷きの写真のうち，マス目に重なる範囲だけを切り出した画像（E1 で合わせた位置・大きさ・回転を反映済み）．
+   * 下書きは width × depth のマス目に収める．作れなかった時は，画面に出せる理由（日本語の 1 文）を message に持つ Error で失敗する
+   */
+  createDraft(request: {
+    readonly image: Blob;
+    readonly width: number;
+    readonly depth: number;
+  }): Promise<FloorDraft>;
+}

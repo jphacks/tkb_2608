@@ -13,6 +13,7 @@
       "relay/src/**",
       "relay/scripts/**",
       "relay/tsconfig.json",
+      "functions/**",
       "vite.config.ts",
       "biome.json",
       "tsconfig.json",

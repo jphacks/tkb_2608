@@ -9,13 +9,14 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test": "vitest run --passWithNoTests",
-    "typecheck": "tsc && tsc -p relay",
+    "typecheck": "tsc && tsc -p relay && tsc -p functions",
     "lint": "biome check .",
     "format": "biome check --write .",
     "tunnel": "node scripts/tunnel.mjs",
     "replay": "node scripts/replay.mjs",
     "relay:dev": "wrangler dev --config relay/wrangler.jsonc --ip 127.0.0.1 --port 8787",
-    "relay:check": "node relay/scripts/relayCheck.mjs"
+    "relay:check": "node relay/scripts/relayCheck.mjs",
+    "functions:dev": "wrangler pages dev public --ip 127.0.0.1 --port 8788 --compatibility-date=2026-10-01"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "1.1.1",
