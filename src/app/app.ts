@@ -13,12 +13,15 @@ import { parseInputKind } from "../input/inputParam";
 import { createInputSource, type InputSource } from "../input/inputSource";
 import {
   DEFAULT_GOGGLE_SWITCH_CONFIG,
-  GOGGLE_ON_DEMO_LINES,
   GOGGLE_SCENES,
   type GoggleSwitch,
   goggleSwitchBetween,
 } from "../lobby/goggleSwitch";
-import { createGoggleOffScene, createGoggleOnScene } from "../lobby/goggleSwitchScenes";
+import {
+  createGoggleOffScene,
+  createGoggleOnScene,
+  type GoggleGuideScene,
+} from "../lobby/goggleSwitchScenes";
 import { resolveSceneRequest } from "../lobby/homeFlow";
 import { createHomeScene } from "../lobby/homeScene";
 import { createHomeMemory } from "../lobby/homeSettings";
@@ -28,6 +31,7 @@ import type { AcquiredDevices } from "../lobby/permissions";
 import { createStartScene } from "../lobby/startScene";
 import { TRAINING_BACKGROUND_CSS, TRAINING_BOX_CSS } from "../lobby/trainingTheme";
 import { createScreenWakeLock } from "../lobby/wakeLock";
+import { createHandButton } from "../scenes/common/handButton";
 import { createHandMarkers } from "../scenes/common/handMarkers";
 import { createPlanFingerprintFromHash } from "../share/monitorIds";
 import { loadPlanFromHash } from "../share/planHash";
@@ -60,7 +64,7 @@ import {
 } from "./savedCalibration";
 import { yawOnly } from "./yawOnlyCalibration";
 
-/** デモ用の起動で，開始画面の後にゴーグルに入れるのを待つ秒数（s） */
+/** デモ用の起動で，開始画面の後の付ける案内の 1 画面（read）を出しておく秒数（s） */
 const DEMO_PUT_ON_SECONDS = 5;
 
 /** 1 フレームの dt の上限（タブが裏に回った後等に大きく飛ばないため） */
@@ -221,8 +225,8 @@ export function startApp(): void {
   };
 
   let current: Scene | null = null;
-  // 今の画面を左右 2 画面で描くか（ゴーグルの付け外しの案内は画面の ID と別に決めるため，切り替えた時に覚える）
-  let currentStereo = false;
+  // 今の画面を左右 2 画面で描くか（ゴーグルの付け外しの案内は画面の ID と別に決め，付ける案内は途中で変わるため関数で持つ）
+  let currentStereo: () => boolean = () => false;
   // 今の画面がゴーグルの付け外しの案内か（案内からの goTo には，もう案内を挟まない）．
   // 案内の画面は既存の画面の ID を借りるため，ID で画面を見分ける処理（見守りへの送信等）はこれも見る
   let currentIsGuide = false;
@@ -329,19 +333,30 @@ export function startApp(): void {
   // 見守り画面が同じ効果音・ナレーションを鳴らせるよう，バスに流れた Cue をそのまま送る（audio/ の購読とは別．送れなくても音は変わらない）
   ctx.bus.on("cue", (event) => monitor.notifyCue(event.cue));
 
-  // ゴーグルの付け外しの案内の画面．案内の後に本来の画面（next）へ goTo で進む
-  const createGuide = (kind: GoggleSwitch, next: SceneId): Scene =>
-    kind === "takeOff"
-      ? createGoggleOffScene({ next })
-      : next === "scenario"
-        ? // 付ける案内から避難の画面へ進むのはデモの起動だけ（ロビーの案内でなく，避難が始まる旨を出す）
-          createGoggleOnScene({
-            next,
-            isPaused: () => orientationGuide.visible,
-            guideLines: GOGGLE_ON_DEMO_LINES,
-            config: { ...DEFAULT_GOGGLE_SWITCH_CONFIG, putOnSeconds: DEMO_PUT_ON_SECONDS },
-          })
-        : createGoggleOnScene({ next, isPaused: () => orientationGuide.visible });
+  // 手を認識できるか．device は手をカメラから作るので，開始画面でカメラが取れた時だけ．
+  // mock（マウスが右手）・replay（記録の手）はカメラを使わない
+  const handsUsable = (): boolean =>
+    inputKind !== "device" || (devices.current?.cameraStream ?? null) !== null;
+
+  // ゴーグルの付け外しの案内の画面．案内の手のボタンを押したら本来の画面（next）へ goTo で進む
+  const createGuide = (kind: GoggleSwitch, next: SceneId): GoggleGuideScene => {
+    const hand = { createHandButton, createHandMarkers, handsUsable };
+    if (kind === "takeOff") {
+      // mock はマウスで手を動かすため，画面のタップで進めると手を動かしただけで進んでしまう
+      return createGoggleOffScene({ next, ...hand, allowTap: inputKind === "device" });
+    }
+    // 付ける案内から避難の画面へ進むのはデモの起動だけ（ロビーの案内でなく，避難が始まる旨を出す）
+    const demoGuide = next === "scenario";
+    return createGoggleOnScene({
+      next,
+      ...hand,
+      isPaused: () => orientationGuide.visible,
+      demo: demoGuide,
+      config: demoGuide
+        ? { ...DEFAULT_GOGGLE_SWITCH_CONFIG, putOnSeconds: DEMO_PUT_ON_SECONDS }
+        : DEFAULT_GOGGLE_SWITCH_CONFIG,
+    });
+  };
 
   const switchTo = async (id: SceneId, guide: GoggleSwitch | null): Promise<void> => {
     switching = true;
@@ -349,7 +364,7 @@ export function startApp(): void {
       current?.exit();
       current = null;
       currentIsGuide = false;
-      currentStereo = false;
+      currentStereo = () => false;
       drillScene = null;
       // 前の画面の音は次の画面へ持ち越さない（購読は続けるので，次の画面の enter で流した cue は鳴る）
       drillAudio?.stopAll();
@@ -366,7 +381,8 @@ export function startApp(): void {
         demoRecenterPending = false;
         input.recenter();
       }
-      const factory = guide === null ? factories[id] : () => createGuide(guide, id);
+      const guideScene = guide === null ? null : createGuide(guide, id);
+      const factory = guideScene === null ? factories[id] : () => guideScene;
       if (factory === undefined) {
         console.warn(`未実装の画面です: ${id}`);
         return;
@@ -374,9 +390,10 @@ export function startApp(): void {
       const next = factory();
       await next.enter(ctx);
       current = next;
-      currentIsGuide = guide !== null;
-      // 外す案内はゴーグルの中で読むので 2 画面，付ける案内はゴーグルに入れる前に読むので 1 画面
-      currentStereo = guide === null ? GOGGLE_SCENES.has(id) : guide === "takeOff";
+      currentIsGuide = guideScene !== null;
+      // 案内は案内の側が決める（外す案内は 2 画面，付ける案内は読む間 1 画面でゴーグルに入れた後 2 画面）
+      const stereoScene = GOGGLE_SCENES.has(id);
+      currentStereo = guideScene === null ? () => stereoScene : () => guideScene.stereo();
       // 画面に入り終えてから知らせる（避難の画面の開始地点にカメラが置かれてから状態を送り始めるため）．
       // 案内の画面では知らせず，案内の後に本来の画面へ入った時に知らせる
       const phase = guide === null ? monitorPhaseOfScene(id) : null;
@@ -462,7 +479,7 @@ export function startApp(): void {
     camera.quaternion.set(head.x, head.y, head.z, head.w);
     if (current !== null && !switching) current.update({ dt, input: frameInput });
 
-    if (useStereo && current !== null && currentStereo) {
+    if (useStereo && current !== null && currentStereo()) {
       stereo.render(world, camera);
     } else {
       // StereoEffect はビューポートを右半分のまま残すため戻す
