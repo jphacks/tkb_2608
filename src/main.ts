@@ -218,6 +218,7 @@ function startInputWalk(
       onDoorToggle: () => {
         walk.toggleNearbyDoor();
       },
+      tapTarget: renderer.domElement,
     },
   );
 
