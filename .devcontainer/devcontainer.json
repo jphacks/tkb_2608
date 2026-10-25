@@ -12,7 +12,7 @@
       "installTools": false
     },
     // アプリのビルド・開発サーバー用（ENV_01 で Node.js 24 LTS に決定）
-    "ghcr.io/devcontainers/features/node:1": {
+    "ghcr.io/devcontainers/features/node:2": {
       "version": "24"
     }
   },
