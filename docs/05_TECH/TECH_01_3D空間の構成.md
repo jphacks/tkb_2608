@@ -17,7 +17,7 @@
 | `src/scenes/room/` | 部屋（リビング・シナリオ H1）．`roomLayout.ts` に寸法・配置・エリアと userData の型（three 非依存），`room.ts` に組み立て（部屋の殻・窓ガラス・ドア・廊下），`roomFurniture.ts` に家具の Group（テーブルの脚・コンロのつまみと火・ブレーカーのスイッチを含む），`roomMaterials.ts` に見た目 |
 | `src/scenes/train/` | 電車（通勤電車 1 両のうちドア 2 か所分）．`trainLayout.ts` に寸法・配置と userData の型（three 非依存），`train.ts` に組み立て，`trainFixtures.ts` に座席・手すり・つり革・ドア等の Group，`trainMaterials.ts`・`trainTextures.ts` に見た目 |
 | `src/scenes/elevator/` | エレベーター（かご内と扉の外の乗り場）．`elevatorLayout.ts` に寸法・配置と userData の型（three 非依存），`elevator.ts` に組み立て，`elevatorFixtures.ts` に操作盤・ボタン・手すり・扉・階の表示・照明の Group，`elevatorMaterials.ts`・`elevatorTextures.ts` に見た目 |
-| `src/scenes/school/` | 校舎のパーツと確認用の空間（`?scene=school-parts`）．`routeArrowsLayout.ts`・`routeArrows.ts` に床の正解経路の矢印，`fireSmokeLayout.ts`・`fireSmoke.ts` に火と煙，`dev/` に確認用のページ．`schoolLayout.ts` に床の面・辺の物・柱の寸法と当たり判定の範囲，`classroomLayout.ts` に教室の中身の並び，`schoolPartsPreviewLayout.ts` に確認用の空間に並べる一覧（いずれも three 非依存），`schoolParts.ts`・`classroom.ts` に組み立て，`schoolMerge.ts` に動かない Mesh の結合，`schoolPartsCollision.ts` に当たり判定の取り出し，`schoolMaterials.ts`・`schoolTextures.ts` に見た目．`schoolPlanLayout.ts`（three 非依存）・`schoolPlanScene.ts`・`schoolPlanWalk.ts` に `SchoolPlan` からの組み立て（`?scene=school`）．詳細は「校舎のパーツの構成」「SchoolPlan からの組み立て」 |
+| `src/scenes/school/` | 校舎のパーツと確認用の空間（`?scene=school-parts`）．`routeArrowsLayout.ts`・`routeArrows.ts` に床の正解経路の矢印，`fireSmokeLayout.ts`・`fireSmoke.ts` に火と煙，`dev/` に確認用のページ．`schoolLayout.ts` に床の面・辺の物・柱の寸法と当たり判定の範囲，`classroomLayout.ts` に教室の中身の並び，`schoolPartsPreviewLayout.ts` に確認用の空間に並べる一覧（いずれも three 非依存），`schoolParts.ts`・`classroom.ts` に組み立て，`schoolMerge.ts` に動かない Mesh の結合，`schoolPartsCollision.ts` に当たり判定の取り出し，`schoolMaterials.ts`・`schoolTextures.ts` に見た目．`schoolPlanLayout.ts`・`schoolAreas.ts`・`assemblyMarkerLayout.ts`（いずれも three 非依存）・`schoolPlanScene.ts`・`assemblyMarker.ts`・`schoolPlanWalk.ts` に `SchoolPlan` からの組み立て（エリア・集合場所の床の印を含む）（`?scene=school`）．詳細は「校舎のパーツの構成」「SchoolPlan からの組み立て」 |
 | `src/scenes/walk/` | 歩行と当たり判定（three 非依存の純粋関数）．`collision.ts` に当たり判定，`areas.ts` にエリアの判定，`obstacles.ts`・`furnitureObstacles.ts` に障害物の生成，`locomotion.ts` に 1 フレーム分の移動（`stepWalk`），`walker.ts` に `ScenarioWorld` の実装（`SpaceWalker`） |
 | `src/scenes/<id>/<id>Walk.ts` | 各空間の `WalkWorld`（床の範囲・障害物・ドア・エリア・座席）．`createWalkWorld(space)`（`index.ts`）で作る |
 | `src/scenes/devDoors.ts` | 確認用: 近くのドアを開閉する（本物のドア開閉が入るまでのデバッグ用） |
@@ -313,6 +313,7 @@ fireSmoke.update(secondsSinceAlarm, eyePosition);
 - 開始位置は訓練の開始地点（`drill.start`）のマスの中心，向きは `planYawToSpaceYaw(drill.startYaw)`（`SchoolPlan` は右回り，`Space` は左回りに増えるため符号を反転する．SPEC_02「座標」の「向き」）
 - 歩ける床の範囲は，屋内の床の面と屋外のマスの矩形だけ（`void`・`wall` のマスとマス目の外へは出られない）．壁・柱・直方体・閉じたシャッターは通れない
 - ドアのマスは開口部として作る（引き戸の扉は置かない．SPEC_02 のとおり開け閉めはしない）．辺に置く物のドア・出口のパーツ（`createSchoolEdge` の `door`・`exit`）は下限の長さ（2.32 m・2.72 m）が 1 m のマスに入らないため使っていない
+- 集合場所の床の印（`createAssemblyMarker`．`assemblyMarkerLayout.ts` の `layoutAssemblyMarker(plan)`（three 非依存）で並べ方を求める．学習モード・テストモードの両方．Issue #155）を root の直下に置く．集合場所のマスを淡い黄で塗り（床から 0.01 m），まとまりの外周に濃い黄の枠（マスの 12 % の幅．0.012 m）を引く．面と枠はそれぞれ 1 つの `InstancedMesh`．床の矢印（0.02 m）より低いので，矢印が印の上に見える．`SchoolSpace.assemblyMarker` で引け，`dispose` で解放する
 - 床の正解経路の矢印（`createRouteArrows`．学習モードのみ）と火と煙（`createFireSmoke(plan, computeSpread(plan))`）を root の直下に置く（結合の対象外．Issue #104）．`SchoolSpace` の `routeArrows`（テストモードは `null`）・`fireSmoke`・`fog`（= `fireSmoke.fog`）で引ける．`update(frame)` は `fireSmoke.update(frame.seconds, frame.eye)` を呼ぶ．`dispose` で両方も解放する
 - `?scene=school` 単独で開いた時の非常ベルの時刻は，ページを開いた時を 0 秒とし，毎フレーム `dt × speed` を足す（`src/scenes/alarmClock.ts`．`?t=<秒>` で始める時刻，`?speed=<倍率>` で進む速さ．不正な値は既定の 0 秒・1 倍）．体験の流れ（`?app`）につなぐ時は，そちらの時刻を `update` に渡す
 - 防火シャッターは閉じているが，くぐり戸の範囲は通れる（「当たり判定」）．デモの校舎では，開始地点から廊下の中ほど（z = 7 の列）を東へ歩くと，くぐり戸を通って煙の中へ入れる（Issue #121）
@@ -321,7 +322,8 @@ fireSmoke.update(secondsSinceAlarm, eyePosition);
 - 赤い表示: `SchoolSpace.redEdge`（`src/scenes/common/redEdge.ts` の `createRedEdge()`）．クリップ座標に頂点を置いた全画面の板をシェーダーで描き，縁を赤くする（カメラ・ビューポートによらないため，左右 2 画面の両方の縁に出る）．`setActive(bool)` で出す・消すを指示し，`update(dt)` で 0.2 秒のフェードを進める（点滅させない．消えている間は描かない）．見た目は `RED_EDGE`（端の濃さ 0.85・赤くし始める位置 0.6）で調整する．`root` の子なので校舎と一緒に描かれ，DOM の重ね表示（Stage の overlay）より下になる
   - `?scene=school` 単独（`createSchoolScene(…, { autoRedEdge: true })`）では，`update` の中で時刻・目の X と Z・姿勢から `detectErrorBehaviors(plan, spread, sample)` を呼び，`any` の間だけ出す（`sample` は使い回しの 1 件．画面の左上の `error` の行に結果を出す）
   - 体験の流れ（`?app`）・見守り画面は `autoRedEdge` を付けずに作り（既定 `false`），呼ぶ側が毎フレーム `space.redEdge.setActive(detectErrorBehaviors(plan, space.spread, sample).any)` の後に `space.update({ seconds, eye, dt })` を呼ぶ（Issue #111）．`dt` を渡さないとフェードせずに切り替わり，`eye` を渡さないと燃えているマスは常にふさぐ
-- 教室の中身（机・黒板）は置いていない．エリアのイベント（集合場所 `assembly` は Issue #151）・複数フロアは後の Issue で扱う
+- エリアは床の面の id（`room-0-floor-0` 等）と出口の外（`<出口の id>-outside`）に，SPEC_01「エリアの ID」のエリア（`schoolAreas.ts` の `schoolPlanAreas(plan)`．three 非依存）を足す（`createSchoolWalkWorld`．Issue #155）
+- 教室の中身（机・黒板）は置いていない．複数フロアは後の Issue で扱う
 
 ## 歩行と当たり判定 (Walking & Collision)
 
