@@ -8,6 +8,7 @@ import {
   autoStartRemainingSeconds,
   buttonCenter,
   DEFAULT_START_GATE_CONFIG,
+  handPressPoint,
   INITIAL_START_GATE,
   isDeviceLevel,
   isGazingAtButton,
@@ -36,6 +37,15 @@ function pitchQuat(angle: number): Quat {
 function hand(position: Vec3, tracked = true): HandState {
   return { tracked, position, grip: 0 };
 }
+
+/** 人差し指の先（indexTip）を持つ手 */
+function tipHand(position: Vec3, indexTip: Vec3, tracked = true): HandState {
+  return { tracked, position, grip: 0, indexTip };
+}
+
+const ON = { x: 0, y: 0, z: -0.5 };
+const OFF = { x: 0, y: 0.3, z: -0.5 };
+const NON_FINITE = [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY];
 
 function frame(patch: Partial<StartGateFrame> = {}): StartGateFrame {
   return {
@@ -124,6 +134,56 @@ describe("isHandOnButton", () => {
     const front = hand({ x: 0, y: 0, z: -0.5 });
     expect(isHandOnButton(head, front, buttonCenter(0))).toBe(false);
     expect(isHandOnButton(head, front, buttonCenter(Math.PI / 2))).toBe(true);
+  });
+});
+
+describe("handPressPoint", () => {
+  it("人差し指の先があればそれを判定点にする", () => {
+    const tip = { x: 0.01, y: 0.02, z: -0.4 };
+    expect(handPressPoint(tipHand(OFF, tip))).toEqual(tip);
+  });
+
+  it("人差し指の先が無い時は手のひらの中心を判定点にする", () => {
+    expect(handPressPoint(hand(OFF))).toEqual(OFF);
+  });
+
+  it.each(NON_FINITE.flatMap((v) => (["x", "y", "z"] as const).map((axis) => [axis, v] as const)))(
+    "人差し指の先の %s が %s なら手のひらの中心に戻る",
+    (axis, v) => {
+      expect(handPressPoint(tipHand(OFF, { ...ON, [axis]: v }))).toEqual(OFF);
+    },
+  );
+});
+
+describe("isHandOnButton（人差し指の先で判定する）", () => {
+  const center = buttonCenter(0);
+
+  it("手のひらは範囲外でも，人差し指の先が範囲内なら触れている", () => {
+    expect(isHandOnButton(IDENTITY, tipHand(OFF, ON), center)).toBe(true);
+  });
+
+  it("手のひらが範囲内でも，人差し指の先が範囲外なら触れていない", () => {
+    expect(isHandOnButton(IDENTITY, tipHand(ON, OFF), center)).toBe(false);
+  });
+
+  it("人差し指の先が 0.12 m 以内なら触れている・0.12 m より遠ければ触れていない", () => {
+    expect(isHandOnButton(IDENTITY, tipHand(OFF, { x: 0.1, y: 0, z: -0.5 }), center)).toBe(true);
+    expect(isHandOnButton(IDENTITY, tipHand(ON, { x: 0.13, y: 0, z: -0.5 }), center)).toBe(false);
+  });
+
+  it("人差し指の先が無ければ手のひらの中心で判定する", () => {
+    expect(isHandOnButton(IDENTITY, hand(ON), center)).toBe(true);
+    expect(isHandOnButton(IDENTITY, hand(OFF), center)).toBe(false);
+  });
+
+  it.each(NON_FINITE)("人差し指の先に %s を含む時は手のひらの中心で判定する", (v) => {
+    const broken = { x: 0, y: 0, z: v };
+    expect(isHandOnButton(IDENTITY, tipHand(ON, broken), center)).toBe(true);
+    expect(isHandOnButton(IDENTITY, tipHand(OFF, broken), center)).toBe(false);
+  });
+
+  it("認識できていない手は人差し指の先が合っていても触れていない", () => {
+    expect(isHandOnButton(IDENTITY, tipHand(ON, ON, false), center)).toBe(false);
   });
 });
 
@@ -226,6 +286,20 @@ describe("advanceStartGate", () => {
       expect(s.handHeld).toBe(0);
       s = run(s, onButton, 0.8, HAND_CONFIG);
       expect(s.startedBy).toBeNull();
+    });
+
+    it("手のひらが外れていても，人差し指の先をボタンに 1 秒当てると始まる（左右どちらでも）", () => {
+      const right = frame({ hands: { left: UNTRACKED_HAND, right: tipHand(OFF, ON) } });
+      const left = frame({ hands: { left: tipHand(OFF, ON), right: UNTRACKED_HAND } });
+      expect(run(INITIAL_START_GATE, right, 1, HAND_CONFIG).startedBy).toBe("hand");
+      expect(run(INITIAL_START_GATE, left, 1, HAND_CONFIG).startedBy).toBe("hand");
+    });
+
+    it("手のひらだけがボタンにあり人差し指の先が外れていれば始まらない", () => {
+      const f = frame({ hands: { left: tipHand(ON, OFF), right: tipHand(ON, OFF) } });
+      const s = run(INITIAL_START_GATE, f, 3, HAND_CONFIG);
+      expect(s.startedBy).toBeNull();
+      expect(s.handHeld).toBe(0);
     });
 
     it("ボタンが頭のヨー角に追従しても，その位置に手があれば始まる", () => {

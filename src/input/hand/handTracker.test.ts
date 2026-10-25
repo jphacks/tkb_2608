@@ -409,22 +409,32 @@ describe("resetHandTrack", () => {
 });
 
 describe("toHandState", () => {
-  it("HandState の項目（tracked・position・grip・landmarks）だけを載せる", () => {
+  it("HandState の項目（tracked・position・grip・indexTip・landmarks）だけを載せる", () => {
     const { track, t } = trackedHand(observation({ curls: FIST }));
     const r = readHandTrack(track, t, P);
     const s = toHandState(r);
-    expect(Object.keys(s).sort()).toEqual(["grip", "landmarks", "position", "tracked"]);
+    expect(Object.keys(s).sort()).toEqual(["grip", "indexTip", "landmarks", "position", "tracked"]);
     expect(s).toEqual({
       tracked: r.tracked,
       position: r.position,
       grip: r.grip,
+      indexTip: r.indexTip,
       landmarks: r.landmarks,
     });
   });
 
+  it("人差し指の先（indexTip）は HandReading の値（position と同じ奥行きの見積もり）をそのまま載せる", () => {
+    const { track, t } = trackedHand(observation({ curls: OPEN }));
+    const r = readHandTrack(track, t, P);
+    const s = toHandState(r);
+    expect(s.indexTip).toEqual(r.indexTip);
+    // 開いた手では指先は手のひらの中心より上にある（指が上を向いた観測）
+    expect(s.indexTip?.y).toBeGreaterThan(s.position.y);
+  });
+
   it("まだ 21 点が無い（一度も認識していない）手は landmarks を省く", () => {
     const s = toHandState(readHandTrack(createHandTrack(), 0, P));
-    expect(Object.keys(s).sort()).toEqual(["grip", "position", "tracked"]);
+    expect(Object.keys(s).sort()).toEqual(["grip", "indexTip", "position", "tracked"]);
   });
 });
 

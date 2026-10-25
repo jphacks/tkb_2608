@@ -76,7 +76,8 @@ export function applyMockHandWheel(
 
 /**
  * 外に出す右手の状態．見えていない時は tracked: false（位置は直前のまま）．
- * 21 点は開いた手・握った手の決め打ちの形（mockHandShape.ts）を手のひらの位置に置く
+ * 21 点は開いた手・握った手の決め打ちの形（mockHandShape.ts）を手のひらの位置に置く．
+ * 判定点はマウスの位置（indexTip を省くので，ボタンは手のひらの中心で判定される）
  */
 export function mockHandState(
   s: MockHandState,

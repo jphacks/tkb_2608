@@ -264,8 +264,8 @@ export function debriefVrCaption(
   }
   if (handPrompt) return DEBRIEF_HAND_PROMPT;
   return tap !== ""
-    ? `下のボタンに手のひらをかざして選びます．${tap}`
-    : "下のボタンに手のひらをかざして選びます";
+    ? `下のボタンに人差し指の先を当てて選びます．${tap}`
+    : "下のボタンに人差し指の先を当てて選びます";
 }
 
 /** 地図の下に出す凡例（板では主なものだけを文字で出す．全部は HTML の結果画面にある） */

@@ -9,6 +9,7 @@ import {
   type HandButtonPressState,
   handButtonCenter,
   handButtonProgress,
+  handPressPoint,
   INITIAL_HAND_BUTTON_PRESS,
   isAnyHandOverButton,
   isHandButtonArmed,
@@ -121,6 +122,116 @@ describe("isHandOverButton", () => {
     const left = handButtonCenter(center, Math.PI / 2);
     expect(isHandOverButton(yawQuat(Math.PI / 2), hand(), left, 0.12)).toBe(true);
     expect(isHandOverButton(IDENTITY, hand(), left, 0.12)).toBe(false);
+  });
+});
+
+/** 手のひらの中心と人差し指の先が離れた手（指先だけ・手のひらだけがボタンに入る形を作る） */
+const PALM_IN = { x: 0, y: 0, z: -0.5 };
+const TIP_IN = { x: 0, y: 0, z: -0.5 };
+const FAR = { x: 0, y: 0.3, z: -0.5 };
+const NON_FINITE = [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY];
+
+describe("handPressPoint", () => {
+  it("人差し指の先があればそれを判定点にする", () => {
+    const tip = { x: 0.01, y: 0.02, z: -0.4 };
+    expect(handPressPoint(hand({ indexTip: tip }))).toEqual(tip);
+  });
+
+  it("人差し指の先が無い時（記録の再生・mock 等）は手のひらの中心を判定点にする", () => {
+    const h = hand({ position: { x: 0.1, y: -0.1, z: -0.6 } });
+    expect(handPressPoint(h)).toEqual({ x: 0.1, y: -0.1, z: -0.6 });
+  });
+
+  it.each(NON_FINITE.flatMap((v) => (["x", "y", "z"] as const).map((axis) => [axis, v] as const)))(
+    "人差し指の先の %s が %s なら手のひらの中心に戻る",
+    (axis, v) => {
+      const position = { x: 0.1, y: -0.1, z: -0.6 };
+      const indexTip = { x: 0, y: 0, z: -0.5, [axis]: v };
+      expect(handPressPoint(hand({ position, indexTip }))).toEqual(position);
+    },
+  );
+});
+
+describe("isHandOverButton（人差し指の先で判定する）", () => {
+  const center = { x: 0, y: 0, z: -0.5 };
+
+  it("手のひらは範囲外でも，人差し指の先が範囲内なら入っている", () => {
+    expect(
+      isHandOverButton(IDENTITY, hand({ position: FAR, indexTip: TIP_IN }), center, 0.12),
+    ).toBe(true);
+  });
+
+  it("手のひらが範囲内でも，人差し指の先が範囲外なら入っていない", () => {
+    expect(
+      isHandOverButton(IDENTITY, hand({ position: PALM_IN, indexTip: FAR }), center, 0.12),
+    ).toBe(false);
+  });
+
+  it("人差し指の先がちょうど半径の距離は入っている・少しでも遠ければ入っていない（境界）", () => {
+    expect(
+      isHandOverButton(
+        IDENTITY,
+        hand({ position: FAR, indexTip: { x: 0.12, y: 0, z: -0.5 } }),
+        center,
+        0.12,
+      ),
+    ).toBe(true);
+    expect(
+      isHandOverButton(
+        IDENTITY,
+        hand({ position: PALM_IN, indexTip: { x: 0.121, y: 0, z: -0.5 } }),
+        center,
+        0.12,
+      ),
+    ).toBe(false);
+  });
+
+  it("人差し指の先が無ければ手のひらの中心で判定する", () => {
+    expect(isHandOverButton(IDENTITY, hand({ position: PALM_IN }), center, 0.12)).toBe(true);
+    expect(isHandOverButton(IDENTITY, hand({ position: FAR }), center, 0.12)).toBe(false);
+  });
+
+  it.each(NON_FINITE)("人差し指の先に %s を含む時は手のひらの中心で判定する", (v) => {
+    const broken = { x: v, y: 0, z: -0.5 };
+    expect(
+      isHandOverButton(IDENTITY, hand({ position: PALM_IN, indexTip: broken }), center, 0.12),
+    ).toBe(true);
+    expect(
+      isHandOverButton(IDENTITY, hand({ position: FAR, indexTip: broken }), center, 0.12),
+    ).toBe(false);
+  });
+
+  it("見失った手は人差し指の先が範囲内でも入っていない", () => {
+    expect(
+      isHandOverButton(
+        IDENTITY,
+        hand({ tracked: false, position: PALM_IN, indexTip: TIP_IN }),
+        center,
+        0.12,
+      ),
+    ).toBe(false);
+  });
+
+  it("人差し指の先も頭の座標系（頭を左へ 90° 向けた時の正面の指先は左のボタンに入る）", () => {
+    const left = handButtonCenter(center, Math.PI / 2);
+    const h = hand({ position: FAR, indexTip: TIP_IN });
+    expect(isHandOverButton(yawQuat(Math.PI / 2), h, left, 0.12)).toBe(true);
+    expect(isHandOverButton(IDENTITY, h, left, 0.12)).toBe(false);
+  });
+});
+
+describe("isAnyHandOverButton（人差し指の先で判定する）", () => {
+  const center = { x: 0, y: 0, z: -0.5 };
+  const tipOnly = hand({ position: FAR, indexTip: TIP_IN });
+  const palmOnly = hand({ position: PALM_IN, indexTip: FAR });
+
+  it.each([
+    ["左手の指先だけ入っている", tipOnly, untracked, true],
+    ["右手の指先だけ入っている", untracked, tipOnly, true],
+    ["左右とも手のひらだけ入っている（指先は外）", palmOnly, palmOnly, false],
+    ["左は手のひらだけ・右は指先が入っている", palmOnly, tipOnly, true],
+  ])("%s", (_name, left, right, expected) => {
+    expect(isAnyHandOverButton(IDENTITY, { left, right }, center, 0.12)).toBe(expected);
   });
 });
 

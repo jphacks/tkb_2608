@@ -30,6 +30,11 @@ export interface HandState {
   /** 握り具合（0 = 開いている，1 = 握っている） */
   readonly grip: number;
   /**
+   * 人差し指の先の位置（頭の座標系．position と同じ奥行きの見積もり．m）．手で押すボタンの判定点に使う．
+   * 指先を出せない入力（記録の再生等）では省き，判定は position に戻す．tracked が false の間は直前の値のまま
+   */
+  readonly indexTip?: Vec3;
+  /**
    * 手の 21 点の位置（頭の座標系．position と同じ．m）．番号は MediaPipe の HandLandmarker と同じ（0 = 手首，4 = 親指の先，8 = 人差し指の先 等）．
    * 手の形を描くために使う（Issue #160）．形を出せない入力（古い入力・記録の再生等）では省く．tracked が false の間は直前の値のまま
    */

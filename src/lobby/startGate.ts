@@ -4,8 +4,8 @@
 // - "hand"（本番の既定．Issue #110）: 手で開始ボタンに触れたら始める．自動では始めない
 //   （カメラが使えない時は開始画面で止めるため，ロビーに来る時は手を認識できる．startPolicy.ts）
 // - "auto"（手が無かった頃の方式．残しておく）: ゴーグルを付ける時間として autoStartSeconds たったら自動で始める
-// - 手（startMode が "hand" の時）: input/ の PlayerInput.hands で，tracked な手の手のひらがボタンの範囲に入った状態が
-//   handHoldSeconds 続いたら開始
+// - 手（startMode が "hand" の時）: input/ の PlayerInput.hands で，tracked な手の人差し指の先（指先が無い入力では
+//   手のひらの中心）がボタンの範囲に入った状態が handHoldSeconds 続いたら開始
 // - 注視（デバッグ用．本実装は input/ の PlayerInput.hands）: 視線がボタンを捉えた状態が
 //   gazeHoldSeconds 続いたら開始．装着中に誤って始まらないよう，
 //   端末が横向きでほぼ水平（ゴーグルに入れて前を向いた姿勢）の時だけ数える
@@ -27,7 +27,7 @@ export interface StartGateConfig {
   readonly autoStartSeconds: number;
   /** ボタンの中心（rig の座標．ヨー角 0 の時）．正面 0.5 m，目の高さ */
   readonly buttonOffset: Vec3;
-  /** 手がボタンに触れているとみなす，手のひらの中心からボタンの中心までの距離の上限（m） */
+  /** 手がボタンに触れているとみなす，判定点（人差し指の先．無ければ手のひらの中心）からボタンの中心までの距離の上限（m） */
   readonly handRadius: number;
   readonly handHoldSeconds: number;
   /** 注視しているとみなす，視線とボタンの方向のなす角の上限（rad） */
@@ -112,7 +112,18 @@ export function buttonCenter(
   return { x: x * c + z * s, y, z: -x * s + z * c };
 }
 
-/** 手（頭の座標系）がボタンの範囲に入っているか */
+/**
+ * 手で押す判定点（頭の座標系）．人差し指の先があればそれを，無い・値が有限でない時（記録の再生等）は手のひらの中心を使う．
+ * scenes/common/handButtonPress.ts の handPressPoint と同じ（画面を持つモジュール同士は import しないため持つ）
+ */
+export function handPressPoint(hand: HandState): Vec3 {
+  const t = hand.indexTip;
+  return t !== undefined && Number.isFinite(t.x) && Number.isFinite(t.y) && Number.isFinite(t.z)
+    ? t
+    : hand.position;
+}
+
+/** 手（頭の座標系）の判定点（handPressPoint）がボタンの範囲に入っているか */
 export function isHandOnButton(
   head: Quat,
   hand: HandState,
@@ -120,7 +131,7 @@ export function isHandOnButton(
   config: StartGateConfig = DEFAULT_START_GATE_CONFIG,
 ): boolean {
   if (!hand.tracked) return false;
-  const p = rotateVec(head, hand.position);
+  const p = rotateVec(head, handPressPoint(hand));
   const dx = p.x - center.x;
   const dy = p.y - center.y;
   const dz = p.z - center.z;

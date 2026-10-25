@@ -129,3 +129,25 @@ describe("mockHandState", () => {
     expect(tipDist(hand({ gripping: true }))).toBeLessThan(tipDist(hand({ gripping: false })) / 2);
   });
 });
+
+describe("mockHandState（手で押すボタンの判定点）", () => {
+  it.each([
+    ["見えている・開いた手", hand()],
+    ["見えている・握った手", hand({ gripping: true })],
+    ["見えていない手", INITIAL_MOCK_HAND],
+    ["画面の端・奥行き 0.8 m", hand({ ndcX: 1, ndcY: -1, depth: 0.8 })],
+  ])(
+    "%s は人差し指の先（indexTip）を返さない（ボタンはマウスの位置＝手のひらの中心で判定される）",
+    (_, s) => {
+      const h = mockHandState(s);
+      expect("indexTip" in h).toBe(false);
+      expect(h.indexTip).toBeUndefined();
+    },
+  );
+
+  it("21 点（形）を出していても indexTip は省く（形の 8 番を判定点にしない）", () => {
+    const h = mockHandState(hand());
+    expect(h.landmarks).toBeDefined();
+    expect(h.indexTip).toBeUndefined();
+  });
+});

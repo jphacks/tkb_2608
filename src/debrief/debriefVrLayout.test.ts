@@ -206,6 +206,14 @@ describe("debriefVrCaption", () => {
     expect(debriefVrCaption(true, false, false)).not.toContain("タップ");
   });
 
+  it("手が使える時はボタンに人差し指の先を当てて選ぶと伝える（手のひらとは言わない）", () => {
+    for (const touch of [true, false]) {
+      const text = debriefVrCaption(true, false, touch);
+      expect(text).toContain("ボタンに人差し指の先を当て");
+      expect(text).not.toContain("手のひら");
+    }
+  });
+
   it("手が見つからない時は手を出すよう案内する", () => {
     expect(debriefVrCaption(true, true, true)).toBe(DEBRIEF_HAND_PROMPT);
   });
