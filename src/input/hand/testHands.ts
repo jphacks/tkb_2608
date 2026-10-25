@@ -16,6 +16,9 @@ export const TEST_HAND_PARAMS: HandParams = {
   cameraOffsetZM: -0.08,
   skeletonDepthM: 1.2,
   skeletonDepthScale: 1.5,
+  // 既存のテストは画像の上の点をそのまま置く前提のため，届く範囲は広げない（広げた時は個別に上書きして確かめる）
+  reachGainX: 1,
+  reachGainY: 1,
 
   oneEuroMinCutoffHz: 1.0,
   oneEuroBeta: 1.5,

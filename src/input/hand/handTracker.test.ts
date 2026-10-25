@@ -704,3 +704,55 @@ describe("readHandTrack（skeletonHoldMs）", () => {
     expect(readHandTrack(b.track, b.t + 2 * DT, p200).landmarks).not.toBeNull();
   });
 });
+
+describe("handPositions（届く範囲の倍率．Issue #163）", () => {
+  const gained = testHandParams({ reachGainX: 1.2, reachGainY: 1.4 });
+  const cam = cameraModelOf(gained, IMG_W, IMG_H);
+
+  it("画像の中心にある手は倍率 1 と同じ所に置く", () => {
+    const obs = observation({ cx: 0.5, cy: 0.5 });
+    // 手のひらの中心が画像の中心に来るように，中心からのずれだけ手全体を動かす
+    const c = palmCenter(obs.landmarks);
+    const centered = {
+      ...obs,
+      landmarks: obs.landmarks.map((p) => ({ ...p, x: p.x - (c.x - 0.5), y: p.y - (c.y - 0.5) })),
+    };
+    const a = handPositions(centered, cam, gained);
+    const b = handPositions(centered, cam, P);
+    for (const k of ["x", "y", "z"] as const) {
+      expect(a?.palm[k]).toBeCloseTo(b?.palm[k] ?? Number.NaN, 9);
+      expect(a?.landmarks[8][k]).toBeCloseTo(b?.landmarks[8][k] ?? Number.NaN, 9);
+    }
+  });
+
+  it("端に寄った手は，手のひらの中心のずれを横 1.2 倍・縦 1.4 倍にした所に置く", () => {
+    const obs = observation({ cx: 0.85, cy: 0.2 });
+    const pos = handPositions(obs, cam, gained);
+    if (pos === null) throw new Error("位置が求められない");
+    const c = palmCenter(obs.landmarks);
+    const moved = { x: 0.5 + 1.2 * (c.x - 0.5), y: 0.5 + 1.4 * (c.y - 0.5), z: c.z };
+    const expected = imageToHead(moved, pos.depth, cam);
+    expect(pos.palm.x).toBeCloseTo(expected?.x ?? Number.NaN, 9);
+    expect(pos.palm.y).toBeCloseTo(expected?.y ?? Number.NaN, 9);
+    // 倍率 1 より外側（右・上）
+    const plain = handPositions(obs, cam, P);
+    expect(pos.palm.x).toBeGreaterThan(plain?.palm.x ?? Number.POSITIVE_INFINITY);
+    expect(pos.palm.y).toBeGreaterThan(plain?.palm.y ?? Number.POSITIVE_INFINITY);
+  });
+
+  it("手の形・大きさと奥行きは変えない（21 点の手のひらの中心からの差は倍率 1 と同じ）", () => {
+    const obs = observation({ cx: 0.2, cy: 0.75 });
+    const a = handPositions(obs, cam, gained);
+    const b = handPositions(obs, cam, P);
+    if (a === null || b === null) throw new Error("位置が求められない");
+    expect(a.depth).toBeCloseTo(b.depth, 9);
+    for (let i = 0; i < 21; i++) {
+      for (const k of ["x", "y", "z"] as const) {
+        expect(a.landmarks[i][k] - a.landmarks[0][k]).toBeCloseTo(
+          b.landmarks[i][k] - b.landmarks[0][k],
+          9,
+        );
+      }
+    }
+  });
+});
