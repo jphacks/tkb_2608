@@ -136,6 +136,25 @@
 - 1 つの PC で試すと，生徒のタブと見守り画面のタブの両方から同じ音が鳴る（読み上げは重なると片方が止まることがある）．見守り画面の音だけを聞く時は，見守り画面を `http://127.0.0.1:5173/?monitor#…` で開き（別のオリジンになる），生徒のタブ（`localhost`）のサイトをミュートする（効果音は消えるが，読み上げはミュートでは消えない）
 - `relay:dev` を止めると見守り画面は「中継につながりません．つなぎ直しています」と出し，起動し直すと 3 秒おきのつなぎ直しで自動で戻る（生徒の端末は 5 秒おき）
 
+### 配置の下書きのサーバー関数 (Floor Draft Function)
+
+エディタの「AI で下書きを作る」（ES3．SPEC_02「配置の下書き」）が呼ぶサーバー関数 `POST /api/floor-draft` は，Cloudflare Pages Functions として `functions/api/floor-draft.ts` に置く．Vite の開発サーバーでは動かないので，別のターミナルで `wrangler pages dev` を起動し，Vite が `/api` へのリクエストをそこへ流す（`vite.config.ts` の `server.proxy`）．
+
+| コマンド | 内容 |
+| --- | --- |
+| `npm run functions:dev` | サーバー関数をローカルで起動する（`wrangler pages dev`．`http://127.0.0.1:8788`）．`Ready on http://127.0.0.1:8788` が出るまで待ち，`npm run dev` と並べて使う．`x` か `Ctrl+C` で止める．Cloudflare へのログインは要らない |
+
+1. Google AI Studio（`https://aistudio.google.com/apikey`）で Gemini の API キーを発行する．チーム用の Google アカウントの「Default Gemini API Key」を使う．課金の設定（「お支払い情報を設定」）はしない（無料枠のまま）
+2. `.dev.vars.example` を `.dev.vars` に写し，`GEMINI_API_KEY=` の後にキーを入れる（`.dev.vars` は Git の管理外．キーをチャット・Issue・PR に貼らない）．`GEMINI_MODEL=` は空でよい（既定は `gemini-3.5-flash`）
+3. ターミナル 1 で `npm run functions:dev`，ターミナル 2 で `npm run dev` を実行し，`http://localhost:5173/?editor` を開く
+4. 下敷きに見取り図を読み込んでマス目に合わせ，「AI で下書きを作る」を押す（応答まで 10〜30 秒ほど）
+
+- `.dev.vars` は起動した時にしか読まれない．書き換えたら `npm run functions:dev` を起動し直す
+- `functions:dev` を起動していない時・キーが無い時は，ボタンが失敗の理由を出すだけで，エディタの他の機能は変わらない
+- 502 で 90 秒ほどかかる時は，Gemini の応答が遅く打ち切られている．`GEMINI_MODEL` を `gemini-flash-latest` 等の遅いモデルにしていないかを確かめる．429 は無料枠の回数の上限なので，少し待ってから押し直す
+- `functions/` の型チェックは `npm run typecheck`（`tsc -p functions` を含む）で，lint は `npm run lint` で行う．テストは `src/functions/` に置く（`functions/` の中に置くと Pages Functions の経路として読まれるため）
+- 本番・staging では，Cloudflare Pages の環境変数 `GEMINI_API_KEY` を使う（下の「デプロイ」）
+
 ### 正解付きの記録の集計 (Replay & Evaluate)
 
 `protocol.html` で取った正解付きの記録を今の判定に流し直し，区間ごとの指標を SPEC_01「判定の安定性」の目安と照らして端末に表で出す（`src/input/replay/replayCli.ts`．実体は `scripts/replay.mjs`）．
@@ -184,12 +203,12 @@ PR を作る前に，以下がすべて通ることを確認する．
 | --- | --- |
 | `npm run lint` | Biome で lint と整形の差分を確認する（書き換えない） |
 | `npm run format` | Biome で lint の自動修正と整形を行う（ファイルを書き換える） |
-| `npm run typecheck` | TypeScript の型チェック（`tsc` と，見守りの中継の `tsc -p relay`．出力はしない） |
+| `npm run typecheck` | TypeScript の型チェック（`tsc` と，見守りの中継の `tsc -p relay`，配置の下書きのサーバー関数の `tsc -p functions`．出力はしない） |
 | `npm test` | Vitest で単体テストを実行する（`src/**/*.test.ts` と，見守りの中継の `relay/src/**/*.test.ts`） |
 | `npm run build` | 型チェックの後，`dist/` に本番用のファイルを出力する（GitHub Pages 用に `base` が `/tkb_2608/` になる） |
 | `npm run preview` | `npm run build` の出力をローカルで配信して確認する |
 
-- Biome の対象は `src/`・`scripts/`・`relay/src/`・`relay/scripts/`・`vite.config.ts` と設定ファイル（`biome.json`・`tsconfig.json`・`package.json`・`relay/tsconfig.json`）だけに絞っている（`biome.json` の `files.includes`）．Biome は Markdown も整形できるため，対象を広げると `docs/`・`.claude/` のフロントマターや表が書き換えられてルールが壊れる（実際に起きた）．対象を広げない
+- Biome の対象は `src/`・`scripts/`・`relay/src/`・`relay/scripts/`・`functions/`・`vite.config.ts` と設定ファイル（`biome.json`・`tsconfig.json`・`package.json`・`relay/tsconfig.json`）だけに絞っている（`biome.json` の `files.includes`）．Biome は Markdown も整形できるため，対象を広げると `docs/`・`.claude/` のフロントマターや表が書き換えられてルールが壊れる（実際に起きた）．対象を広げない
 - ビルド時の「500 kB を超えるチャンクがある」という警告は three.js 等の大きさによるもので，現時点では無視してよい（必要になったら分割する）
 
 ## デプロイ (Deployment)
@@ -202,6 +221,13 @@ Cloudflare Pages に GitHub Actions が配信する（準備は [ENV_03](ENV_03_
 | 本番 | `https://tkb2608.pages.dev` | `main` 上のコミットに `v*` の annotated タグを push したとき（`deploy-prod.yml`） |
 
 PR では CI（`ci.yml`: lint・型チェック・テスト・ビルド）だけが動く．PR ごとのプレビューは今は作っていない（必要になったら追加する）．
+
+配置の下書きのサーバー関数（`functions/`）は，`wrangler pages deploy dist` がリポジトリ直下の `functions/` を一緒に配信する（ワークフローの変更は要らない）．API キーは管理者が Cloudflare のダッシュボードで登録する（Claude は登録しない）．
+
+1. Workers & Pages → プロジェクト → Settings → Variables and Secrets を開く
+2. `GEMINI_API_KEY` を種類「Secret」で，**Production と Preview の両方**に登録する（staging は Preview の値を使う）
+3. `GEMINI_MODEL` は登録しなくてよい（既定は `gemini-3.5-flash`）
+4. 登録した値は次の配信から効くので，登録の後に staging・本番を配信し直す
 
 ### staging の手動実行と自動配信の切り替え
 
