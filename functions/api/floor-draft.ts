@@ -2,7 +2,7 @@
  * 配置の下書き（ES3．SPEC_02「配置の下書き」）のサーバー関数（Cloudflare Pages Functions．`POST /api/floor-draft`）．
  *
  * - 受け取るもの: multipart/form-data（`image`: 切り出した PNG，`width`・`depth`: マス目の大きさ）．画像は 4 MB まで
- * - Gemini（`GEMINI_MODEL`．既定は gemini-flash-latest）に画像を渡し，部屋の矩形のリストを構造化出力で受け取る
+ * - Gemini（`GEMINI_MODEL`．既定は gemini-3.5-flash）に画像を渡し，部屋の矩形のリストを構造化出力で受け取る
  * - 返すもの: 検査済みの矩形のリスト（`FloorDraftApiResponse`）．マス目への変換はブラウザ側で行う
  *
  * API キー（`GEMINI_API_KEY`）はここにだけ置く．画像・キーはログに出さない．校舎のデータは受け取らない
@@ -23,7 +23,8 @@ interface Env {
   readonly GEMINI_MODEL?: string;
 }
 
-const DEFAULT_MODEL = "gemini-flash-latest";
+/** 既定のモデル．gemini-flash-latest（gemini-3.8-flash）は無料枠では応答に 60〜90 秒かかり，上限の時間を超えやすい */
+const DEFAULT_MODEL = "gemini-3.5-flash";
 
 /** Gemini の応答を待つ上限（ms） */
 const GEMINI_TIMEOUT_MS = 90_000;

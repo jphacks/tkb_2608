@@ -1,5 +1,5 @@
 # npm run functions:dev（wrangler pages dev）が読む値の雛形．.dev.vars に写して値を入れる（.dev.vars は Git の管理外）
 # Gemini の API キー（Google AI Studio で発行する．無料枠）
 GEMINI_API_KEY=
-# 使うモデル（任意．空なら gemini-flash-latest）
+# 使うモデル（任意．空なら gemini-3.5-flash）
 GEMINI_MODEL=
