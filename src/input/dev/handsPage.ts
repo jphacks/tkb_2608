@@ -5,7 +5,7 @@ import { HandCamera } from "../hand/handCamera";
 import { requestHandCameraStream } from "../hand/handCameraStream";
 import { type HandParams, handParamsFromSearch } from "../hand/handParams";
 import { cameraModelOf } from "../hand/handTracker";
-import { headToImage } from "../hand/projection";
+import { headToImage, sanitizeReachGain } from "../hand/projection";
 import { HAND_CONNECTIONS, type HandFrameResult, type HandReading } from "../hand/types";
 import { handRecord } from "../recorder/records";
 import { rememberDevPage } from "./devPages";
@@ -75,8 +75,18 @@ function drawReading(side: Handedness, reading: HandReading, w: number, h: numbe
   if (ctx === null || !reading.tracked) return;
   const r = hands.lastResult;
   const cam = cameraModelOf(hands.currentParams, r?.width ?? w, r?.height ?? h);
-  const palm = headToImage(reading.position, cam);
-  const tip = headToImage(reading.indexTip, cam);
+  const shown = headToImage(reading.position, cam);
+  const shownTip = headToImage(reading.indexTip, cam);
+  // 手の位置は届く範囲の倍率（reachGainX・Y）の分だけ画像の中心から離してあるため，映像の手に重ねる時は戻す．
+  // 動かした後の手のひらの中心 P = 0.5 + g × (元 − 0.5) なので，元 = 0.5 + (P − 0.5) ÷ g．人差し指の先も同じ量だけ戻す
+  const gx = sanitizeReachGain(hands.currentParams.reachGainX);
+  const gy = sanitizeReachGain(hands.currentParams.reachGainY);
+  const palm =
+    shown === null ? null : { x: 0.5 + (shown.x - 0.5) / gx, y: 0.5 + (shown.y - 0.5) / gy };
+  const tip =
+    shown === null || shownTip === null || palm === null
+      ? shownTip
+      : { x: shownTip.x - (shown.x - palm.x), y: shownTip.y - (shown.y - palm.y) };
   if (palm !== null) {
     ctx.strokeStyle = "#fff";
     ctx.lineWidth = 3;

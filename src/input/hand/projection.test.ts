@@ -6,6 +6,8 @@ import {
   focalLengthPx,
   headToImage,
   imageToHead,
+  reachShift,
+  sanitizeReachGain,
 } from "./projection";
 import { handLandmarks, IMG_H, IMG_W } from "./testHands";
 
@@ -35,6 +37,80 @@ describe("focalLengthPx", () => {
     [65, Number.NaN],
   ])("画角 %s°・幅 %s px なら NaN", (hfovDeg, width) => {
     expect(focalLengthPx({ hfovDeg, width })).toBeNaN();
+  });
+});
+
+describe("focalLengthPx（映像の縦横．Issue #163）", () => {
+  it("画角は長い辺に当てる: 縦長の映像（240x320）でも横長（320x240）と同じ焦点距離", () => {
+    const landscape = focalLengthPx({ hfovDeg: 65, width: 320, height: 240 });
+    expect(focalLengthPx({ hfovDeg: 65, width: 240, height: 320 })).toBeCloseTo(landscape, 9);
+    expect(focalLengthPx({ hfovDeg: 90, width: 240, height: 320 })).toBeCloseTo(160, 9);
+  });
+
+  it("height を省いた時・横長の時・有限でない height の時は幅に当てる（今までどおり）", () => {
+    const byWidth = focalLengthPx({ hfovDeg: 65, width: 320 });
+    expect(focalLengthPx({ hfovDeg: 65, width: 320, height: 240 })).toBeCloseTo(byWidth, 9);
+    expect(focalLengthPx({ hfovDeg: 65, width: 320, height: Number.NaN })).toBeCloseTo(byWidth, 9);
+  });
+
+  it("縦長の映像の右端の点は，短い辺の向きの画角の半分の向きに置く（横 65° の 4:3 なら縦の約 51° の半分）", () => {
+    const portrait = cam({ width: 240, height: 320, offset: { x: 0, y: 0, z: 0 } });
+    const p = imageToHead({ x: 1, y: 0.5, z: 0 }, 1, portrait);
+    const halfShortTan = Math.tan((65 * Math.PI) / 360) * 0.75;
+    expect(p?.x).toBeCloseTo(halfShortTan, 9);
+    // 上端は長い辺の向きの画角の半分
+    const top = imageToHead({ x: 0.5, y: 0, z: 0 }, 1, portrait);
+    expect(top?.y).toBeCloseTo(Math.tan((65 * Math.PI) / 360), 9);
+  });
+
+  it("縦長の映像でも，同じ大きさに写った手の奥行きは横長と同じ", () => {
+    const lm = handLandmarks({ size: 0.2 });
+    // 縦長では画像の高さ（長い辺）が横長の幅と同じ 320 px．手の長さ（px）をそろえるため，点の y を高さの比で直す
+    const portraitLm = lm.map((p) => ({ ...p, y: 0.5 + ((p.y - 0.5) * IMG_H) / IMG_W }));
+    const landscape = estimateDepth(lm, cam(), 0.095, 0.15, 1.0);
+    const portrait = estimateDepth(
+      portraitLm,
+      cam({ width: IMG_H, height: IMG_W }),
+      0.095,
+      0.15,
+      1.0,
+    );
+    expect(portrait).toBeCloseTo(landscape, 6);
+  });
+});
+
+describe("sanitizeReachGain", () => {
+  it.each([
+    [1.4, 1.4],
+    [1, 1],
+    [0.5, 0.5],
+    [0, 1],
+    [-1, 1],
+    [Number.NaN, 1],
+    [Number.POSITIVE_INFINITY, 1],
+  ])("%s → %s（有限の正の数でなければ 1）", (gain, expected) => {
+    expect(sanitizeReachGain(gain)).toBe(expected);
+  });
+});
+
+describe("reachShift", () => {
+  it("手のひらの中心の画像の中心からのずれを gain 倍にする分だけ動かす", () => {
+    const s = reachShift({ x: 0.8, y: 0.1 }, 1.5, 1.25);
+    expect(s.x).toBeCloseTo(0.15, 9);
+    expect(s.y).toBeCloseTo(-0.1, 9);
+  });
+
+  it("画像の中心にある手・倍率 1 の時は動かさない", () => {
+    expect(reachShift({ x: 0.5, y: 0.5 }, 1.4, 1.4)).toEqual({ x: 0, y: 0 });
+    const s = reachShift({ x: 0.9, y: 0.2 }, 1, 1);
+    expect(s.x).toBeCloseTo(0, 12);
+    expect(s.y).toBeCloseTo(0, 12);
+  });
+
+  it("おかしな倍率は 1 とみなして動かさない", () => {
+    const s = reachShift({ x: 0.9, y: 0.2 }, Number.NaN, -2);
+    expect(s.x).toBeCloseTo(0, 12);
+    expect(s.y).toBeCloseTo(0, 12);
   });
 });
 
