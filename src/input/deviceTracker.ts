@@ -5,6 +5,7 @@ import {
   type CalibrationProfile,
   IDLE_PLAYER_INPUT,
   type PlayerInput,
+  type Posture,
   UNTRACKED_HAND,
 } from "../core/types";
 import {
@@ -119,6 +120,16 @@ export class DeviceTracker {
    */
   reset(): void {
     this.safeReset();
+  }
+
+  /**
+   * 体の判定を初期化し，姿勢を posture に戻す（キャリブレーションの後等）．頭の向きは保つ．
+   * resetBody が動作の途中・長い積分（slowV・slowH）・逃げ道や立った足踏みの数も 0 に戻すので，
+   * 戻した姿勢から同じ動作で二重に切り替えることはない
+   */
+  resetPosture(posture: Posture = "standing"): void {
+    this.safeReset();
+    this.body.posture.posture = posture;
   }
 
   private safeReset(): void {
