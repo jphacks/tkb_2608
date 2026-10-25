@@ -283,6 +283,6 @@ export function readHandTrack(track: HandTrack, now: number, params: HandParams)
 
 /** PlayerInput に載せる形にする（今の HandState にある項目だけ．Issue #64）．21 点が無ければ landmarks を省く */
 export function toHandState(r: HandReading): HandState {
-  const s = { tracked: r.tracked, position: r.position, grip: r.grip };
+  const s = { tracked: r.tracked, position: r.position, grip: r.grip, indexTip: r.indexTip };
   return r.landmarks === null ? s : { ...s, landmarks: r.landmarks };
 }

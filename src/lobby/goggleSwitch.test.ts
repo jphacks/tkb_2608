@@ -205,6 +205,13 @@ describe("goggleOffPanel", () => {
     expect(panel.caption).toContain("タップ");
   });
 
+  it("手が使える時はボタンに人差し指の先を当てるよう伝える（結果へ・ホームへとも．手のひらとは言わない）", () => {
+    for (const panel of [goggleOffPanel(true), goggleOffPanel(true, false, "home")]) {
+      expect(panel.body).toContain("ボタンに人差し指の先を当て");
+      expect(panel.body).not.toContain("手のひら");
+    }
+  });
+
   it("手が見つからない時は手を出すよう案内する", () => {
     expect(goggleOffPanel(true, true).caption).toBe(GOGGLE_HAND_PROMPT);
   });
@@ -217,10 +224,13 @@ describe("goggleOffPanel", () => {
 });
 
 describe("goggleOnGuideLines", () => {
-  it("手が使える時はボタンに手のひらをかざすと伝える", () => {
-    const lines = goggleOnGuideLines(true);
-    expect(lines).toHaveLength(3);
-    expect(lines[2]).toContain("ボタンに手のひらをかざす");
+  it("手が使える時はボタンに人差し指の先を当てると伝える（手のひらとは言わない）", () => {
+    for (const demo of [false, true]) {
+      const lines = goggleOnGuideLines(true, demo);
+      expect(lines).toHaveLength(3);
+      expect(lines[2]).toContain("ボタンに人差し指の先を当てる");
+      expect(lines.join("")).not.toContain("手のひら");
+    }
   });
 
   it("ロビーへ進む時（デモでない）は，押すのがロビーの開始ボタンだと伝える", () => {
@@ -246,6 +256,12 @@ describe("goggleOnConfirmPanel", () => {
     const panel = goggleOnConfirmPanel(true, 3);
     expect(panel.body).toContain("ボタン");
     expect(panel.caption).toBe("");
+  });
+
+  it("手が使える時はボタンに人差し指の先を当てるよう伝える（手のひらとは言わない）", () => {
+    const panel = goggleOnConfirmPanel(true, 3);
+    expect(panel.body).toContain("ボタンに人差し指の先を当て");
+    expect(panel.body).not.toContain("手のひら");
   });
 
   it("手が見つからない時は手を出すよう案内する", () => {

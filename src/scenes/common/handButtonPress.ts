@@ -1,5 +1,5 @@
 // 手で押すボタン（VR の中）の押した判定（three.js・DOM に依存しない純粋な関数．Issue #145）．
-// 手のひらの中心がボタンの範囲に入った状態が holdSeconds 続いたら押した扱いにする（離れたら数え直す）．
+// 人差し指の先（指先が無い入力では手のひらの中心）がボタンの範囲に入った状態が holdSeconds 続いたら押した扱いにする（離れたら数え直す）．
 // 判定はロビーの開始ボタン（lobby/startGate.ts の advanceStartGate の手の判定）と同じ．
 // 座標は rig（目の位置が原点，回転なし）の座標系．-z が正面，y が上
 
@@ -8,7 +8,7 @@ import type { Handedness, HandState, Quat, Vec3 } from "../../core/types";
 export interface HandButtonPressConfig {
   /** 手をかざし続けたら押した扱いにする秒数（s） */
   readonly holdSeconds: number;
-  /** 手がボタンに触れているとみなす，手のひらの中心からボタンの中心までの距離の上限（m） */
+  /** 手がボタンに触れているとみなす，判定点（handPressPoint）からボタンの中心までの距離の上限（m） */
   readonly radius: number;
   /**
    * ボタンを出してから押せるようにするまでの秒数（s）．前の画面からかざしたままの手で
@@ -72,7 +72,18 @@ export function handButtonCenter(offset: Vec3, parentYaw: number): Vec3 {
   return { x: offset.x * c + offset.z * s, y: offset.y, z: -offset.x * s + offset.z * c };
 }
 
-/** 手（頭の座標系）の手のひらの中心がボタンの範囲に入っているか．見失った手・値が壊れた手は入っていない扱い */
+/**
+ * 手で押す判定点（頭の座標系）．人差し指の先があればそれを，無い・値が有限でない時（記録の再生等）は手のひらの中心を使う．
+ * lobby/startGate.ts の handPressPoint と同じ（画面を持つモジュール同士は import しないため持つ）
+ */
+export function handPressPoint(hand: HandState): Vec3 {
+  const t = hand.indexTip;
+  return t !== undefined && Number.isFinite(t.x) && Number.isFinite(t.y) && Number.isFinite(t.z)
+    ? t
+    : hand.position;
+}
+
+/** 手（頭の座標系）の判定点（handPressPoint）がボタンの範囲に入っているか．見失った手・値が壊れた手は入っていない扱い */
 export function isHandOverButton(
   head: Quat,
   hand: HandState,
@@ -80,7 +91,7 @@ export function isHandOverButton(
   radius: number,
 ): boolean {
   if (!hand.tracked) return false;
-  const p = rotateByQuat(head, hand.position);
+  const p = rotateByQuat(head, handPressPoint(hand));
   const dx = p.x - center.x;
   const dy = p.y - center.y;
   const dz = p.z - center.z;

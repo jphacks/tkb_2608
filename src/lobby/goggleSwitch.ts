@@ -207,7 +207,7 @@ export function goggleOffPanel(
     }
     return {
       title,
-      body: "目の前のボタンに手のひらをかざしてから，ゴーグルを外してスマホの画面を見てください",
+      body: "目の前のボタンに人差し指の先を当ててから，ゴーグルを外してスマホの画面を見てください",
       caption: handPrompt ? GOGGLE_HAND_PROMPT : "ゴーグルを外して画面をタップしても進みます",
     };
   }
@@ -220,7 +220,7 @@ export function goggleOffPanel(
   }
   return {
     title: "訓練が終わりました",
-    body: "目の前のボタンに手のひらをかざしてから，ゴーグルを外してスマホの画面を見てください",
+    body: "目の前のボタンに人差し指の先を当ててから，ゴーグルを外してスマホの画面を見てください",
     caption: handPrompt ? GOGGLE_HAND_PROMPT : "ゴーグルを外して画面をタップしても進みます",
   };
 }
@@ -240,7 +240,7 @@ export function goggleOnGuideLines(handsUsable: boolean, demo = false): readonly
   const then = demo ? "非常ベルが鳴って避難訓練が始まります" : "訓練の準備が始まります";
   const button = demo ? "目の前のボタン" : "目の前の開始ボタン";
   const last = handsUsable
-    ? `ゴーグルを着けたら，まっすぐ前を向いて，${button}に手のひらをかざすと${then}`
+    ? `ゴーグルを着けたら，まっすぐ前を向いて，${button}に人差し指の先を当てると${then}`
     : `ゴーグルを着けたら，まっすぐ前を向いて待つと${then}`;
   return [
     "スマホは横向きのまま，画面をゴーグルの奥に向けて入れてください",
@@ -272,7 +272,7 @@ export function goggleOnConfirmPanel(
   }
   return {
     title,
-    body: `準備ができたら，目の前のボタンに手のひらをかざしてください．${then}`,
+    body: `準備ができたら，目の前のボタンに人差し指の先を当ててください．${then}`,
     caption: handPrompt ? GOGGLE_HAND_PROMPT : "",
   };
 }

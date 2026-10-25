@@ -154,10 +154,23 @@ describe("describeStartGate", () => {
     expect(d.narration).not.toBeNull();
   });
 
-  it("手での開始（残り null）ではボタンに手をかざすよう案内する", () => {
+  it("手での開始（残り null）ではボタンに人差し指の先を当てるよう表示・読み上げで案内する", () => {
     const d = describeStartGate(false, null, false);
     expect(d.key).toBe("startGate:hand");
-    expect(d.body).toContain("手");
+    expect(d.body).toContain("ボタンに人差し指の先を");
+    expect(d.body).toContain("当て");
+    expect(d.body).not.toContain("手のひら");
+    expect(d.narration).toContain("人差し指の先");
+    expect(d.narration).toContain("当て");
+    expect(d.narration).not.toContain("手のひら");
+    expect(d.narration).not.toContain("かざ");
+  });
+
+  it("「もう一度」の手での開始も人差し指の先を当てるよう案内する", () => {
+    const d = describeStartGate(true, null, false);
+    expect(d.body).toContain("人差し指の先");
+    expect(d.body).not.toContain("手のひら");
+    expect(d.narration).toContain("人差し指の先");
   });
 
   it("注視（debug）が無効なら注視・Enter の案内を出さない", () => {
@@ -202,10 +215,17 @@ describe("describeStartGate（手が見つからない案内．Issue #110）", (
     expect(describeStartGate(false, null, false, null).key).toBe("startGate:hand");
   });
 
-  it("手での開始の案内は手のひらを 1 秒かざすことを伝える", () => {
+  it("手での開始の案内は人差し指の先を 1 秒当てることを伝える（手のひらとは言わない）", () => {
     const d = describeStartGate(false, null, false);
-    expect(d.body).toContain("手のひら");
-    expect(d.body).toContain("1 秒");
+    expect(d.body).toContain("人差し指の先を 1 秒当て");
+    expect(d.body).not.toContain("手のひら");
+    expect(d.body).not.toContain("かざ");
+  });
+
+  it("手が見つからない案内でも，映ったら人差し指の先を当てるよう伝える", () => {
+    const d = describeStartGate(false, null, false, 0);
+    expect(d.body).toContain("人差し指の先を 1 秒当て");
+    expect(d.body).not.toContain("手のひら");
   });
 
   it("handPrompt があれば「手を目の前に出して，カメラに映るように」と案内し，読み上げる", () => {
@@ -378,14 +398,17 @@ describe("describeCalibration（見え方の調整をボタンで終える．ali
     ...patch,
   });
 
-  it("alignButton を渡すと残り秒数を出さず（制限時間なし），ボタンに手をかざすよう案内する", () => {
+  it("alignButton を渡すと残り秒数を出さず（制限時間なし），ボタンに人差し指の先を当てるよう案内する", () => {
     const s = startCalibration(null);
     const d = describeCalibration(s, DEFAULT_CALIBRATION_CONFIG, prompt());
     expect(d.remainingSeconds).toBeNull();
     expect(d.progressLabel).toBeNull();
     expect(d.body).toContain("ボタン");
-    expect(d.body).toContain("手のひら");
-    expect(d.narration).not.toBeNull();
+    expect(d.body).toContain("人差し指の先を 1 秒当て");
+    expect(d.body).not.toContain("手のひら");
+    expect(d.narration).toContain("人差し指の先");
+    expect(d.narration).toContain("当て");
+    expect(d.narration).not.toContain("かざ");
     expect(d.key).not.toBe(describeCalibration(s).key);
     // 時間がたっても残り秒数は出ない
     expect(
@@ -458,7 +481,7 @@ describe("describeCalibration（見え方の調整の文は「丸」．Issue #17
     expect(d.narration).toContain("丸が一つに重なって");
   });
 
-  it("ボタンで終える時は，丸の下のボタンに手のひらをかざすよう表示し，読み上げも丸が重なるよう案内する", () => {
+  it("ボタンで終える時は，丸の下のボタンに人差し指の先を当てるよう表示し，読み上げも丸が重なるよう案内する", () => {
     const d = describeCalibration(s, DEFAULT_CALIBRATION_CONFIG, {
       gazeEnabled: false,
       handPrompt: null,
