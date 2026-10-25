@@ -3,7 +3,8 @@
 // 開発サーバーでは ?audio で避難の音（src/audio/）だけを鳴らして確かめる．
 // ?editor で教員用のエディタ（src/editor/．Canvas 2D の上から見た図．「3D で見る」で校舎の 3D も確かめられる）を起動する．
 // ?monitor で教員用の見守り画面（src/monitor/．中継から届いた生徒の状態で校舎を描き直す）を起動する．
-// 付けなければ，URL パラメータ（?scene=room 等）で選んだ空間を一人称で表示する PC 確認用のビューア．
+// 何も付けなければ，教員用のホーム画面（src/portal/．キービジュアルと「エディタを開く」（?editor）だけ）を出す．
+// ?viewer・?scene=・?input= を付けると，URL パラメータ（?scene=room 等）で選んだ空間を一人称で表示する PC 確認用のビューア．
 // ビューアはドラッグで視点を回し，画面のボタンで歩く・しゃがむ・ドアを開閉できる（VR 表示は後の Issue で足す）
 // ?input=mock|device を付けると，ボタン・ドラッグの代わりに担当D の入力（足踏み・しゃがみ・頭の向き）で歩く
 import * as THREE from "three";
@@ -22,6 +23,7 @@ import { createGeminiDraftProvider } from "./editor/geminiDraftProvider";
 import { parseInputKind } from "./input/inputParam";
 import { createInputSource, type InputKind } from "./input/inputSource";
 import { InputPreview } from "./inputPreview";
+import { startPortal } from "./portal/portal";
 import { AVAILABLE_SPACE_IDS, createSpace, createWalkWorld } from "./scenes";
 import { advanceAlarmSeconds, parseAlarmClock } from "./scenes/alarmClock";
 import { createHandMarkers, type HandMarkers } from "./scenes/common/handMarkers";
@@ -263,6 +265,9 @@ if (launchMode === "app") {
 } else if (launchMode === "monitor") {
   // 見守り画面（校舎の読み込みを待ってから描き始める）
   void startMonitorApp();
-} else {
+} else if (launchMode === "viewer") {
   startViewer();
+} else {
+  // 教員用のホーム画面（three.js は使わない）
+  startPortal();
 }

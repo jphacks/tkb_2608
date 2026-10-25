@@ -1,12 +1,13 @@
 // 起動の経路を URL パラメータから決める（DOM に依存しない純粋な関数）
-// - 既定: 空間のビューア（?scene=room 等．PC 確認用．従来どおり）
+// - 既定（パラメータ無し・どれにも当たらない）: 教員用のホーム画面（本番でも使う．進む先は ?editor だけ）
 // - ?app: 体験の流れ（開始画面 → ロビー → シナリオ → 結果）
 // - ?debrief: 結果画面だけを，デモの校舎と手で作った記録で表示する（開発用．?app が優先）
 // - ?audio: 避難の音（audio/）だけを鳴らして確かめる（開発用．?app・?debrief が優先）
 // - ?editor: 教員用のエディタ（本番でも使う．?app・?debrief・?audio が優先）
 // - ?monitor: 教員用の見守り画面（本番でも使う．?app・?debrief・?audio・?editor が優先）
+// - ?viewer・?scene=・?input=: 空間のビューア（PC 確認用．上のどれも当たらない時．?scene=room 等の開発の URL をそのまま使える）
 
-export type LaunchMode = "viewer" | "app" | "debrief" | "audio" | "editor" | "monitor";
+export type LaunchMode = "home" | "viewer" | "app" | "debrief" | "audio" | "editor" | "monitor";
 
 export function resolveLaunchMode(search: string): LaunchMode {
   const params = new URLSearchParams(search);
@@ -15,7 +16,9 @@ export function resolveLaunchMode(search: string): LaunchMode {
   if (isOn(params.get("audio"))) return "audio";
   if (isOn(params.get("editor"))) return "editor";
   if (isOn(params.get("monitor"))) return "monitor";
-  return "viewer";
+  // ?scene=・?input= は値で空間・入力を選ぶため，値が 0・false でも付いていればビューアにする
+  if (isOn(params.get("viewer")) || params.has("scene") || params.has("input")) return "viewer";
+  return "home";
 }
 
 /** URL パラメータが付いていて，0・false（大文字小文字を問わない）でないか */
