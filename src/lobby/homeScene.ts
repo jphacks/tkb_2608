@@ -48,6 +48,7 @@ export const HOME_START_CONFIRM = "音量や画面の明るさは大丈夫です
 export const HOME_GOGGLE_GUIDE: readonly string[] = [
   "「スタート」を押したら，スマホを横向きにしてゴーグルに入れ，ゴーグルを着けてください",
   "このあとは画面に触らずに進みます",
+  "画面の回転ロックはオフにしてください（オンのままだと，画面が逆さまになることがあります）",
 ];
 
 const STYLE = `
