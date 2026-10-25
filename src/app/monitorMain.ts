@@ -72,7 +72,7 @@ const LOBBY_PANEL_FOLLOW_RATE = 1.2;
 const LOBBY_BACKGROUND = 0x10141c;
 
 /**
- * lobby/ の部屋・指示の板・開始ボタン・見え方の調整の十字を，見守り画面のロビーの形にする．
+ * lobby/ の部屋・指示の板・開始ボタン・見え方の調整の丸を，見守り画面のロビーの形にする．
  * 手の印と開始ボタンの進み具合のリングは送られないので描かない
  */
 function createMonitorLobby(): MonitorLobbyWorld {
@@ -93,7 +93,7 @@ function createMonitorLobby(): MonitorLobbyWorld {
     show(view) {
       panel.show({ title: view.title, body: view.body, caption: view.caption });
       button.object.visible = view.startButton;
-      // marker.object の表示は見守り画面がロビーの間だけにするので，十字の有無は子の表示で切り替える
+      // marker.object の表示は見守り画面がロビーの間だけにするので，丸の有無は子の表示で切り替える
       for (const child of marker.object.children) child.visible = view.alignMarker;
     },
     follow(headYaw, dt) {

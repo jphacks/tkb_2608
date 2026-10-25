@@ -51,7 +51,7 @@ export interface MonitorLobbyNotice {
   readonly caption: string;
   /** 開始ボタンを出しているか（開始ボタンを待つ間） */
   readonly startButton: boolean;
-  /** 見え方の調整の十字を出しているか */
+  /** 見え方の調整の丸を出しているか */
   readonly alignMarker: boolean;
 }
 
