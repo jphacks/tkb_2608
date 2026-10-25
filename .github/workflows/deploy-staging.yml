@@ -158,6 +158,9 @@ jobs:
       - name: Build
         if: steps.secrets.outputs.ready == 'true'
         run: npm run build
+        env:
+          # 見守りの中継の住所（リポジトリの変数．docs/02_ENV/ENV_04「中継の住所の渡し方」）．未設定なら見守りは動かない
+          VITE_MONITOR_RELAY_URL: ${{ vars.MONITOR_RELAY_URL }}
 
       - name: Deploy to Cloudflare Pages (staging)
         if: steps.secrets.outputs.ready == 'true'
