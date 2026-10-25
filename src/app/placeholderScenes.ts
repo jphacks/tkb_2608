@@ -7,6 +7,8 @@ import { createNoticeBoard, type NoticeBoard } from "../lobby/noticeBoard";
 import { buildDrillScenario } from "../scenario/drill";
 import { startScenario } from "../scenario/engine";
 import { DEMO_SCHOOL } from "../share/samples/demoSchool";
+import { evaluateDrill } from "../sim/evaluate";
+import { computeSpread } from "../sim/spread";
 import { createSampleDrill } from "./sampleDrill";
 import {
   advancePlaceholderTimer,
@@ -82,7 +84,10 @@ export function createScenarioPlaceholder(options: ScenarioPlaceholderOptions = 
         done = true;
         // 校舎データ（#p=）が無い・読めない時はデモの校舎を使う（SPEC_01「起動の切り替え」）
         ctx.session.plan ??= DEMO_SCHOOL;
-        ctx.session.drill = createSampleDrill(ctx.session.plan, "good");
+        // 評価は仮の値ではなく evaluateDrill で求める（見守り画面が記録から求め直す結果とそろえるため）
+        const plan = ctx.session.plan;
+        const { track } = createSampleDrill(plan, "good");
+        ctx.session.drill = { track, evaluation: evaluateDrill(plan, computeSpread(plan), track) };
         ctx.goTo("debrief");
       }
     },

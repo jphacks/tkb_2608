@@ -7,7 +7,7 @@ import { createAlarmSample, createDrillAudio, type DrillAudio } from "../audio";
 import { createEventBus } from "../core/event-bus";
 import type { AppEvent } from "../core/events";
 import type { Scene, SceneContext, SceneId, Session, Stage } from "../core/scene";
-import type { CalibrationProfile } from "../core/types";
+import type { CalibrationProfile, Posture } from "../core/types";
 import { createDebriefScene } from "../debrief/debriefScene";
 import { parseInputKind } from "../input/inputParam";
 import { createInputSource, type InputSource } from "../input/inputSource";
@@ -20,8 +20,18 @@ import type { AcquiredDevices } from "../lobby/permissions";
 import { createStartScene } from "../lobby/startScene";
 import { TRAINING_BACKGROUND_CSS, TRAINING_BOX_CSS } from "../lobby/trainingTheme";
 import { createScreenWakeLock } from "../lobby/wakeLock";
+import { createPlanFingerprintFromHash } from "../share/monitorIds";
 import { loadPlanFromHash } from "../share/planHash";
+import { DEMO_SCHOOL } from "../share/samples/demoSchool";
 import { resolveDebug, resolveStereo } from "./launchMode";
+import {
+  createMonitorSender,
+  loadStudentId,
+  type MonitorSnapshot,
+  monitorPhaseOfScene,
+  monitorPitchOfDirection,
+  monitorYawOfDirection,
+} from "./monitorSender";
 import { createScenarioPlaceholder } from "./placeholderScenes";
 import { withResolvedRoute } from "./resolvedRoute";
 import { yawOnly } from "./yawOnlyCalibration";
@@ -31,6 +41,19 @@ const VR_SCENES: ReadonlySet<SceneId> = new Set<SceneId>(["lobby", "scenario"]);
 
 /** 1 フレームの dt の上限（タブが裏に回った後等に大きく飛ばないため） */
 const MAX_DT = 0.1;
+
+// 見守りへ送る状態を作る作業用の値（1 秒に 20 回使うため，1 回だけ作って使い回す）
+const monitorPosition = new THREE.Vector3();
+const monitorDirection = new THREE.Vector3();
+const monitorSnapshot: { -readonly [K in keyof MonitorSnapshot]: MonitorSnapshot[K] } = {
+  floor: 0,
+  posture: "standing",
+  t: 0,
+  x: 0,
+  z: 0,
+  yaw: 0,
+  pitch: 0,
+};
 
 export function startApp(): void {
   const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -129,7 +152,13 @@ export function startApp(): void {
         volumeCheckAlarm,
         wakeLock,
       }),
-    lobby: () => createLobbyScene({ debug, isPaused: () => orientationGuide.visible }),
+    lobby: () =>
+      createLobbyScene({
+        debug,
+        isPaused: () => orientationGuide.visible,
+        // 見守り画面が同じロビーの板を描けるよう，板の内容が変わるたびに送る（送れなくてもロビーは変わらない）
+        onPanelView: (view) => monitor.notifyLobby(view),
+      }),
     scenario: () => createScenarioPlaceholder({ debug, isPaused: () => orientationGuide.visible }),
     debrief: () =>
       createDebriefScene({
@@ -138,6 +167,39 @@ export function startApp(): void {
   };
 
   let current: Scene | null = null;
+  // 見守りへ送る値のうち，カメラから取れないもの（避難の画面に入った時刻（performance.now() の ms）と最新の姿勢）
+  let drillStartMs = 0;
+  let latestPosture: Posture = "standing";
+
+  // 見守りの中継へ送る（#p= の後ろの room= と，ビルドの VITE_MONITOR_RELAY_URL がある時だけ．無ければ何もしない）．
+  // 体験の流れはこの送信を待たず，送信の失敗も体験に影響しない（SPEC_01「見守り」の「体験との約束」）
+  const monitor = createMonitorSender({
+    relayUrl: import.meta.env.VITE_MONITOR_RELAY_URL,
+    hash: window.location.hash,
+    getStudentId: () => loadStudentId(() => window.sessionStorage),
+    getPlanFingerprint: () => createPlanFingerprintFromHash(window.location.hash),
+    getMode: () => (session.plan ?? DEMO_SCHOOL).drill.mode,
+    readState: () => {
+      // 状態を送るのは避難の画面とロビー（見守り画面が同じ目線で描く）だけ
+      if (current === null || switching) return null;
+      if (current.id !== "scenario" && current.id !== "lobby") return null;
+      const inLobby = current.id === "lobby";
+      // 生徒の画面で今描いているカメラの，ワールドでの位置と向き（rig の位置・体の向き・頭の向きを反映したもの）
+      camera.getWorldPosition(monitorPosition);
+      camera.getWorldDirection(monitorDirection);
+      // 避難の画面は今は仮で階を持たないため，開始地点の階を送る（避難の画面ができたらそこから取る）
+      monitorSnapshot.floor = (session.plan ?? DEMO_SCHOOL).drill.start.floor;
+      monitorSnapshot.posture = latestPosture;
+      // 仮の避難の画面には非常ベルが無いため，画面に入った時を 0 秒とする（避難の画面ができたら非常ベルからの秒数にする）
+      // ロビーは非常ベルの前なので負の数にする（見守り画面はロビーの間 t を使わない）
+      monitorSnapshot.t = inLobby ? -1 : (performance.now() - drillStartMs) / 1000;
+      monitorSnapshot.x = monitorPosition.x;
+      monitorSnapshot.z = monitorPosition.z;
+      monitorSnapshot.yaw = monitorYawOfDirection(monitorDirection.x, monitorDirection.z);
+      monitorSnapshot.pitch = monitorPitchOfDirection(monitorDirection.y);
+      return monitorSnapshot;
+    },
+  });
   // 最初の画面（開始画面）へは，URL の校舎データ（#p=）を読み終えてから進む（開始画面が planLoadError を読むため）
   let pending: SceneId | null = null;
   let switching = false;
@@ -162,6 +224,12 @@ export function startApp(): void {
     stage,
     session,
     goTo(next) {
+      // 避難の画面から結果画面へ進む時が「避難が終わった」（集合場所に着いた・時間切れ）
+      if (next === "debrief" && current?.id === "scenario") {
+        monitor.setPhase("goal");
+        // 見守り画面が同じ結果画面を出せるよう，その回の記録を送る（評価は見守り画面が求め直す）
+        if (session.drill !== null) monitor.sendTrack(session.drill.track);
+      }
       // 許可の画面は起動直後の 1 回だけ（許可・カメラ・AudioContext は取り直さない）
       pending = resolveSceneRequest(next, devices.current !== null);
     },
@@ -174,6 +242,9 @@ export function startApp(): void {
       current = null;
       // 前の画面の音は次の画面へ持ち越さない（購読は続けるので，次の画面の enter で流した cue は鳴る）
       drillAudio?.stopAll();
+      // 中継へは許可を取った後（ホームに入る時）につなぐ．つながるのを待たない
+      if (id === "home") monitor.start();
+      if (id === "scenario") drillStartMs = performance.now();
       const factory = factories[id];
       if (factory === undefined) {
         console.warn(`未実装の画面です: ${id}`);
@@ -182,6 +253,9 @@ export function startApp(): void {
       const next = factory();
       await next.enter(ctx);
       current = next;
+      // 画面に入り終えてから知らせる（避難の画面の開始地点にカメラが置かれてから状態を送り始めるため）
+      const phase = monitorPhaseOfScene(id);
+      if (phase !== null) monitor.setPhase(phase);
     } catch (error) {
       console.error(`画面の切り替えに失敗しました: ${id}`, error);
     } finally {
@@ -223,6 +297,7 @@ export function startApp(): void {
     // InputSource.read は performance.now() の時刻を受け取る（センサーのサンプルの時刻と同じ時計にする）
     const frameInput = input.read(performance.now());
     const { head } = frameInput;
+    latestPosture = frameInput.posture;
     camera.quaternion.set(head.x, head.y, head.z, head.w);
     if (current !== null && !switching) current.update({ dt, input: frameInput });
 
