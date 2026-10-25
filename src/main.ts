@@ -15,7 +15,7 @@ import { DragLook } from "./controls/dragLook";
 import { type DoorButtonTarget, WalkButtons } from "./controls/walkButtons";
 import { createEventBus } from "./core/event-bus";
 import type { AppEvent } from "./core/events";
-import type { PlayerInput } from "./core/types";
+import type { PlayerInput, Posture } from "./core/types";
 import { startEditor } from "./editor/editor";
 import { parseInputKind } from "./input/inputParam";
 import { createInputSource, type InputKind } from "./input/inputSource";
@@ -24,6 +24,7 @@ import { AVAILABLE_SPACE_IDS, createSpace, createWalkWorld } from "./scenes";
 import { advanceAlarmSeconds, parseAlarmClock } from "./scenes/alarmClock";
 import { createHandMarkers, type HandMarkers } from "./scenes/common/handMarkers";
 import { createDevDoors, type DevDoor, findNearbyDevDoor } from "./scenes/devDoors";
+import { isSchoolSpace } from "./scenes/school/schoolPlanScene";
 import { resolveSpaceId } from "./scenes/spaceParam";
 import type { Space } from "./scenes/types";
 import { SpaceWalker } from "./scenes/walk/walker";
@@ -72,8 +73,11 @@ interface WalkSetup {
   readonly toggleNearbyDoor: () => DoorButtonTarget | null;
   /** 画面の左上に出す歩行の状態（位置・エリア・直前の出入り・近くのドア） */
   readonly statusLines: () => string[];
-  /** 非常ベルの時刻を dt（s）進め，空間の毎フレームの更新（火と煙等）を呼ぶ．camera の位置が決まった後に呼ぶ */
-  readonly updateSpace: (dt: number) => void;
+  /**
+   * 非常ベルの時刻を dt（s）進め，空間の毎フレームの更新（火と煙・赤い表示等）を呼ぶ．camera の位置が決まった後に呼ぶ．
+   * posture は今の姿勢（校舎が赤い表示を判定するのに使う）
+   */
+  readonly updateSpace: (dt: number, posture: Posture) => void;
 }
 
 function setupWalk(scene: THREE.Scene, camera: THREE.PerspectiveCamera, space: Space): WalkSetup {
@@ -113,10 +117,17 @@ function setupWalk(scene: THREE.Scene, camera: THREE.PerspectiveCamera, space: S
 
   // 非常ベルの時刻．単独で開いた時は空間を作った時を 0 秒（?t= でずらし，?speed= で速める）
   const alarmClock = parseAlarmClock(window.location.search);
-  const spaceFrame = { seconds: alarmClock.startSeconds, eye: new THREE.Vector3() };
-  const updateSpace = (dt: number) => {
+  const spaceFrame: { seconds: number; eye: THREE.Vector3; dt: number; posture: Posture } = {
+    seconds: alarmClock.startSeconds,
+    eye: new THREE.Vector3(),
+    dt: 0,
+    posture: "standing",
+  };
+  const updateSpace = (dt: number, posture: Posture) => {
     if (!space.update) return;
     spaceFrame.seconds = advanceAlarmSeconds(spaceFrame.seconds, dt, alarmClock.speed);
+    spaceFrame.dt = dt;
+    spaceFrame.posture = posture;
     // カメラは rig の子のため，目の位置はワールド座標に直して渡す（作業用の Vector3 は使い回す）
     camera.getWorldPosition(spaceFrame.eye);
     space.update(spaceFrame);
@@ -132,6 +143,7 @@ function setupWalk(scene: THREE.Scene, camera: THREE.PerspectiveCamera, space: S
       `last ${lastEvent || "-"}`,
       door ? `door ${door.id} (${door.isOpen() ? "開" : "閉"})` : "近くにドアなし",
       ...(space.update ? [`alarm ${spaceFrame.seconds.toFixed(1)} s (x${alarmClock.speed})`] : []),
+      ...(isSchoolSpace(space) ? [formatErrorBehaviors(space.errorBehaviors)] : []),
     ];
   };
 
@@ -154,7 +166,19 @@ function stepAndApply(
   camera.quaternion.set(head.x, head.y, head.z, head.w);
   // 見失った手（tracked が false）は隠す．?input=mock ではマウスが右手になる
   walk.handMarkers.update(head, input.hands, true);
-  walk.updateSpace(dt);
+  walk.updateSpace(dt, input.posture);
+}
+
+/** 画面の左上に出す赤い表示の判定（煙の中で立っている・火の 1 マス以内） */
+function formatErrorBehaviors(
+  errors: { readonly smokeStanding: boolean; readonly nearFire: boolean } | null,
+): string {
+  if (errors === null) return "error -";
+  const kinds = [
+    ...(errors.smokeStanding ? ["煙の中で立っている"] : []),
+    ...(errors.nearFire ? ["火の 1 マス以内"] : []),
+  ];
+  return `error ${kinds.length > 0 ? kinds.join("・") : "なし"}`;
 }
 
 // 確認用の仮の入力（ドラッグ・ボタン）を SpaceWalker につなぐ
@@ -202,6 +226,7 @@ function startInputWalk(
       onDoorToggle: () => {
         walk.toggleNearbyDoor();
       },
+      tapTarget: renderer.domElement,
     },
   );
 

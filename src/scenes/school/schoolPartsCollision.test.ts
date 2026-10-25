@@ -8,7 +8,7 @@ import { DEFAULT_BODY, moveWithCollision, type XZRect } from "../walk/collision"
 import { activeObstacles, type WalkWorld } from "../walk/locomotion";
 import { createClassroom } from "./classroom";
 import { classroomLayout } from "./classroomLayout";
-import { edgePlacementBetween, POST_SIZE, type XZPoint } from "./schoolLayout";
+import { edgePlacementBetween, FIRE_SHUTTER, POST_SIZE, type XZPoint } from "./schoolLayout";
 import {
   createFloorSurface,
   createSchoolBlock,
@@ -334,5 +334,75 @@ describe("collectSchoolCollision の教室", () => {
     const collision = collectSchoolCollision(root);
     expect(collision.obstacles).toEqual([]);
     expect(collision.floors).toHaveLength(1);
+  });
+});
+
+// SPEC_02「通れる・燃え広がる」: 防火シャッターは閉じているが，人はくぐり戸を通れる（S4 の手で押す動作が入るまでは常に通れる）．Issue #121
+describe("collectSchoolCollision の shutterWicketPassable", () => {
+  function shutterScene(shutterWicketPassable?: boolean) {
+    const root = new THREE.Group();
+    const edge = createSchoolEdge(context, {
+      kind: "fireShutter",
+      length: 4,
+      height: 3,
+      id: "e",
+      closed: true,
+    });
+    root.add(edge);
+    const options = shutterWicketPassable === undefined ? undefined : { shutterWicketPassable };
+    return { edge, collision: collectSchoolCollision(root, options) };
+  }
+
+  it("既定（指定なし・false）では閉じた幕は 1 枚で，くぐり戸の所（中央）も通れない", () => {
+    for (const passable of [undefined, false]) {
+      const { collision } = shutterScene(passable);
+      expect(collision.doors.map((d) => d.id)).toEqual(["e"]);
+      expect(crosses(world(collision), 0)).toBe(false);
+    }
+  });
+
+  it("true なら閉じた幕はくぐり戸の周りの 4 枚（左右・下端・上端）になる", () => {
+    const { collision } = shutterScene(true);
+    expect(collision.doors).toHaveLength(4);
+    expect(new Set(collision.doors.map((d) => d.id)).size).toBe(4);
+    for (const d of collision.doors) expect(d.id.startsWith("e")).toBe(true);
+    const ys = collision.doors.map((d) => [d.obstacle.minY, d.obstacle.maxY]);
+    // 下端の板はくぐり戸の下（床からくぐり戸の下端まで）
+    expect(ys).toContainEqual([0, FIRE_SHUTTER.wicketBottom]);
+    // 上端の板はくぐり戸の上端から上
+    expect(
+      ys.some(
+        ([minY]) =>
+          Math.abs((minY ?? 0) - (FIRE_SHUTTER.wicketBottom + FIRE_SHUTTER.wicketHeight)) < 1e-9,
+      ),
+    ).toBe(true);
+  });
+
+  it("true なら閉じていてもくぐり戸（中央）は両向きに立ったまま通れ，くぐり戸の外の幕は通れない", () => {
+    const { collision } = shutterScene(true);
+    const w = world(collision);
+    expect(crosses(w, 0)).toBe(true);
+    expect(crosses(w, 0, -1, 1)).toBe(true);
+    // くぐり戸の幅（0.8 m）より外
+    for (const x of [-1.5, -1, 1, 1.5]) expect(crosses(w, x)).toBe(false);
+  });
+
+  it("くぐり戸の上端は立った頭より高い（立ったまま通れる）", () => {
+    expect(FIRE_SHUTTER.wicketBottom + FIRE_SHUTTER.wicketHeight).toBeGreaterThan(STANDING_HEAD);
+  });
+
+  it("true でも開けると全体を通れ，閉じ直すとくぐり戸の外は通れない", () => {
+    const { edge, collision } = shutterScene(true);
+    const w = world(collision);
+    setFireShutterClosed(edge, false);
+    for (const x of [-1, 0, 1]) expect(crosses(w, x)).toBe(true);
+    setFireShutterClosed(edge, true);
+    expect(crosses(w, 1)).toBe(false);
+    expect(crosses(w, 0)).toBe(true);
+  });
+
+  it("true でもガイドレールは残る", () => {
+    const { collision } = shutterScene(true);
+    expect(collision.obstacles.map((o) => o.id).sort()).toEqual(["e-rail-0", "e-rail-1"]);
   });
 });

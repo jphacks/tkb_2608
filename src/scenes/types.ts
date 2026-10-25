@@ -2,6 +2,7 @@
 // 画面の種類（core/scene.ts の SceneId）と区別するため，空間は「Space」と呼ぶ
 
 import type { ColorRepresentation, Fog, FogExp2, Group, Vector3 } from "three";
+import type { Posture } from "../core/types";
 import type { SpaceId } from "./spaceParam";
 
 export type { SpaceId } from "./spaceParam";
@@ -18,6 +19,10 @@ export interface SpaceFrame {
   readonly seconds: number;
   /** 目の位置（ワールド座標，m．THREE.Vector3 もそのまま渡せる）．目が無い視点（見下ろし等）は null */
   readonly eye: { readonly x: number; readonly y: number; readonly z: number } | null;
+  /** 前のフレームからの経過時間（s．実際の時間．省略可．赤い表示のフェード等に使い，無ければ瞬時に切り替える） */
+  readonly dt?: number;
+  /** 今の姿勢（省略可．単独で開いた校舎が赤い表示を自分で判定する時に使う．無ければ立っている扱い） */
+  readonly posture?: Posture;
 }
 
 /** 1 つの空間．root を Scene に追加すれば表示できる（照明も root に含む） */

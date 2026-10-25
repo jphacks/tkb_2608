@@ -4,8 +4,15 @@ import type { SpreadMap } from "../sim";
 import type { CellXZ } from "../sim/grid";
 import { type DrillMarkers, type GridLayout, roomLabels, wallEdges } from "./editorLayout";
 import { yawToGridDirection } from "./editorState";
-import { CELL_COLORS, EDITOR_COLORS, roomColor } from "./editorStyle";
+import {
+  CELL_COLORS,
+  EDITOR_COLORS,
+  lightenColor,
+  roomColor,
+  UNDERLAY_FILL_LIGHTEN,
+} from "./editorStyle";
 import { spreadStateAt } from "./spreadPreview";
+import { drawUnderlay, type UnderlayOverlay } from "./underlay";
 
 /** 開始地点の印（位置と向き）．向きは startYaw（rad．約束は editorState.ts の FACING_YAW） */
 export interface StartMarker {
@@ -31,7 +38,9 @@ export interface RouteOverlay {
 
 /**
  * 1 つの階のマス目・壁・教室の名前・訓練条件の印・マウスの下のマスを描く．ctx は CSS の px で描ける変換
- * （devicePixelRatio を掛けた setTransform）にしておく
+ * （devicePixelRatio を掛けた setTransform）にしておく．underlay があれば，マスの塗り（void も含めて淡くした色）の上に
+ * 写真を白黒の乗算で重ね，図面の線だけを乗せる（延焼のプレビュー・マス線・壁・名前・経路・印は写真より上）．
+ * photoOnly なら写真がある時だけ，マスの塗りと延焼のプレビューを隠して白地に写真だけを見せる
  */
 export function drawEditorGrid(
   ctx: CanvasRenderingContext2D,
@@ -45,6 +54,8 @@ export function drawEditorGrid(
   startYaw: number,
   spreadOverlay: SpreadOverlay | null = null,
   routeOverlay: RouteOverlay | null = null,
+  underlay: UnderlayOverlay | null = null,
+  photoOnly = false,
 ): void {
   ctx.fillStyle = EDITOR_COLORS.background;
   ctx.fillRect(0, 0, canvasCssWidth, canvasCssHeight);
@@ -52,20 +63,34 @@ export function drawEditorGrid(
   const widthPx = cellPx * floor.width;
   const heightPx = cellPx * floor.depth;
 
-  // void のマスにも境目を出し，マス目の広さが分かるようにする
-  drawGridLines(ctx, floor, layout, EDITOR_COLORS.voidGrid);
-  for (let z = 0; z < floor.depth; z++) {
-    for (let x = 0; x < floor.width; x++) {
-      const i = z * floor.width + x;
-      const kind = floor.cells[i];
-      const color = kind === "classroom" ? roomColor(floor.roomOf[i]) : CELL_COLORS[kind];
-      if (color === null) continue;
-      ctx.fillStyle = color;
-      ctx.fillRect(offsetX + x * cellPx, offsetY + z * cellPx, cellPx, cellPx);
+  const hideFills = underlay !== null && photoOnly;
+  if (hideFills) {
+    // 写真だけを見る間は白地にする（乗算で重ねるので，白の上なら写真がそのままの濃さで見える）
+    ctx.fillStyle = PHOTO_ONLY_BACKGROUND;
+    ctx.fillRect(0, 0, canvasCssWidth, canvasCssHeight);
+  } else {
+    // void のマスにも境目を出し，マス目の広さが分かるようにする（写真がある時は void も塗るので隠れる）
+    drawGridLines(ctx, floor, layout, EDITOR_COLORS.voidGrid);
+    // 写真がある時は塗りを不透明のまま淡くする（半透明にすると写真の色と混ざって両方が濁るため）
+    const fill =
+      underlay === null ? (c: string) => c : (c: string) => lightened(c, UNDERLAY_FILL_LIGHTEN);
+    const voidColor = underlay === null ? null : fill(EDITOR_COLORS.background);
+    for (let z = 0; z < floor.depth; z++) {
+      for (let x = 0; x < floor.width; x++) {
+        const i = z * floor.width + x;
+        const kind = floor.cells[i];
+        const color = kind === "classroom" ? roomColor(floor.roomOf[i]) : CELL_COLORS[kind];
+        const shown = color === null ? voidColor : fill(color);
+        if (shown === null) continue;
+        ctx.fillStyle = shown;
+        ctx.fillRect(offsetX + x * cellPx, offsetY + z * cellPx, cellPx, cellPx);
+      }
     }
   }
-  // 火・煙はマスの塗りの上，壁・印の下に重ねる（どこが通れなくなるかを壁と一緒に見られるように）
-  if (spreadOverlay !== null) drawSpread(ctx, floor, layout, spreadOverlay);
+  // 写真はマス目の外にはみ出しても描く（はみ出した所も見えた方が合わせやすい）
+  if (underlay !== null) drawUnderlay(ctx, underlay, offsetX, offsetY, cellPx, "lines");
+  // 火・煙はマスの塗り・写真の上，壁・印の下に重ねる（どこが通れなくなるかを壁と一緒に見られるように．色は淡くしない）
+  if (spreadOverlay !== null && !hideFills) drawSpread(ctx, floor, layout, spreadOverlay);
   drawGridLines(ctx, floor, layout, EDITOR_COLORS.grid);
 
   // 3D で薄い壁が立つ辺
@@ -108,6 +133,22 @@ export function drawEditorGrid(
   ctx.strokeStyle = EDITOR_COLORS.voidGrid;
   ctx.lineWidth = 1;
   ctx.strokeRect(offsetX - 0.5, offsetY - 0.5, widthPx + 1, heightPx + 1);
+}
+
+/** 写真だけを見る間の下地の色 */
+const PHOTO_ONLY_BACKGROUND = "#ffffff";
+
+/** 淡くした色（描き直すたびにマスの数だけ色の文字列を読み直さないよう，色ごとに覚える） */
+const lightenedCache = new Map<string, string>();
+
+function lightened(color: string, amount: number): string {
+  const key = `${amount}|${color}`;
+  let value = lightenedCache.get(key);
+  if (value === undefined) {
+    value = lightenColor(color, amount);
+    lightenedCache.set(key, value);
+  }
+  return value;
 }
 
 function drawSpread(
