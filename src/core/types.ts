@@ -29,6 +29,11 @@ export interface HandState {
   readonly position: Vec3;
   /** 握り具合（0 = 開いている，1 = 握っている） */
   readonly grip: number;
+  /**
+   * 手の 21 点の位置（頭の座標系．position と同じ．m）．番号は MediaPipe の HandLandmarker と同じ（0 = 手首，4 = 親指の先，8 = 人差し指の先 等）．
+   * 手の形を描くために使う（Issue #160）．形を出せない入力（古い入力・記録の再生等）では省く．tracked が false の間は直前の値のまま
+   */
+  readonly landmarks?: readonly Vec3[];
 }
 
 /** 1 フレーム分のプレイヤーの入力（input/ → app/ → scenes/・scenario/） */

@@ -233,7 +233,7 @@ relay/           #126 の担当: 見守りの中継（Cloudflare Worker と Dura
 | `DrillTrack` | `core/drill.ts`（**新規**） | app/ → sim/ | 0.2 秒ごとの記録（非常ベルからの秒数・階（`SchoolPlan.floors` の添字．`CellRef.floor` と同じ）・ワールド座標の X と Z・姿勢） |
 | `DrillEvaluation` | `core/drill.ts`（**新規**） | sim/ → debrief/ | 評価（外れた区間・火に近づいた点・煙の中でしゃがんでいた割合・避難時間・逃げ遅れか） |
 | `PlayerInput` | `core/types.ts` | input/ → app/ → scenes/・scenario/ | 1 フレーム分の入力．頭の向き（`head`，正面リセット済み），姿勢（`posture`: `standing`／`crouching`），足踏み中か（`walking`）と前進の速さ（`walkSpeed`），左右の手（`hands`） |
-| `HandState` | `core/types.ts` | input/ → scenes/ | 片手の状態．認識できているか（`tracked`），手のひらの位置（頭を原点とした座標），握り具合（`grip`: 0〜1．握った状態の間は 0.6 以上，開いた状態の間は 0.4 以下に収めるため，0.5 で区切ればヒステリシスどおりに判定できる．握ったまま一瞬見失っても約 0.8 秒は `tracked` と握ったままを保つ） |
+| `HandState` | `core/types.ts` | input/ → scenes/ | 片手の状態．認識できているか（`tracked`），手のひらの位置（頭を原点とした座標），握り具合（`grip`: 0〜1．握った状態の間は 0.6 以上，開いた状態の間は 0.4 以下に収めるため，0.5 で区切ればヒステリシスどおりに判定できる．握ったまま一瞬見失っても約 0.8 秒は `tracked` と握ったままを保つ），手の 21 点の位置（`landmarks`: 頭の座標系．番号は MediaPipe の HandLandmarker と同じ．手の形を描くため．形を出せない入力では省く） |
 | `CalibrationProfile` | `core/types.ts` | lobby/ → input/ | 正面のヨー角（`yawOffset`）と，各手順の区間（`segments`: `CalibrationSegment` の配列）．旧来のしきい値の 3 項目は非推奨（後述「キャリブレーションとの分担」） |
 | `Scene` | `core/scene.ts` | 各担当 → app/ | 画面の共通インターフェース（`enter`・`update`・`exit`） |
 | `SceneContext` | `core/scene.ts` | app/ → 各 Scene | イベントバス，描画先（`Stage`），画面をまたぐデータ（`Session`），画面の切り替え（`goTo`） |
