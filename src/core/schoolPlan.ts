@@ -81,6 +81,11 @@ export interface SpreadSettings {
   readonly smokeSecondsPerCell: number;
   /** 教員が手で足した延焼箇所（ES1．無ければ空）．atSeconds にそのマスが燃え始める */
   readonly extraFires: readonly { readonly cell: CellRef; readonly atSeconds: number }[];
+  /**
+   * 煙だけが出る場所（煙の発生源．無ければ省くか空）．atSeconds にそのマスから煙が出始め，smokeSecondsPerCell で広がる．
+   * 発生源のマスは燃えない．省けるのは，この項目が無い古いデータ・テストの校舎をそのまま読めるようにするため
+   */
+  readonly extraSmokes?: readonly { readonly cell: CellRef; readonly atSeconds: number }[];
 }
 
 /** 校舎データ（URL の `#p=`）を読み込めなかった理由の種類．開始画面が出す案内（読み直す／新しい版で開く）を分けるために使う */
