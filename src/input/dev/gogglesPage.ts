@@ -430,8 +430,7 @@ function applyCalibration(c: CalibrationRun): void {
   // 既定値 → キャリブレーションの値 → URL のしきい値の順に重ねる（URL で指定した項目は URL の値のまま）
   tracker.setParams(calibratedOverrides(c.result.overrides, urlParams));
   // キャリブレーションの間に動いた分を捨て，立った姿勢・正面・原点から始める
-  tracker.reset();
-  tracker.body.posture.posture = "standing";
+  tracker.resetPosture("standing");
   input.recenter();
   position.set(0, 0, 0);
   c.phase = "done";

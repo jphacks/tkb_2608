@@ -345,10 +345,13 @@ export function startApp(): void {
       tracker.setParams(
         replacingOverrides(lobbyParams?.result.overrides ?? null, next.result.overrides),
       );
-      // 前のしきい値で進めていた体の判定の途中の状態を捨てる（姿勢と頭の向きは保つ）
-      tracker.reset();
       lobbyParams = next;
     }
+    // 体の判定の途中の状態を捨て，姿勢を立ちに戻す（頭の向きは保つ）．ロビーの間は既定のしきい値で判定しており，
+    // しゃがみ歩きから止まらずに立つ場面を「しゃがんでいる」と誤ったまま避難の画面に持ち越すと，本当のしゃがみが
+    // 切り替わりえない向きとして捨てられるため．ロビーの手順の終わり（「もう一度」の正面合わせだけの時も）は
+    // 立っているので，しきい値を変えなかった時も常に戻す
+    tracker.resetPosture("standing");
     // 求め終えたらサンプルは要らない（説明の間もためないようにする）
     collectingLobbySamples = false;
     lobbySamples.clear();
