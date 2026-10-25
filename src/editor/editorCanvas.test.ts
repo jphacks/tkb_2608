@@ -8,6 +8,7 @@ import { createFloorFromRows } from "../share/samples/floorFromRows";
 import type { SpreadMap } from "../sim";
 import { drawEditorGrid, type SpreadOverlay } from "./editorCanvas";
 import type { DrillMarkers, GridLayout } from "./editorLayout";
+import type { AreaBounds } from "./editorState";
 import {
   CELL_COLORS,
   EDITOR_COLORS,
@@ -227,5 +228,71 @@ describe("drawEditorGrid（下敷きあり）", () => {
         ),
     ).toBe(true);
     expect(calls.slice(img + 1).some((c) => c.name === "fillText")).toBe(true);
+  });
+});
+
+describe("drawEditorGrid（集合場所のまとまり．Issue #167）", () => {
+  // 屋外を広くとったマス目（o: 屋外）
+  const YARD: Floor = createFloorFromRows(1, ["00hh", "oooo", "oooo"]);
+
+  function drawYard(assembly: DrillMarkers["assembly"], area: AreaBounds | null = null): Call[] {
+    const { ctx, calls } = recordingContext();
+    drawEditorGrid(
+      ctx,
+      YARD,
+      ROOMS,
+      LAYOUT,
+      200,
+      100,
+      null,
+      { fireOrigins: [], start: null, assembly },
+      0,
+      null,
+      null,
+      null,
+      false,
+      area,
+    );
+    return calls;
+  }
+  /** 旗の三角を塗った回数（集合場所の緑で fill した回数） */
+  const flagCount = (calls: readonly Call[]) =>
+    calls.filter((c) => c.name === "fill" && c.state.fillStyle === EDITOR_COLORS.assembly).length;
+  /** 集合場所の淡い塗り */
+  const zoneFills = (calls: readonly Call[]) =>
+    calls.filter((c) => c.name === "fillRect" && c.state.fillStyle === EDITOR_COLORS.assemblyFill);
+
+  it("つながった集合場所は旗 1 つで，マスごとの枠を描かない", () => {
+    const calls = drawYard([
+      { x: 0, z: 1 },
+      { x: 1, z: 1 },
+      { x: 0, z: 2 },
+      { x: 1, z: 2 },
+    ]);
+    expect(flagCount(calls)).toBe(1);
+    expect(zoneFills(calls)).toHaveLength(4);
+    // strokeRect はマス目の外枠の 1 回だけ（マスごとの枠は描かない）
+    expect(calls.filter((c) => c.name === "strokeRect")).toHaveLength(1);
+  });
+
+  it("離れた集合場所はまとまりごとに旗を立てる", () => {
+    const calls = drawYard([
+      { x: 0, z: 1 },
+      { x: 3, z: 2 },
+    ]);
+    expect(flagCount(calls)).toBe(2);
+  });
+
+  it("ドラッグ中の範囲は淡い塗りと破線の枠で重ね，描いた後に破線を戻す", () => {
+    const calls = drawYard([], { minX: 1, minZ: 1, maxX: 2, maxZ: 2 });
+    const fill = zoneFills(calls);
+    expect(fill).toHaveLength(1);
+    expect(fill[0].args).toEqual([
+      LAYOUT.offsetX + LAYOUT.cellPx,
+      LAYOUT.offsetY + LAYOUT.cellPx,
+      2 * LAYOUT.cellPx,
+      2 * LAYOUT.cellPx,
+    ]);
+    expect(calls.filter((c) => c.name === "setLineDash").at(-1)?.args).toEqual([[]]);
   });
 });

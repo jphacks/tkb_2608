@@ -5,7 +5,10 @@ import type { Vec3 } from "../../core/types";
 import { type Landmark, LM } from "./types";
 
 export interface CameraModel {
-  /** 横の画角（度） */
+  /**
+   * 画像の長い辺の向きの画角（度）．横向きの画面（ゴーグル）では横の画角．
+   * 縦向きで映像が縦長（例: 480x640）になっても，ブラウザが回すだけで写る範囲は同じなので，長い辺に当てる
+   */
   readonly hfovDeg: number;
   /** 画像の大きさ（px） */
   readonly width: number;
@@ -14,11 +17,40 @@ export interface CameraModel {
   readonly offset: Vec3;
 }
 
-/** 焦点距離（px）．画角・大きさがおかしければ NaN */
-export function focalLengthPx(cam: Pick<CameraModel, "hfovDeg" | "width">): number {
+/**
+ * 焦点距離（px）．画角 hfovDeg を画像の長い辺（width と height の大きい方．height を省くと width）に当てて求める．
+ * 画角・大きさがおかしければ NaN
+ */
+export function focalLengthPx(
+  cam: Pick<CameraModel, "hfovDeg" | "width"> & { readonly height?: number },
+): number {
   const half = (cam.hfovDeg * Math.PI) / 360;
   if (!(half > 0) || !(half < Math.PI / 2) || !(cam.width > 0)) return Number.NaN;
-  return cam.width / 2 / Math.tan(half);
+  const h = cam.height;
+  const longSide = h !== undefined && Number.isFinite(h) && h > cam.width ? h : cam.width;
+  return longSide / 2 / Math.tan(half);
+}
+
+/** 届く範囲の倍率として使える値にする（有限の正の数でなければ 1．倍率を掛けない） */
+export function sanitizeReachGain(gain: number): number {
+  return Number.isFinite(gain) && gain > 0 ? gain : 1;
+}
+
+/**
+ * 手全体を，画像の中心から離す向きに平行に動かす量（画像の上の 0〜1 の単位）．
+ * 手のひらの中心 center の画像の中心からのずれを gain 倍にする分だけ動かす（手の形・大きさは変えない）．
+ * 背面カメラの画角は表示の画角より狭く，そのままではカメラの端の手も視界の中ほどにしか出ないため，
+ * 手の印が視界の端の近くまで届くように広げる（Issue #163）．gain が 1 なら動かさない
+ */
+export function reachShift(
+  center: { readonly x: number; readonly y: number },
+  gainX: number,
+  gainY: number,
+): { x: number; y: number } {
+  return {
+    x: (sanitizeReachGain(gainX) - 1) * (center.x - 0.5),
+    y: (sanitizeReachGain(gainY) - 1) * (center.y - 0.5),
+  };
 }
 
 /**

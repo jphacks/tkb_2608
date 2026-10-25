@@ -13,6 +13,7 @@ import {
   DEFAULT_SPEECH_PACING,
   estimateSpeechSeconds,
   type NarrationStyle,
+  SPEECH_PITCH,
   SPEECH_RATE,
   type SpeechPacingConfig,
   speechTimeoutSeconds,
@@ -54,7 +55,14 @@ export type NarrationEvent =
 
 export type NarrationAction =
   | { readonly type: "chime"; readonly kind: "start" | "end" }
-  | { readonly type: "speak"; readonly token: number; readonly text: string; readonly rate: number }
+  | {
+      readonly type: "speak";
+      readonly token: number;
+      readonly text: string;
+      readonly rate: number;
+      /** 声の高さ（SpeechSynthesisUtterance.pitch） */
+      readonly pitch: number;
+    }
   | { readonly type: "cancelSpeech" }
   | { readonly type: "signal"; readonly name: string }
   /** seconds 秒（s）後に event を token 付きで戻す */
@@ -184,7 +192,8 @@ function startSpeaking(
 ): NarrationState {
   const text = item.text ?? "";
   const rate = SPEECH_RATE[item.style];
-  actions.push({ type: "speak", token: item.token, text, rate });
+  const pitch = SPEECH_PITCH[item.style];
+  actions.push({ type: "speak", token: item.token, text, rate, pitch });
   // end が来ない端末でも必ず終わるよう，上限の時間を頼んでおく
   actions.push({
     type: "wait",

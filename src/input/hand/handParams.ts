@@ -4,7 +4,10 @@
 /** 手のしきい値の全体．単位は項目名の末尾（Ms: ms，Hz，M: m，Deg: 度）か各コメントのとおり */
 export interface HandParams {
   // ---- 2D → 3D（背面カメラ） ----
-  /** 背面カメラの横の画角（度）．端末により違う（iPhone の広角の 4:3 で約 65〜68°） */
+  /**
+   * 背面カメラの画角（度．映像の長い辺の向き＝横向きの画面での横の画角）．端末により違う（iPhone の広角の 4:3 で約 65〜68°）．
+   * 映像が縦長（縦向きの画面）になっても長い辺に当てる（projection.ts の focalLengthPx）
+   */
   readonly cameraHfovDeg: number;
   /** 手首から中指の付け根までの実際の長さ（m）．大人でおおよそ 0.09〜0.10 */
   readonly palmLengthM: number;
@@ -22,6 +25,15 @@ export interface HandParams {
   readonly skeletonDepthM: number;
   /** 描く用の 21 点の奥行きに MediaPipe の相対の z を足す倍率（奥行き = skeletonDepthM × (1 + z × この値)） */
   readonly skeletonDepthScale: number;
+  /**
+   * 手の届く範囲の倍率（横・縦）．手全体を，画像の中心からの手のひらの中心のずれをこの倍にする所まで平行に動かす
+   * （手の形・大きさは変えない．1 で動かさない．projection.ts の reachShift）．
+   * 背面カメラ（4:3 で横 65°・縦約 51°）は表示（縦 70°．ゴーグルの片目で横約 74°）より狭く，
+   * 倍率 1 ではカメラの端の手も視界の横約 84%・縦約 68% の内側にしか出ないため，視界の端の近くまで届くように広げる（Issue #163）．
+   * 手の実際の向きとはその分ずれる（大きくしすぎると手を少し動かしただけで印が大きく動く）
+   */
+  readonly reachGainX: number;
+  readonly reachGainY: number;
 
   // ---- なめらかさ（One Euro フィルタ＋外挿） ----
   /** 止めた時の遮断周波数（Hz）．小さいほど強く平滑化する */
@@ -100,6 +112,8 @@ export const DEFAULT_HAND_PARAMS: HandParams = {
   cameraOffsetZM: -0.08,
   skeletonDepthM: 1.2,
   skeletonDepthScale: 1.5,
+  reachGainX: 1.2,
+  reachGainY: 1.4,
 
   oneEuroMinCutoffHz: 1.0,
   oneEuroBeta: 1.5,

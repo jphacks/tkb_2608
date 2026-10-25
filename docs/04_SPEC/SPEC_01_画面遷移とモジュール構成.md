@@ -29,7 +29,7 @@
 | エディタ | `editor` | 教員用（PC のブラウザ）．図面の写真の下敷き（E1），パーツの配置（E2），火元・開始地点・集合場所（E3），延焼のプレビュー（E4），正解経路の提案と修正（E5），モードの選択と QR コードの表示（E6），作った校舎の 3D での確認（マップ右上の「3D で見る」⇄「編集に戻る」．#169）．VR 表示は使わない普通の HTML の画面 | ― （生徒側の画面とは URL でつながる） |
 | 見守り | `monitor` | PC のブラウザ（プロジェクタに映す）．前もって開いておき，生徒から届いた状態で同じロビー・校舎をもう一度描いて，体験者の目線を片目分の全画面で見せ，終わったら届いた記録で同じ結果画面を出す．画面の状態は「接続待ち → 準備中 → 体験中 → 終わり」で，生徒がつながる・もう一度体験する時も手で操作せずに切り替わる．生徒の画面と同じ赤い表示も出す（後述「見守り」の段階 1）．エディタの E6 の「見守り画面を開く」から別のウィンドウで開く．複数の生徒は段階 2 | ― （ウィンドウを閉じるまで開いておく．生徒側の画面とは中継でつながる） |
 | 開始画面 | `start` | QR から開いた直後に 1 回だけ出す許可の画面．周囲 1〜2 m の安全確認の案内．ボタン 1 つで，センサー（`DeviceMotionEvent.requestPermission()`）・カメラ（`getUserMedia`）・音（`AudioContext` の再開と音声の読み込み）の許可をまとめて取る．URL の校舎データが読めない時は，ここで「QR コードを読み直してください」と理由を出す | ボタンをタップし，必要な許可がそろった．カメラが拒否された・使えない時は，入力が実機（`device`）なら先へ進めず，理由ごとに「再読み込みしてカメラを許可してください」等の案内と「再読み込み」ボタンを出す（ロビーの開始を手で行うため．iOS の Safari は一度拒否すると再読み込みまで尋ね直さない．`src/lobby/startPolicy.ts` の `needsCamera`）．PC 用の `mock`・`replay` ではカメラ無しで進む．センサーが拒否された時は進まず，「もう一度試す」「センサーなしで進む」を出す．許可がそろったらホームへ |
-| ホーム | `home` | タイトル，横向き・ゴーグル装着の案内，「スタート」と「設定」のボタン．訓練の内容（学校名・開始地点の教室・モード）を表示する．設定では，音量（確認用のナレーションと非常ベルを流し，本体の音量ボタンで合わせる．アプリ内の音量は変えない），画面の明るさ（見本の帯．自動調節をオフに・中くらいが目安），画面の消灯（Screen Wake Lock で止められているかの表示．使えない時は自動ロックを「なし」にする案内）を確認する | 「スタート」をタップした．その回の利用で設定を一度も開いていなければ「音量や画面の明るさは大丈夫ですか？」と聞き，「設定を確認する」か「このまま始める」を選ばせる（`src/lobby/homeSettings.ts` の `shouldConfirmStart`）．許可を取り終えた後に `start` へ進むよう頼まれた時は，app がホームに読み替える（許可を取り直さない．`src/lobby/homeFlow.ts`） |
+| ホーム | `home` | タイトル，横向き・ゴーグル装着の案内，「スタート」と「設定」のボタン．訓練の内容（学校名・開始地点の教室・モード）を表示する．設定では，音量（確認用のナレーションと非常ベルを流し，本体の音量ボタンで合わせる．アプリ内の音量は変えない），画面の明るさ（見本の帯．自動調節をオフに・中くらいが目安），画面の消灯（Screen Wake Lock で止められているかの表示．使えない時は自動ロックを「なし」にする案内）を確認する | 「スタート」をタップした，または手をかざして押した（後述「ホームの手のスタート」）．その回の利用で設定を一度も開いていなければ「音量や画面の明るさは大丈夫ですか？」と聞き，「設定を確認する」か「このまま始める」を選ばせる（`src/lobby/homeSettings.ts` の `shouldConfirmStart`）．許可を取り終えた後に `start` へ進むよう頼まれた時は，app がホームに読み替える（許可を取り直さない．`src/lobby/homeFlow.ts`） |
 | ロビー | `lobby` | VR 表示の学校の防災学習室（黒板・消火器・非常口の誘導灯・避難経路図・掲示板・机と椅子）．手のひらを開始ボタンにかざして始め，見え方の調整を行い（同じボタンで終える），ナレーションの指示で正面・立つ・しゃがむ・しゃがみ歩き・足踏みを体験者には「練習」として順に行わせ，その間のデータで `CalibrationProfile` を作る（S1）．最後に今日の訓練の内容と避難の注意を伝える（後述「ロビーの流れ」） | すべて終わった（立つ〜足踏みは計測の秒数を固定し，正面は制限時間を設けて，取れなかった値は既定値で進めて詰まらないようにする） |
 | 避難 | `scenario` | 校舎（`scenes/school/`）の中で，① 授業中の教室 → ② 非常ベルと校内放送 → ③ 避難 を進める（PLAN_04「体験の流れ」．後述「VR 避難の規則」）．歩いた経路と姿勢を記録する | 集合場所のマスに入った，または制限時間を過ぎた（逃げ遅れ）．ゴーグルを付けたまま結果画面へ進む（外す案内は挟まない．Issue #146） |
 | 結果 | `debrief` | ゴーグルを付けたまま VR の中（左右 2 画面）で見る．目の前の板に，地図の上に自分の経路と正解経路を重ね，経路・煙の中での姿勢・避難時間を示す（F8．後述「結果の評価」「結果画面（VR）」）．テストモードでは，ここで初めて正解経路を見せる（F7） | 手のボタンで選ぶ．「同じ訓練をもう一度」でロビーへ（ゴーグルを付けたままなので付ける案内は挟まない．キャリブレーションは保ったまま．ロビーで「同じ訓練をもう一度始めます」と案内し，正面だけ合わせ直してから同じ校舎・火元・開始地点で避難をやり直す），「ホームへ」でゴーグルを外す案内を経てホームへ |
@@ -39,6 +39,11 @@
 - ゴーグルを付けて見る画面（ロビー・避難・結果）と外して見る画面（ホーム）の間を移る時は，app/ が付け外しの案内を挟む（後述「ゴーグルの付け外しの案内」）
 - 画面の切り替えは `SceneContext.goTo(次の画面の ID)` で app/ に頼む（後述「受け渡すデータ」）．エディタは `Scene` ではなく，起動の切り替えで別に立ち上げる
 - 横向きが基本．`?app` のどの画面でも，端末が縦向きの時は全面に「スマホを横向きにしてください」を出す（`src/lobby/orientationGuide.ts`）．出ている間，ロビーは開始ボタンの自動開始・各手順の制限時間・基準の取得を止める（避難は止めない）
+- 横向きの左右（`landscape-primary`／`landscape-secondary`）を入れ替えても，回転ロックがオン・水平に近い角度で回した・素早く 180° 回した等で OS が画面を回さず，逆さのまま残ることがある（ブラウザから向きは固定できない．ENV_01「画面の向きを固定できない」．#158）．このため `?app` のどの画面でも，重力の向きから判断した左右と OS の画面の向き（`screen.orientation.angle`）が食い違ったら，全面に「画面の上下が逆さまです」（ゴーグルから出して上下を逆に持ち直す・回転ロックをオフにする）を出す（`src/lobby/orientationGuide.ts`）．出ている間の扱いは縦向きの案内と同じ（`OrientationGuide.visible`）
+  - 判断は `src/lobby/landscapeSide.ts` の純粋な関数で行う．deviceorientation の `beta`・`gamma` から端末の座標での上の向きを求め（`upFromOrientation`），その x の割合が 0.7 以上で縦持ちの右の辺が上（angle 90），-0.7 以下で左の辺が上（angle 270），絶対値が 0.4 未満（水平・縦持ちに近い）は判断しない，その間は前の判断を保つ（ヒステリシス）．新しい判断は 0.3 秒続いてから採り，OS の向きとの食い違いは 1.5 秒続いてから案内を出す（OS の回転の遅れを待つ）．食い違いが無くなればすぐ消す
+  - 重力は `devicemotion` の `accelerationIncludingGravity` ではなく deviceorientation から求める．加速度の符号の約束が端末で逆のことがあり（`src/input/body/vertical.ts`），左右を取り違えると横向きのたびに案内が出て進めなくなるため．deviceorientation は頭の向きの計算と同じ値なので，頭の向きが正しく動く端末では左右の判断も正しい
+  - 描画を 180° 回して頭の向きも補正する方式は採らない．補正の誤り（符号・軸の取り違え）は実機でしか見つからず，VR 酔いや操作不能につながるため．案内の方式なら誤っても案内が出るだけで，3D の描画と頭の向きの計算は今までどおり OS の向きに従う．案内の文字だけは 180° 回して，持っている向きで読めるようにする
+  - 向きのセンサーが無い・許可されていない端末（PC・iPhone で許可の前）はイベントが来ないため，この案内は出ない（今までどおり）
 - 頭の向き（`PlayerInput.head`）は input/ の `createInputSource()` から受け取る（#50．`?app` は `device`，`?app&input=mock` は PC 用の `mock`）．正面リセット済みで，キャリブレーションの前は最初に受け取った向き，後は `yawOffset` が正面になる．避難の画面では，正面を `DrillSetup.startYaw`（教員が決めた開始時の向き）に合わせる
 
 ### ゴーグルの付け外しの案内 (Goggle Switch Guide)
@@ -90,6 +95,16 @@ VR の中で手のひらをかざして押すボタンの共通部品．付け�
 - 板・ボタンを置いた画面は左右 2 画面で描く．HTML に切り替えた後は 1 画面にする（app/ は毎フレーム `stereo()` を見る）
 - 結果画面のナレーションは無い（合う文の ID が `core/audioIds.ts` に無いため．足す時は core の専用 PR で）
 - HTML の結果画面（`createDebriefScene`）は，見守り画面・`?debrief` の確認ページ・上のタップの逃げ道で使う．見守り画面の表示は変えていない
+
+#### ホームの手のスタート (Hand Start on Home)
+
+ホーム（1 画面の HTML）の「スタート」は，タッチのほか，スマホの背面カメラの前に手をかざしても押せる（Issue #147）．3D のボタン（`handButton.ts`）は使わず，画面の上のボタンの位置で判定する．
+
+- 手のひらの中心（`PlayerInput.hands`．頭の座標系）を画面の上の点（CSS ピクセル）に写し，丸い手の印を出す（`src/lobby/homeHandStart.ts` の `handToScreen`・`handScreenPoints`．純粋な関数）．写し方は入力の種類で変える（`src/app/homeHandStart.ts` の `homeHandScreenView`）: 実機（`device`）と記録の再生（`replay`）は背面カメラの横の画角（`cameraHfovDeg` の既定値 65 度）と位置（`cameraOffsetZM`）で，カメラの映った範囲を画面いっぱいに重ねる．PC の `mock` は表示のカメラの縦の画角（70 度）で写し，マウスの下に印が出る
+- 印が「スタート」の四角を 16 px（`HOME_HAND_START_MARGIN_PX`）広げた範囲に入った状態が 1 秒続いたら押した扱い（`isAnyPointInRect`．続いた秒数は `handButtonPress.ts` の `advanceHandButtonPress` を app/ が包んで渡す）．ホームの最初の表示に入ってから・設定から戻ってから 1 秒（`armSeconds`）は数えない．かざした時間はボタンの塗りで見せる
+- 押した後はタップと同じ．設定を一度も開いていなければ確認の問い（`shouldConfirmStart`）を出し，「設定を確認する」「このまま始める」はタッチで選ぶ（手では押さない）．確認の問い・設定を出している間と，縦向きの案内が出ている間は手の印を出さず，数えない
+- 手を認識できない時（`device` でカメラが取れていない）は，手の案内・印を出さずタッチだけにする．カメラと手の認識は開始画面の許可の後から動いており（`input.attachCamera`），ホームのために開始・停止は変えない
+- `mock` では，マウスの動きを下の 3D の画面へ通すため，「スタート」をクリックでは押せない（マウスをかざして押す．「設定」等はクリックで押せる）
 
 ### ロビーの流れ (Lobby Flow)
 
@@ -228,14 +243,14 @@ relay/           #126 の担当: 見守りの中継（Cloudflare Worker と Dura
 | `src/core/` | 全員 | モジュール間の契約．型・イベントバス・`Scene` インターフェース・`SchoolPlan`（SPEC_02） | 変更は**小さい専用 PR** にし，全員に周知する．方向転換で足す型は後述「受け渡すデータ」 |
 | `src/app/` | 全員 | 起動（`?editor`／`?app`／`?monitor`），URL からの校舎データの読み込み（経路が空なら提案で埋める．「結果の評価」），`Stage` の用意，毎フレームの処理の順番，画面の切り替え，経路の記録と評価の呼び出し．見守りの送信（`monitorSender.ts`．#127）と見守り画面の組み立て（`monitorMain.ts`．#128） | ロジックを書かない．各モジュールの関数を呼んでつなぐだけ |
 | `src/sim/` | 担当D | `wallBetween()`（SPEC_02「壁の自動配置」），`computeSpread()`（延焼．E4），`proposeRoute()`（時刻を考えた最短経路．E5），`evaluateDrill()`（F8） | すべて three.js・ブラウザ API に依存しない純粋な関数にし，Vitest でテストする．エディタのプレビューと VR の両方が同じ関数を使うので，見た目と判定が食い違わない |
-| `src/share/` | 担当A | `encodePlan()`・`decodePlan()`・`validatePlan()`・`loadPlanFromHash()`（URL のフラグメントから使う校舎を決める．SPEC_02「URL と QR への埋め込み」），同梱のデモの校舎（`samples/`），見守りで送るデータの型とバイト列・JSON との変換，部屋の ID・生徒の ID・校舎の指紋（`planFingerprint`）を作る関数（`monitorIds.ts`・`monitorState.ts`・`monitorNotice.ts`．後述「見守り」．#125） | デモの校舎は最初に作り，他の担当が自分の部分を試す時に使えるようにする |
+| `src/share/` | 担当A | `encodePlan()`・`decodePlan()`・`validatePlan()`・`loadPlanFromHash()`（URL のフラグメントから使う校舎を決める．SPEC_02「URL と QR への埋め込み」），同梱のデモの校舎（`samples/`），見守りで送るデータの型とバイト列・JSON との変換，部屋の ID・生徒の ID・校舎の指紋（`planFingerprint`）を作る関数（`monitorIds.ts`・`monitorState.ts`・`monitorNotice.ts`．後述「見守り」．#125），読み上げの声の選び方と読み上げ用の文面の変換（`speechVoice.ts`．audio/ と lobby/ が使う．#184） | デモの校舎は最初に作り，他の担当が自分の部分を試す時に使えるようにする |
 | `src/portal/` | #176 の担当 | 教員用のホーム画面（何も付けない URL）．キービジュアルと「エディタを開く」のボタン | HTML と CSS だけで作る（three.js は使わない）．画像の URL・エディタへのリンクの組み立ては `portalLinks.ts` の純粋な関数．画像は `public/home/` に置き，`import.meta.env.BASE_URL` から参照する．縦長の画面ではタイトルが切れないよう，画像を大きめに上寄せで置く |
 | `src/editor/` | 担当A | エディタの画面．下敷きの写真（E1），マス目の塗り（E2），火元・開始地点・集合場所の配置（E3），延焼のプレビュー（E4．`computeSpread()` の結果を時刻のスライダーで見せる），経路の提案と手での修正（E5），モードの選択と QR コードの表示（E6） | Canvas 2D の上から見た図で作る．保存はファイルの書き出し・読み込みと localStorage（サーバーは使わない）．マス目の編集は「今の状態 → 操作 → 次の状態」の純粋な関数にし，「元に戻す」を最初から持つ．図面からの下書き（ES3）を後から足せるよう，「AI で下書きを作る」は `FloorDraftProvider` を受け取って呼ぶだけにする（SPEC_02「配置の下書き」．`?editor` の起動時に app/ が Gemini のサーバー関数を呼ぶ仕組みを渡す．渡されなければボタンを出さない）．3D での確認も同じ形にし，エディタは `PlanPreview`（`src/editor/planPreview.ts`．`open(container, plan)` で 3D を出し，返した `PlanPreviewSession.dispose()` で片付ける）だけを受け取る．実体は app/ の `createEditorPlanPreview()`（`src/app/editorPlanPreview.ts`．`scenes/school/` の校舎・`SpaceWalker` の当たり判定・`DragLook`）で，`?editor` の起動時に渡す（渡されなければ切り替えのボタンを出さない）．3D は切り替えた時点の編集中の校舎で作り（経路が空なら `withResolvedRoute()` で提案を入れる．非常ベルから 0 秒で止める），3D の間は編集の操作・道具箱を止め，編集の状態と元に戻すの履歴は変えない．校舎に誤り（`validatePlan()`）がある時は 3D を作らず理由を出す |
 | `src/input/` | 担当D | 足踏み・しゃがみ・頭の向き・ハンドトラッキング → `PlayerInput` | 判定は**純粋な関数**（センサーの値の列 → 判定結果）にし，記録したセンサーの値でテストする．センサー・カメラの購読は薄い殻に分ける．**判定の安定性に責任を持ち，しきい値と処理の調整を行う**（後述「判定の安定性」）．入力判定とハンドトラッキングの処理時間を予算内に保つ（後述「処理速度」） |
 | `src/scenes/` | 担当B | `school/`: `SchoolPlan` から校舎の 3D（床・壁・天井・ドア・シャッター・屋外）を組み立てる．当たり判定とエリア（`scenes/walk/` を流用）．火と煙の見た目（`SpreadMap` とその時刻から）．集合場所の床の印．学習モードの床の矢印 | `Scene` と `ScenarioWorld` を実装する．`walking` と体の向きからプレイヤーを動かし，壁と燃えているマスとの衝突を決める．`?scene=school` で単独で確かめられるようにする |
 | `src/lobby/` | 担当C | 開始画面（HTML），許可の一括取得，ホーム，ロビーのシーン，キャリブレーションの手順 | `CalibrationProfile` を作って `Session.calibration` に書く．基準取りの流れと UI を担う（取った値の使い方は担当D．後述「判定の安定性」） |
-| `src/audio/` | 担当C | `Cue` の `narration`・`sound` を受けて再生する．校内放送は火元の教室の名前を入れて読み上げる（`narration` の `params`）．ナレーションが終わったら `signal`（`narration-ended:<ID>`）を送る | 効果音は Web Audio でコードから合成し，「音の ID → 鳴らし方」の対応表（`src/audio/synths.ts`）で持つ（音声ファイルに替える時はここを差し替える）．ナレーションは端末の読み上げ（speechSynthesis）．体験の間ずっと動く（後述「音の使い方」） |
-| `src/debrief/` | 担当C | 結果画面（VR の板と手のボタン．`debriefVrScene.ts`）と，スマホの画面・見守り画面で使う HTML の結果画面（`debriefScene.ts`）．`SchoolPlan` の地図の上に `DrillEvaluation` を重ねて描く | Canvas 2D で描く．地図の描き方はエディタと同じ見た目にそろえる（関数は共有せず，それぞれが `SchoolPlan` から描く．色・印の比率は `debrief/mapStyle.ts`・`mapMarkers.ts` に書き写す）．そろえるもの: 教室ごとの色分け・薄い壁が立つ辺の線・教室の名前・火元の炎の印・開始地点の人の印と向きの矢印・集合場所の枠と旗・下地とマスの境目．結果画面だけの重ね描き（正解経路・自分の経路・外れた区間・煙の中で立っていた区間・火に近づいた点）はその上に描き，火に近づいた点を最も上にする．エディタだけの表示（マウスの下のマス・下敷き・延焼のプレビュー・経路の矢印）は描かない |
+| `src/audio/` | 担当C | `Cue` の `narration`・`sound` を受けて再生する．校内放送は火元の教室の名前を入れて読み上げる（`narration` の `params`）．ナレーションが終わったら `signal`（`narration-ended:<ID>`）を送る | 効果音は Web Audio でコードから合成し，「音の ID → 鳴らし方」の対応表（`src/audio/synths.ts`）で持つ（音声ファイルに替える時はここを差し替える）．ナレーションは端末の読み上げ（speechSynthesis）．声は日本語の質の良い声を選ぶ（`src/share/speechVoice.ts`．後述「音の使い方」）．体験の間ずっと動く（後述「音の使い方」） |
+| `src/debrief/` | 担当C | 結果画面（VR の板と手のボタン．`debriefVrScene.ts`）と，スマホの画面・見守り画面で使う HTML の結果画面（`debriefScene.ts`）．`SchoolPlan` の地図の上に `DrillEvaluation` を重ねて描く | Canvas 2D で描く．地図の描き方はエディタと同じ見た目にそろえる（関数は共有せず，それぞれが `SchoolPlan` から描く．色・印の比率は `debrief/mapStyle.ts`・`mapMarkers.ts` に書き写す）．そろえるもの: 教室ごとの色分け・薄い壁が立つ辺の線・教室の名前・火元の炎の印・開始地点の人の印と向きの矢印・集合場所の枠と旗（エディタはつながった集合場所をまとまりの外周の枠と旗 1 つで描く．SPEC_02「集合場所の範囲指定」）・下地とマスの境目．結果画面だけの重ね描き（正解経路・自分の経路・外れた区間・煙の中で立っていた区間・火に近づいた点）はその上に描き，火に近づいた点を最も上にする．エディタだけの表示（マウスの下のマス・下敷き・延焼のプレビュー・経路の矢印）は描かない |
 | `src/monitor/` | #128 の担当 | 見守り画面（`?monitor`）．中継への接続（受け取るだけ），届いた状態の並べ替え・約 100 ms 遅らせた補間，画面の状態（接続待ち → 準備中 → 体験中 → 終わり），赤い表示（`detectErrorBehaviors()`），届いた記録の評価（`evaluateDrill()`）．段階 2 で上から見た地図の上の生徒の点と名前を足す．ファイルは下表 | 校舎の 3D は生徒の画面と同じ `scenes/school/` で，ロビーは `lobby/` の部屋と板で描き，結果は `debrief/` の結果画面で出す．どちらも app/ が組み立てて渡す（画面を持つモジュール同士は直接 import しない）．カメラは 1 つで，左右 2 画面にしない |
 | `src/scenario/` | 担当D | 進行エンジン（純粋な関数）と，`SchoolPlan` から ① ② ③ のシナリオ（`ScenarioDefinition`）を組み立てる `buildDrillScenario()` | エンジンは実装済み．地震のサンプルは当面残す |
 
@@ -266,7 +281,7 @@ relay/           #126 の担当: 見守りの中継（Cloudflare Worker と Dura
 - `sim/`・`share/` は `core/` だけを import する純粋な関数のライブラリで，どのモジュールからも import してよい（エディタのプレビューと VR が同じ計算を使うため）
 - `input/` は three.js のシーンを import しない（`PlayerInput` は素のデータ．`core/types.ts` の `Vec3`・`Quat` を使う）
 - `scenes/` はセンサー・カメラの API（`DeviceMotionEvent`・`getUserMedia` 等）に触れない．入力は `FrameInfo.input` だけから受け取る
-- 画面をまたいで使う 3D の部品（今は手の形 `scenes/common/handMarkers.ts` と手で押すボタン `scenes/common/handButton.ts`）は scenes/ に置き，他の画面を持つモジュールには app/ が作る関数を渡す（例: ロビーの `createHandMarkers`・付け外しの案内と結果画面（VR）の `createHandButton`）．受け取る側は使う形だけを自分で型にする
+- 画面をまたいで使う 3D の部品（今は手の形 `scenes/common/handMarkers.ts` と手で押すボタン `scenes/common/handButton.ts`）は scenes/ に置き，他の画面を持つモジュールには app/ が作る関数を渡す（例: ロビーの `createHandMarkers`・付け外しの案内と結果画面（VR）の `createHandButton`）．受け取る側は使う形だけを自分で型にする．ホームの手のスタートも，押した判定（`handButtonPress.ts`）を app/ が包んで `HomeHandPress` として渡す
 - `scenario/`・`sim/`・`share/` は three.js にもブラウザ API にも依存しない（純粋な TypeScript．`share/` の圧縮に使う `CompressionStream` と，見守りの ID・指紋を作る `crypto.getRandomValues`・`crypto.subtle.digest` だけは例外とし，テストは Node の同じ API で行う）
 - `core/` のうち three.js の型を使うのは `core/scene.ts` だけ（型だけの import なので実行時の依存は無い）．`input/`・`scenario/`・`sim/`・`share/` は `core/scene.ts` を import しない
 
@@ -292,7 +307,7 @@ relay/           #126 の担当: 見守りの中継（Cloudflare Worker と Dura
 | `DrillTrack` | `core/drill.ts`（**新規**） | app/ → sim/ | 0.2 秒ごとの記録（非常ベルからの秒数・階（`SchoolPlan.floors` の添字．`CellRef.floor` と同じ）・ワールド座標の X と Z・姿勢） |
 | `DrillEvaluation` | `core/drill.ts`（**新規**） | sim/ → debrief/ | 評価（外れた区間・火に近づいた点・煙の中でしゃがんでいた割合・避難時間・逃げ遅れか） |
 | `PlayerInput` | `core/types.ts` | input/ → app/ → scenes/・scenario/ | 1 フレーム分の入力．頭の向き（`head`，正面リセット済み），姿勢（`posture`: `standing`／`crouching`），足踏み中か（`walking`）と前進の速さ（`walkSpeed`），左右の手（`hands`） |
-| `HandState` | `core/types.ts` | input/ → scenes/ | 片手の状態．認識できているか（`tracked`），手のひらの位置（頭を原点とした座標），握り具合（`grip`: 0〜1．握った状態の間は 0.6 以上，開いた状態の間は 0.4 以下に収めるため，0.5 で区切ればヒステリシスどおりに判定できる．握ったまま一瞬見失っても約 0.8 秒は `tracked` と握ったままを保つ），手の 21 点の位置（`landmarks`: 頭の座標系．番号は MediaPipe の HandLandmarker と同じ．手の形を描くため．実機では奥行きを固定（既定 1.2 m＋相対の z）にして映像の手と重なる向きに置き，外挿しない．そのため手のひらの位置とは奥行きが一致しない．形を出せない入力と，直近の認識で見えなかった手（約 120 ms）では省く）．左右は MediaPipe の左右の札を使わず，前回の位置に近い方と画像の左右で決める |
+| `HandState` | `core/types.ts` | input/ → scenes/ | 片手の状態．認識できているか（`tracked`），手のひらの位置（頭を原点とした座標），握り具合（`grip`: 0〜1．握った状態の間は 0.6 以上，開いた状態の間は 0.4 以下に収めるため，0.5 で区切ればヒステリシスどおりに判定できる．握ったまま一瞬見失っても約 0.8 秒は `tracked` と握ったままを保つ），手の 21 点の位置（`landmarks`: 頭の座標系．番号は MediaPipe の HandLandmarker と同じ．手の形を描くため．実機では奥行きを固定（既定 1.2 m＋相対の z）にして映像の手と重なる向きに置き，外挿しない（背面カメラの画角は表示より狭いため，手のひらの位置と 21 点はどちらも，手全体を画像の中心から離す向きに横 1.2 倍・縦 1.4 倍の所まで平行に動かす．`HandParams` の `reachGainX`・`reachGainY`）．そのため手のひらの位置とは奥行きが一致しない．形を出せない入力と，直近の認識で見えなかった手（約 120 ms）では省く）．左右は MediaPipe の左右の札を使わず，前回の位置に近い方と画像の左右で決める |
 | `CalibrationProfile` | `core/types.ts` | lobby/ → input/ | 正面のヨー角（`yawOffset`）と，各手順の区間（`segments`: `CalibrationSegment` の配列）．旧来のしきい値の 3 項目は非推奨（後述「キャリブレーションとの分担」） |
 | `Scene` | `core/scene.ts` | 各担当 → app/ | 画面の共通インターフェース（`enter`・`update`・`exit`） |
 | `SceneContext` | `core/scene.ts` | app/ → 各 Scene | イベントバス，描画先（`Stage`），画面をまたぐデータ（`Session`），画面の切り替え（`goTo`） |
@@ -445,6 +460,7 @@ ctx.bus.emit({ type: "cue", cue: narrationCue(NARRATION_ID.fireAnnouncement, { r
 
 - `audio/` は開始画面で機器を取った後に app/ が 1 回だけ作り，体験の間ずっと動く．画面を切り替える時は app/ が音を止める（画面の側で止める必要はない）．ページを離れる時に片付ける
 - 鳴っているループに `play` を何度送っても二重には鳴らない．未知の ID と `happening` は何もしない
+- 読み上げの速さ・高さは，ナレーションが rate 1.0・pitch 1.0，校内放送が rate 0.9・pitch 0.95（`src/audio/narrationText.ts` の `SPEECH_RATE`・`SPEECH_PITCH`）．ロビーの読み上げ（`src/lobby/narrator.ts`）もナレーションと同じ．声は端末の日本語の声（`ja`・`ja-JP`・`ja_JP`）から，名前に Premium・Enhanced・拡張・高品質 等がある声 → 既知の良い声（Kyoko・O-Ren・Otoya・Hattori・Google・Microsoft の Nanami 等）→ 端末の中の声（`localService`）→ その他の順に選び，Apple のノベルティ系の声（Eddy・Flo・Grandma 等）は最後にする（`src/share/speechVoice.ts` の `pickVoice`）．日本語の声が無い・一覧がまだ届いていない時は声を指定せずに読む（一覧は `voiceschanged` で届くたびに選び直す）．読み上げに渡す文だけ，全角の「．」「，」を「。」「、」に置き換える（声によっては「．」で間が入らないため．画面の表示は変えない）
 - ナレーションが終わったら `narration-ended:<ID>` の `signal` を 1 回だけ流す．読み上げが使えない・終わりの知らせが来ない時も，見積もり（1 秒 7 文字）＋4 秒で必ず流す（シナリオが止まらない）．校内放送は途中で切らず，その間に来たナレーションは放送の後に読む．ループの音はナレーションの間だけ小さくする
 - 新しい音を足す時は，`core/audioIds.ts` に ID を足し（core の専用 PR），`audio/` に作り方（効果音）か文面（ナレーション）を足す
 
@@ -671,7 +687,7 @@ ctx.bus.emit({ type: "cue", cue: narrationCue(NARRATION_ID.fireAnnouncement, { r
 { "type": "lobby", "studentId": 3141592653, "title": "しゃがんでください", "body": "その場でしゃがみ，しゃがんだまま止まってください", "caption": "手順 3 / 5　残り 6 秒", "startButton": false, "alignMarker": false }
 { "type": "track", "studentId": 3141592653, "trackId": 1, "part": 0, "parts": 3, "data": "AQAAAA..." }
 { "type": "cue", "studentId": 3141592653, "cue": { "type": "narration", "id": "fire-announcement", "params": { "roomName": "3年1組" } } }
-{ "type": "speech", "studentId": 3141592653, "text": "体の正面を向いて，そのまま動かないでください", "rate": 1.05 }
+{ "type": "speech", "studentId": 3141592653, "text": "体の正面を向いて，そのまま動かないでください", "rate": 1 }
 { "type": "stopAudio", "studentId": 3141592653 }
 ```
 
@@ -832,4 +848,5 @@ ctx.bus.emit({ type: "cue", cue: narrationCue(NARRATION_ID.fireAnnouncement, { r
 - [ ] 結果画面に出す評価項目と見せ方（担当D の `evaluateDrill()` の評価項目が決まってから詰める．今の結果画面は `DrillEvaluation` の全項目を仮に並べている）
 - [ ] ゴーグルの付け外しの案内の秒数（付ける案内の ①: 6 秒，手のボタンを出すまで 2 秒，カメラが使えない時の外す: 最短 5 秒・上限 12 秒，付ける ②（デモ用の起動）: 6 秒，手が見つからない時に進む: 30 秒）が実機に合うか
 - [x] ホーム・結果からロビーへ進む時に，付ける案内の「準備OK」とロビーの開始ボタンを続けて手で押すのが分かりにくくないか → 案 a に決定．ロビーへ進む時は ② を省き，ロビーの開始ボタンを装着の確認に充てる．② はロビーを飛ばす時（デモ用の起動）だけ出す（「ゴーグルの付け外しの案内」）
+- [ ] ホームの手のスタート: 背面カメラの画角を既定値（65 度）で写すため，端末によって印と実際の手の位置がずれうる（URL の `?cameraHfovDeg=` の上書きは印に反映していない）．かざす秒数（1 秒）・余白（16 px）と，手で押した後の確認の問いをタッチにした扱いが分かりにくくないかを実機で確かめる（「ホームの手のスタート」）
 - [ ] Issue #54（ホームで場面を選ぶ）の扱い．校舎と開始地点は QR で決まるため，場面の選択は要らなくなる見込み
