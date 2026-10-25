@@ -2,7 +2,8 @@
 // （DOM・three.js に依存しない純粋な関数．docs/04_SPEC/SPEC_01「ゴーグルの付け外しの案内」）．
 // - 外す（takeOff）: 避難 → 結果．VR の中の板と手で押すボタンで「押してからゴーグルを外して」と伝え，押したら結果画面へ
 // - 付ける（putOn）: 結果・ホーム → ロビー．1 画面の HTML で「スマホをゴーグルにセットして」と伝えて読ませた後（read），
-//   左右 2 画面に切り替え，VR の中の手で押すボタンを押したら（confirm）ロビーへ
+//   そのままロビーへ進む（ロビーの開始ボタンが装着の確認を兼ねる）．ロビーを飛ばして避難へ進む時（?app&demo）だけ，
+//   左右 2 画面に切り替え，VR の中の手で押すボタンを押したら（confirm）進む（goggleOnNeedsConfirm）
 // 手のボタンは時間では進まない（勝手に先へ進まないため．Issue #145）．ただし詰まらないよう，次の逃げ道を残す
 // - カメラが使えない（手を認識できない）時は，以前の時間で進む方式にする
 // - 手が handLostSeconds 続けて見つからない時は進む（手の認識が動いていない端末で止まらないため）
@@ -29,6 +30,15 @@ export function goggleSwitchBetween(from: SceneId | null, to: SceneId): GoggleSw
   return null;
 }
 
+/**
+ * 付ける案内の 1 画面の HTML（read）の後に，左右 2 画面の手のボタン（confirm）で装着を確かめるか．next は案内の後に進む画面．
+ * ロビーは開始ボタンを手で押して始まり，それが装着の確認を兼ねるので出さない（「準備OK」と開始ボタンの二度押しを避ける）．
+ * ロビーを飛ばす時（デモ用の起動で直接避難へ進む等）だけ出す
+ */
+export function goggleOnNeedsConfirm(next: SceneId): boolean {
+  return next !== "lobby";
+}
+
 export interface GoggleSwitchConfig {
   /** 手が使えない時，外す案内を出しておく最短の秒数（s）．読み上げが早く終わっても，板を読む時間を取る */
   readonly takeOffMinSeconds: number;
@@ -39,7 +49,10 @@ export interface GoggleSwitchConfig {
    * また板を読み始める間を取る
    */
   readonly takeOffArmSeconds: number;
-  /** 付ける案内の 1 画面の HTML（read）を出しておく秒数（s）．案内を読んでからゴーグルに入れる時間 */
+  /**
+   * 付ける案内の 1 画面の HTML（read）を出しておく秒数（s）．案内を読んでからゴーグルに入れる時間．
+   * ロビーへ進む時は，これが過ぎたらロビーへ進む（その後のゴーグルに入れる時間はロビーの開始ボタンで取る）
+   */
   readonly putOnSeconds: number;
   /** 付ける案内の左右 2 画面（confirm）で，手のボタンを押せるようにするまでの秒数（s）．ゴーグルに入れる間に押されないため */
   readonly putOnArmSeconds: number;
@@ -116,7 +129,7 @@ export function goggleOnRemainingSeconds(
   return remainingSeconds(elapsed, config.putOnSeconds);
 }
 
-/** 付ける案内の 1 画面の HTML（read）を終えて，左右 2 画面（confirm）へ切り替えてよいか */
+/** 付ける案内の 1 画面の HTML（read）を終えて，左右 2 画面（confirm）またはロビーへ進んでよいか */
 export function isGoggleOnReadDone(
   elapsed: number,
   config: GoggleSwitchConfig = DEFAULT_GOGGLE_SWITCH_CONFIG,
@@ -167,17 +180,19 @@ export function goggleOffPanel(handsUsable: boolean, handPrompt = false): Goggle
 /** 付ける案内の見出し */
 export const GOGGLE_ON_TITLE = "スマホをゴーグルにセットしてください";
 
-/** 付ける案内の左右 2 画面（confirm）の手のボタンの文字 */
+/** 付ける案内の左右 2 画面（confirm．ロビーを飛ばす時だけ）の手のボタンの文字 */
 export const GOGGLE_ON_BUTTON_LABEL = "準備OK";
 
 /**
  * 付ける案内の 1 画面の HTML（read）の箇条書き．handsUsable は左右 2 画面になった後に手のボタンで進むか
- * （false なら時間で進む）．demo はデモ用の起動（?app&demo．ロビーを通らず避難が始まる）か
+ * （false なら時間で進む）．demo はデモ用の起動（?app&demo．ロビーを通らず避難が始まる．このときだけ「準備OK」の
+ * ボタン（confirm）を出す）か．demo でない時に押すのはロビーの開始ボタン
  */
 export function goggleOnGuideLines(handsUsable: boolean, demo = false): readonly string[] {
-  const then = demo ? "非常ベルが鳴って避難訓練が始まります" : "訓練の準備に進みます";
+  const then = demo ? "非常ベルが鳴って避難訓練が始まります" : "訓練の準備が始まります";
+  const button = demo ? "目の前のボタン" : "目の前の開始ボタン";
   const last = handsUsable
-    ? `ゴーグルを着けたら，まっすぐ前を向いて，目の前のボタンに手のひらをかざすと${then}`
+    ? `ゴーグルを着けたら，まっすぐ前を向いて，${button}に手のひらをかざすと${then}`
     : `ゴーグルを着けたら，まっすぐ前を向いて待つと${then}`;
   return [
     "スマホは横向きのまま，画面をゴーグルの奥に向けて入れてください",

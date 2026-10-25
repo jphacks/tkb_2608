@@ -12,6 +12,7 @@ import {
   goggleOnCaption,
   goggleOnConfirmPanel,
   goggleOnGuideLines,
+  goggleOnNeedsConfirm,
   goggleOnRemainingSeconds,
   goggleSwitchBetween,
   isGoggleOffDone,
@@ -38,6 +39,19 @@ describe("goggleSwitchBetween", () => {
   ])("%s → %s は %s", (from, to, expected) => {
     expect(goggleSwitchBetween(from, to)).toBe(expected);
   });
+});
+
+describe("goggleOnNeedsConfirm", () => {
+  it("ロビーへ進む時は「準備OK」を出さない（ロビーの開始ボタンが装着の確認を兼ねる）", () => {
+    expect(goggleOnNeedsConfirm("lobby")).toBe(false);
+  });
+
+  it.each<SceneId>(["scenario", "home", "debrief"])(
+    "ロビーを飛ばして %s へ進む時は「準備OK」を出す",
+    (next) => {
+      expect(goggleOnNeedsConfirm(next)).toBe(true);
+    },
+  );
 });
 
 describe("advanceGoggleSwitchElapsed", () => {
@@ -162,6 +176,11 @@ describe("goggleOnGuideLines", () => {
     expect(lines[2]).toContain("ボタンに手のひらをかざす");
   });
 
+  it("ロビーへ進む時（デモでない）は，押すのがロビーの開始ボタンだと伝える", () => {
+    expect(goggleOnGuideLines(true)[2]).toContain("開始ボタン");
+    expect(goggleOnGuideLines(true)[2]).toContain("訓練の準備が始まります");
+  });
+
   it("手が使えない時は待つと進むと伝える", () => {
     expect(goggleOnGuideLines(false)[2]).toContain("待つと");
     expect(goggleOnGuideLines(false)[2]).not.toContain("ボタン");
@@ -170,6 +189,7 @@ describe("goggleOnGuideLines", () => {
   it("デモ用の起動では避難訓練が始まることと，その向きが正面になることを伝える", () => {
     const last = goggleOnGuideLines(true, true)[2];
     expect(last).toContain("避難訓練が始まります");
+    expect(last).not.toContain("開始ボタン");
     expect(last).toContain("正面");
   });
 });

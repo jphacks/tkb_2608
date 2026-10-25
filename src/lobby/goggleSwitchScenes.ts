@@ -20,6 +20,7 @@ import {
   goggleOnCaption,
   goggleOnConfirmPanel,
   goggleOnGuideLines,
+  goggleOnNeedsConfirm,
   goggleOnRemainingSeconds,
   isGoggleOffDone,
   isGoggleOnConfirmTimeUp,
@@ -295,8 +296,9 @@ const GOGGLE_ON_STYLE = `
 
 /**
  * スマホをゴーグルにセットする案内．2 つの段階からなる
- * - read（1 画面の HTML）: ゴーグルに入れる前に読む案内．決まった秒数たつか，画面をタップしたら confirm へ
- * - confirm（VR．左右 2 画面）: 何も無い空間に板と手のボタンを出し，ボタンを押したら本来の次の画面へ進む．
+ * - read（1 画面の HTML）: ゴーグルに入れる前に読む案内．決まった秒数たつか，画面をタップしたら，
+ *   ロビーへ進む時はそのままロビーへ（開始ボタンが装着の確認を兼ねる），ロビーを飛ばす時は confirm へ（goggleOnNeedsConfirm）
+ * - confirm（VR．左右 2 画面．ロビーを飛ばす時だけ）: 何も無い空間に板と手のボタンを出し，ボタンを押したら本来の次の画面へ進む．
  *   手が使えない時は決まった秒数で進む
  * id はロビーと同じ "lobby" にする（左右 2 画面にするかは stereo() で app/ に伝える）
  */
@@ -350,7 +352,7 @@ export function createGoggleOnScene(options: GoggleOnSceneOptions): GoggleGuideS
       root = document.createElement("div");
       root.className = "lobby-goggle-on";
       root.setAttribute("role", "status");
-      // ゴーグルに入れる前に読み終えた人がすぐ進めるよう，タップで左右 2 画面へ切り替える
+      // ゴーグルに入れる前に読み終えた人がすぐ進めるよう，タップで左右 2 画面（またはロビー）へ切り替える
       root.addEventListener("click", () => {
         skipRead = true;
       });
@@ -382,7 +384,14 @@ export function createGoggleOnScene(options: GoggleOnSceneOptions): GoggleGuideS
           // 変わった時だけ書き換える（毎フレームの DOM の更新を避ける）
           if (caption.textContent !== text) caption.textContent = text;
         }
-        if (skipRead || isGoggleOnReadDone(elapsed, config)) startConfirm(ctx);
+        if (skipRead || isGoggleOnReadDone(elapsed, config)) {
+          if (goggleOnNeedsConfirm(options.next)) {
+            startConfirm(ctx);
+          } else {
+            done = true;
+            ctx.goTo(options.next);
+          }
+        }
         return;
       }
       const pressed = vr.update(frame, paused);
