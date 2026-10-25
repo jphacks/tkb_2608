@@ -16,6 +16,7 @@ import {
   exitSillRect,
   type FireShutterUserData,
   type FloorSurfaceUserData,
+  fireShutterCurtainObstacles,
   floorSurfaceLayout,
   type PartPlacement,
   placeObstacle,
@@ -72,11 +73,25 @@ function placementInRoot(root: THREE.Object3D, object: THREE.Object3D): PartPlac
   return { x: dx * c + dz * s, z: -dx * s + dz * c, rotationY: yaw - rootYaw };
 }
 
+/** 当たり判定の集め方の追加の指定 */
+export interface SchoolCollisionOptions {
+  /**
+   * 閉じた防火シャッターでも，くぐり戸の範囲は人が通れるようにするか（既定 false）．
+   * くぐり戸を手で押して開ける動作（S4）が入るまでは，常に通れる扱いにする（SPEC_02「通れる・燃え広がる」）．
+   * 範囲は見た目のくぐり戸と同じ寸法（edgeLayout の shutter.wicket）から求める
+   */
+  readonly shutterWicketPassable?: boolean;
+}
+
 /**
  * root の配下の校舎のパーツから当たり判定の材料を集める（作る時の 1 回だけ呼ぶ）．
  * ドア・シャッターは userData の open・closed を毎回読むため，開閉は後から反映される
  */
-export function collectSchoolCollision(root: THREE.Object3D): SchoolCollision {
+export function collectSchoolCollision(
+  root: THREE.Object3D,
+  options: SchoolCollisionOptions = {},
+): SchoolCollision {
+  const wicketPassable = options.shutterWicketPassable ?? false;
   root.updateMatrixWorld(true);
   const obstacles: Obstacle[] = [];
   const doors: DoorBlocker[] = [];
@@ -123,7 +138,15 @@ export function collectSchoolCollision(root: THREE.Object3D): SchoolCollision {
         }
         if (closable && data.edgeKind === "fireShutter") {
           const shutter = data as FireShutterUserData;
-          doors.push({ id: data.id, obstacle: place(closable), isOpen: () => !shutter.closed });
+          const isOpen = () => !shutter.closed;
+          if (wicketPassable) {
+            // 幕をくぐり戸の周りの板に分け，閉じている間は板だけがふさぐ（くぐり戸の下端の板は敷居と同じくまたげる高さ）
+            for (const piece of fireShutterCurtainObstacles(layout, data.id, true)) {
+              doors.push({ id: piece.id, obstacle: place(piece), isOpen });
+            }
+          } else {
+            doors.push({ id: data.id, obstacle: place(closable), isOpen });
+          }
         }
         if (data.edgeKind === "exit") {
           const outside = placeRect(exitOutsideRect(layout), placement);

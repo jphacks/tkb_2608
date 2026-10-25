@@ -10,6 +10,7 @@
 //   gazeHoldSeconds 続いたら開始．装着中に誤って始まらないよう，
 //   端末が横向きでほぼ水平（ゴーグルに入れて前を向いた姿勢）の時だけ数える
 //   （向きのセンサーが無い時（PC 等）は姿勢を問わない）
+// 見え方の調整を終えるボタンも，startMode が "hand" の時は同じ判定（buttonOffset だけ ALIGN_BUTTON_OFFSET）で押す
 // 座標は rig（目の位置が原点，回転なし）の座標系．-z が正面，y が上
 
 import type { Handedness, HandState, Quat, Vec3 } from "../core/types";
@@ -46,6 +47,20 @@ export const DEFAULT_START_GATE_CONFIG: StartGateConfig = {
   gazeHoldSeconds: 3,
   levelToleranceRad: (20 * Math.PI) / 180,
 };
+
+/**
+ * 見え方の調整を終えるボタンの中心（rig の座標．ヨー角 0 の時，m）．開始ボタンと同じ判定（advanceStartGate）を
+ * buttonOffset だけ差し替えて使う．視野の中心の十字を隠さないよう，開始ボタン（目の高さの正面）より 0.15 m 下に置く
+ * （約 17° 下．ボタンの上端でも十字から約 7° 離れる．背面カメラの縦の画角にも収まる範囲）．
+ * 開始ボタンの位置から 0.15 m 離れ，handRadius（0.12 m）より遠いため，開始ボタンにかざしたままの手では押されない
+ */
+export const ALIGN_BUTTON_OFFSET: Vec3 = { x: 0, y: -0.15, z: -0.5 };
+
+/**
+ * 見え方の調整を始めてから，終えるボタンを出して押せるようにするまでの秒数（s）．
+ * 開始ボタンからかざしっぱなしの手ですぐに押されるのを防ぎ，十字を見て合わせる間を取る
+ */
+export const ALIGN_BUTTON_ARM_SECONDS = 3;
 
 export type StartTrigger = "auto" | "hand" | "gaze" | "skip";
 

@@ -67,6 +67,12 @@ export function validatePlan(plan: SchoolPlan): readonly string[] {
       errors.push(`追加の延焼箇所 ${i + 1} の燃え始める時刻は 0 秒以上にしてください`);
     }
   });
+  (spread.extraSmokes ?? []).forEach((smoke, i) => {
+    errors.push(...validateRef(plan, smoke.cell, `煙の発生源 ${i + 1}`));
+    if (!(Number.isFinite(smoke.atSeconds) && smoke.atSeconds >= 0)) {
+      errors.push(`煙の発生源 ${i + 1} の煙が出始める時刻は 0 秒以上にしてください`);
+    }
+  });
 
   if (!isPositiveFinite(drill.timeLimitSeconds)) {
     errors.push("制限時間は 0 秒より長くしてください");

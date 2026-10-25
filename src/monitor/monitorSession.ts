@@ -1,8 +1,14 @@
-// 見守り画面の受け取りの状態（映す生徒・画面の状態・通し番号・ためた状態・ドア・ロビーの板・記録）を持ち，知らせと状態で切り替える
+// 見守り画面の受け取りの状態（映す生徒・画面の状態・通し番号・ためた状態・ドア・ロビーの板・記録）を持ち，知らせと状態で切り替える．
+// 音の知らせは，鳴らすか捨てるかだけを決めて鳴らす側へ渡す
 // （SPEC_01「見守り」の「見守り画面」）．時刻は呼ぶ側が渡す（performance.now() の ms）．WebSocket・DOM・three.js には触れない（node でテストできるように）
 import type { DrillTrack } from "../core/drill";
 import type { CellRef } from "../core/schoolPlan";
-import type { MonitorLobbyNotice, MonitorNotice, MonitorTrackNotice } from "../share/monitorNotice";
+import type {
+  MonitorAudioCue,
+  MonitorLobbyNotice,
+  MonitorNotice,
+  MonitorTrackNotice,
+} from "../share/monitorNotice";
 import { isNewerMonitorSeq, type MonitorState } from "../share/monitorState";
 import { joinMonitorTrack } from "../share/monitorTrack";
 import {
@@ -30,12 +36,22 @@ const DEFAULT_FLOOR_COUNT = 256;
  */
 export type MonitorScreen = "waiting" | "preparing" | "live" | "ended";
 
-/** 受け取りの結果，描く側（ドアを持つ校舎の 3D）に行ってほしいこと */
+/**
+ * 受け取りの結果，描く側（ドアを持つ校舎の 3D）と鳴らす側（音）に行ってほしいこと．
+ * 音（cue・speech・stopAudio）は画面の状態に関係なく，映す生徒の同じ校舎の間だけ返す
+ */
 export type MonitorEffect =
   | { readonly kind: "resetDoors" }
-  | { readonly kind: "door"; readonly cell: CellRef; readonly open: boolean };
+  | { readonly kind: "door"; readonly cell: CellRef; readonly open: boolean }
+  /** 生徒の端末と同じ Cue で効果音・ナレーションを鳴らす */
+  | { readonly kind: "cue"; readonly cue: MonitorAudioCue }
+  /** 生徒のロビーと同じ文を読み上げる */
+  | { readonly kind: "speech"; readonly text: string; readonly rate: number }
+  /** 鳴っている音と読み上げを止める */
+  | { readonly kind: "stopAudio" };
 
 const RESET_DOORS: MonitorEffect = Object.freeze({ kind: "resetDoors" });
+const STOP_AUDIO: MonitorEffect = Object.freeze({ kind: "stopAudio" });
 
 /** 1 フレーム分の描き方（MonitorSession.frame の結果．返す値は次の frame で書き換わる） */
 export interface MonitorFrame {
@@ -75,6 +91,8 @@ export class MonitorSession {
   private track: DrillTrack | null = null;
   /** つなぎ終えた記録の番号（同じ記録の送り直しを無視するため） */
   private completedTrackId: number | null = null;
+  /** 映す生徒が替わった・違う校舎になった後，まだ takeAudioStop で渡していない（前の人の音を止めてほしい） */
+  private audioStopPending = false;
   private readonly pose = createMonitorPose();
   private readonly out: MonitorFrame = {
     screen: "waiting",
@@ -110,8 +128,20 @@ export class MonitorSession {
   }
 
   /**
+   * 映す生徒が替わったか，違う校舎（mismatch）の hello が届いた後，最初の 1 回だけ true を返す（鳴らす側は鳴っている音を止める）．
+   * hello はドアを戻す効果を返すため，音を止めることはこちらで別に伝える
+   */
+  takeAudioStop(): boolean {
+    const pending = this.audioStopPending;
+    this.audioStopPending = false;
+    return pending;
+  }
+
+  /**
    * 知らせを受け取る．映す生徒以外の知らせは捨てる．
-   * 描く側に行ってほしいこと（ドアを戻す・開け閉めする）があれば返す
+   * 描く側・鳴らす側に行ってほしいこと（ドアを戻す・開け閉めする・音を鳴らす・止める）があれば返す．
+   * 音の知らせは画面の状態を変えない（生徒の端末は避難の画面に入る途中で Cue を流し，phase の drill はその後に届くため，
+   * 画面の状態で絞らない）．違う校舎の間は捨てる
    */
   receiveNotice(notice: MonitorNotice, now: number): MonitorEffect | null {
     if (notice.type === "hello") return this.receiveHello(notice.studentId, notice.planFingerprint);
@@ -127,6 +157,15 @@ export class MonitorSession {
       case "track":
         if (!this.mismatch) this.receiveTrack(notice);
         return null;
+      case "cue":
+        if (this.mismatch) return null;
+        return { kind: "cue", cue: notice.cue };
+      case "speech":
+        if (this.mismatch) return null;
+        return { kind: "speech", text: notice.text, rate: notice.rate };
+      case "stopAudio":
+        if (this.mismatch) return null;
+        return STOP_AUDIO;
       case "phase":
         break;
     }
@@ -198,6 +237,8 @@ export class MonitorSession {
     const changed = studentId !== this.studentId;
     this.studentId = studentId;
     this.mismatch = planFingerprint !== this.localFingerprint;
+    // 前の人（または違う校舎になる前）の音を鳴らし続けない
+    if (changed || this.mismatch) this.audioStopPending = true;
     // hello の後の最初の状態は差を見ずに受け取る（生徒の端末が読み込み直すと通し番号が 0 から始まるため）
     this.lastSeq = null;
     if (!changed) return null;

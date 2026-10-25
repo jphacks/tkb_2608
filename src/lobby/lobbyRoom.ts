@@ -4,9 +4,9 @@
 // 2 画面で描くため，光の計算は MeshStandardMaterial より軽い MeshLambertMaterial にする
 
 import * as THREE from "three";
-import type { Handedness, HandState, Quat } from "../core/types";
-import { drawFittedText } from "./canvasText";
+import { canvasFont, canvasMeasure, drawFittedText } from "./canvasText";
 import { canvasTexture, createLobbyProps, seededRandom } from "./lobbyProps";
+import { centerTextInBox } from "./textFit";
 
 /** 目の高さ（m）．rig の位置を目の位置として扱う（scenes/ の startPosition と同じ） */
 export const LOBBY_EYE_HEIGHT = 1.6;
@@ -186,6 +186,10 @@ export interface PanelContent {
   readonly body: string;
   /** 右上に出す補足（「手順 1 / 4　残り 5 秒」等） */
   readonly caption: string;
+  /**
+   * 準備のカウントダウンの数字（3・2・1）．ある時だけ，本文を上に小さく寄せて真ん中に大きく描く．省略か null なら描かない
+   */
+  readonly countdown?: number | null;
 }
 
 export interface LobbyPanel {
@@ -248,6 +252,28 @@ export const PANEL_TEXT_LAYOUT = {
     minFontPx: 26,
     lineHeight: 1.4,
   },
+  /**
+   * 準備のカウントダウンがある時の配置．本文は見出しの下に小さく（2 行まで）寄せ，
+   * 空いた下側に数字を大きく描く（文字の大きさは板の高さの半分を上限にし，枠に収める）
+   */
+  countdown: {
+    body: {
+      box: { x: PANEL_PADDING, y: 168, width: CANVAS_WIDTH - PANEL_PADDING * 2, height: 76 },
+      maxFontPx: 30,
+      minFontPx: 22,
+      lineHeight: 1.3,
+      maxLines: 2,
+    },
+    digit: {
+      box: {
+        x: PANEL_PADDING,
+        y: 252,
+        width: CANVAS_WIDTH - PANEL_PADDING * 2,
+        height: CANVAS_HEIGHT - 252 - 12,
+      },
+      maxFontPx: CANVAS_HEIGHT / 2,
+    },
+  },
 } as const;
 
 /** 目の高さの正面（少し上）に置く指示の板．object を頭のヨー角に合わせて回すと視界の正面に来る */
@@ -287,7 +313,8 @@ export function createLobbyPanel(): LobbyPanel {
   return {
     object: pivot,
     show(content) {
-      const signature = `${content.title}\n${content.body}\n${content.caption}`;
+      const countdown = content.countdown ?? null;
+      const signature = `${content.title}\n${content.body}\n${content.caption}\n${countdown ?? ""}`;
       if (signature === last || ctx === null) return;
       last = signature;
       ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
@@ -305,7 +332,26 @@ export function createLobbyPanel(): LobbyPanel {
         weight: "bold",
         color: "#ffffff",
       });
-      drawFittedText(ctx, content.body, body.box, { ...body, color: "#e0e4ec" });
+      if (countdown === null) {
+        drawFittedText(ctx, content.body, body.box, { ...body, color: "#e0e4ec" });
+      } else {
+        const layout = PANEL_TEXT_LAYOUT.countdown;
+        drawFittedText(ctx, content.body, layout.body.box, { ...layout.body, color: "#e0e4ec" });
+        const digit = String(countdown);
+        const placed = centerTextInBox(
+          digit,
+          layout.digit.box,
+          layout.digit.maxFontPx,
+          canvasMeasure(ctx, "bold"),
+        );
+        ctx.save();
+        ctx.fillStyle = "#ffd27a";
+        ctx.font = canvasFont(placed.fontPx, "bold");
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(digit, placed.x, placed.y);
+        ctx.restore();
+      }
       texture.needsUpdate = true;
     },
     setHighlight(amount) {
@@ -433,55 +479,6 @@ export function createAlignmentMarker(): AlignmentMarker {
     dispose() {
       barGeometry.dispose();
       ringGeometry.dispose();
-      material.dispose();
-    },
-  };
-}
-
-export interface HandMarkers {
-  /** rig に足す（目の位置が原点．手の位置を rig の座標にして置く） */
-  readonly object: THREE.Object3D;
-  /**
-   * 認識している手の位置に印を出す（開始ボタンへ手を合わせやすくするため）．
-   * hands の position は頭の座標系なので，頭の向き head で rig の座標に直す．visible が false なら隠す
-   */
-  update(head: Quat, hands: Readonly<Record<Handedness, HandState>>, visible: boolean): void;
-  dispose(): void;
-}
-
-const HAND_MARKER_RADIUS = 0.022;
-/** 毎フレーム new しないための作業用の値 */
-const handQuat = new THREE.Quaternion();
-
-/** 手のひらの中心に出す小さな球（左右で 1 つずつ．形と見た目は共有する） */
-export function createHandMarkers(): HandMarkers {
-  const group = new THREE.Group();
-  group.name = "lobby-hand-markers";
-  const geometry = new THREE.SphereGeometry(HAND_MARKER_RADIUS, 12, 8);
-  const material = new THREE.MeshBasicMaterial({ color: 0x9cc8ff });
-  const left = new THREE.Mesh(geometry, material);
-  const right = new THREE.Mesh(geometry, material);
-  left.name = "hand-left";
-  right.name = "hand-right";
-  left.visible = false;
-  right.visible = false;
-  group.add(left, right);
-
-  const place = (mesh: THREE.Mesh, hand: HandState, visible: boolean): void => {
-    mesh.visible = visible && hand.tracked;
-    if (!mesh.visible) return;
-    mesh.position.set(hand.position.x, hand.position.y, hand.position.z).applyQuaternion(handQuat);
-  };
-
-  return {
-    object: group,
-    update(head, hands, visible) {
-      handQuat.set(head.x, head.y, head.z, head.w);
-      place(left, hands.left, visible);
-      place(right, hands.right, visible);
-    },
-    dispose() {
-      geometry.dispose();
       material.dispose();
     },
   };

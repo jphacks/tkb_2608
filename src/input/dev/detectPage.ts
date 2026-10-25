@@ -1,5 +1,6 @@
 // 判定の確認ページ（src/input/dev/detect.html）．センサーの値・判定の途中の値・判定の状態をグラフと数値で出し，
 // しきい値をスライダーで変えられる．フライトレコーダーで生の値に加えて途中の値（detect）と結果（state）も記録する
+import { standWalkBoundary } from "../body/posture";
 import { StepResult } from "../body/stepDetector";
 import type { DeviceTracker } from "../deviceTracker";
 import { pitchOfQuat, yawOfQuat } from "../head/quat";
@@ -121,7 +122,7 @@ function render(): void {
     `         歩 ${s.stepCount}  除外 ${s.rejectedCount}  直近の山 ${f(s.lastStepPeak)}  ノイズ RMS ${f(Math.sqrt(s.noiseVar), 3)}`,
     `         T_high ${f(b.thresholds.high)}  T_low ${f(b.thresholds.low)}`,
     `しゃがみ ${po.phase}  v ${f(po.v)} m/s  h ${f(po.h)} m  直近 Δh ${f(po.lastDeltaH)} m（${po.lastOutcome}）`,
-    `         逃げ道 ${po.escapeCount}/${tracker.params.standEscapeSteps}  切り替え ${po.changeCount} 回`,
+    `         逃げ道 ${po.escapeCount}/${tracker.params.standEscapeSteps}  しゃがみ歩きから立つ ${po.walkCount}/${tracker.params.standWalkSteps}（境目 ${f(standWalkBoundary(tracker.params))}・直近の山 ${f(po.walkLastPeak)}）  切り替え ${po.changeCount} 回`,
     `頭       画面 ${raw.screenAngle}°  先読み ${tracker.params.headPredictionMs} ms  yaw ${f((yawOfQuat(p.head) * 180) / Math.PI, 1)}°  pitch ${f((pitchOfQuat(p.head) * 180) / Math.PI, 1)}°`,
     `サンプル 使用 ${b.sampleCount}  捨て ${b.droppedCount}  初期化 ${b.resetCount}  間隔 ${f(b.dtEstSec * 1000, 1)} ms`,
     `処理時間 平均 ${f(timing.count > 0 ? (timing.totalMs / timing.count) * 1000 : 0, 1)} µs  最大 ${f(timing.maxMs * 1000, 1)} µs`,

@@ -2,11 +2,14 @@
 // デモの校舎のマス目を簡易な床（種類ごとの色の板）・柱のマスの箱・天井の板で並べ，computeSpread() の結果で createFireSmoke() の火と煙を描く．
 // 時刻はスライダーと再生で動かす．一人称の視点（立つ 1.6 m／しゃがむ 0.9 m）と見下ろす視点を切り替えられる．
 // ?plan=large で 60 × 34 マス（約 2,000 マス）の廊下だけの校舎にし，更新にかかる時間を確かめる．
+// ?plan=smoke で火元から離れた西の廊下に煙の発生源（extraSmokes）を足し，煙だけが広がる様子を確かめる．
+// #p=<埋め込みデータ> を付けると，その校舎を URL から読み込む（埋め込んで読み直しても同じ広がりになるかを見る）．
 // 同じ場面を見比べるため，?t=<秒>・?at=<x>,<z>（m）・?yaw=<度>・?pitch=<度>・?crouch=1 で始める時刻と視点を決められる．
 // 校舎の 3D（#92）とは独立に確かめるため，dev ページの中で three.js を直接使う
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import type { CellKind, SchoolPlan } from "../../../core/schoolPlan";
+import { decodePlan, encodePlan } from "../../../share/planCodec";
 import { DEMO_SCHOOL } from "../../../share/samples/demoSchool";
 import { createFloorFromRows } from "../../../share/samples/floorFromRows";
 import { cellCenter, kindAt, worldToCell } from "../../../sim/grid";
@@ -61,8 +64,43 @@ function createLargePlan(): SchoolPlan {
   };
 }
 
+/**
+ * デモの校舎に，火元（理科室．シャッターより東）から離れた西の廊下の煙の発生源を足したもの．
+ * シャッターより西には火も煙も来ないので，西の廊下・1年1組の煙はすべて発生源から来たもの
+ */
+function createSmokeSourcePlan(): SchoolPlan {
+  return {
+    ...DEMO_SCHOOL,
+    name: `${DEMO_SCHOOL.name}（西の廊下に煙の発生源）`,
+    drill: {
+      ...DEMO_SCHOOL.drill,
+      spread: {
+        ...DEMO_SCHOOL.drill.spread,
+        extraSmokes: [{ cell: { floor: 0, x: 8, z: 6 }, atSeconds: 10 }],
+      },
+    },
+  };
+}
+
+/** #p= の校舎．無ければ null（読み込めなかった時は理由を画面に出して止める） */
+async function planFromHash(): Promise<SchoolPlan | null> {
+  const encoded = new URLSearchParams(location.hash.slice(1)).get("p");
+  if (encoded === null) return null;
+  const decoded = await decodePlan(encoded);
+  if (decoded.ok) return decoded.plan;
+  document.body.textContent = `#p= の校舎を読み込めません: ${decoded.reason}`;
+  throw new Error(decoded.reason);
+}
+
 const params = new URLSearchParams(location.search);
-const plan = params.get("plan") === "large" ? createLargePlan() : DEMO_SCHOOL;
+const hashPlan = await planFromHash();
+const plan =
+  hashPlan ??
+  (params.get("plan") === "large"
+    ? createLargePlan()
+    : params.get("plan") === "smoke"
+      ? createSmokeSourcePlan()
+      : DEMO_SCHOOL);
 const floor = plan.floors[0];
 const spread = computeSpread(plan);
 
@@ -249,6 +287,20 @@ const timeLabel = document.getElementById("timeLabel") as HTMLSpanElement;
 const viewButton = document.getElementById("view") as HTMLButtonElement;
 const crouchButton = document.getElementById("crouch") as HTMLButtonElement;
 const info = document.getElementById("info") as HTMLDivElement;
+const embedLink = document.getElementById("embed") as HTMLAnchorElement;
+const appLink = document.getElementById("app") as HTMLAnchorElement;
+{
+  // 今の校舎を埋め込んだ URL（この確認ページで読み直す／体験の流れで開く）．?plan= は外し，ほかの値は残す
+  const encoded = await encodePlan(plan);
+  const search = new URLSearchParams(location.search);
+  search.delete("plan");
+  const query = search.toString();
+  embedLink.href = `${location.pathname}${query === "" ? "" : `?${query}`}#p=${encoded}`;
+  appLink.href = `/?app&input=mock#p=${encoded}`;
+}
+// 検索の部分が同じだと #p= だけが変わって読み直されないため，自分で読み直す
+window.addEventListener("hashchange", () => location.reload());
+const smokeSourceCount = plan.drill.spread.extraSmokes?.length ?? 0;
 timeSlider.max = String(maxSeconds);
 
 let seconds = Math.max(0, Math.min(maxSeconds, numberParam("t", 0)));
@@ -331,6 +383,7 @@ renderer.setAnimationLoop(() => {
   timeLabel.textContent = `${seconds.toFixed(1)} / ${maxSeconds} 秒`;
   info.textContent = [
     `${plan.name}（${floor.width} × ${floor.depth} マス．火の対象 ${fireSmoke.cells.fire.length}・煙の対象 ${fireSmoke.cells.smoke.length}）`,
+    `校舎: ${hashPlan === null ? "同梱" : "#p= から読み込み"}・煙の発生源: ${smokeSourceCount}`,
     `炎の粒: ${FIRE_PARTICLES.count} 個（うち火の粉 ${emberCount}）・煙: 視線に垂直な板 ${SMOKE_VOLUME.sliceCount} 枚（描画はそれぞれ 1 回）`,
     `fps: ${fps.toFixed(0)}・update: 平均 ${updateAvg.toFixed(3)} ms／最大 ${updatePeak.toFixed(3)} ms・描画: ${drawCalls} 回（簡易な校舎の 3 回を含む）`,
     `時刻: ${seconds.toFixed(1)} 秒・燃えているマス: ${s.burningCells}・煙のあるマス: ${s.smokyCells}`,

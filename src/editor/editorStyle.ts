@@ -74,6 +74,37 @@ export const EDITOR_COLORS = {
   routeBadStep: "#ff8a1f",
 } as const;
 
+/**
+ * 下敷きの写真がある時に，マスの塗りの色に混ぜる白の割合（0〜1）．塗りを淡くして，乗算で重ねる図面の黒い線が
+ * 屋外のこげ茶等の濃い色の上でも見えるようにする（塗りは不透明のまま）
+ */
+export const UNDERLAY_FILL_LIGHTEN = 0.5;
+
+/**
+ * 色を白と amount（0〜1．0 で元のまま，1 で白）の割合で混ぜた色．"#rrggbb"・"#rgb" は "#rrggbb" で，
+ * "rgb(...)"・"rgba(...)" は "rgba(...)"（透明度は元のまま）で返す．読めない形式・数でない amount の時は元の色を返す
+ */
+export function lightenColor(color: string, amount: number): string {
+  if (!Number.isFinite(amount)) return color;
+  const t = Math.min(1, Math.max(0, amount));
+  const mix = (c: number): number => Math.round(c + (255 - c) * t);
+  const hex = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(color.trim());
+  if (hex !== null) {
+    const h = hex[1].length === 3 ? [...hex[1]].map((d) => d + d).join("") : hex[1];
+    const rgb = [0, 2, 4].map((i) => mix(Number.parseInt(h.slice(i, i + 2), 16)));
+    return `#${rgb.map((c) => c.toString(16).padStart(2, "0")).join("")}`;
+  }
+  const fn = /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+)\s*)?\)$/i.exec(
+    color.trim(),
+  );
+  if (fn !== null) {
+    const rgb = [fn[1], fn[2], fn[3]].map((v) => mix(Math.min(255, Number(v))));
+    const alpha = fn[4] === undefined ? 1 : Number(fn[4]);
+    return `rgba(${rgb.join(", ")}, ${alpha})`;
+  }
+  return color;
+}
+
 /** 道具箱の経路の道具の名前 */
 export const ROUTE_TOOL_LABEL = "経路を引く";
 

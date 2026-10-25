@@ -126,6 +126,19 @@ export interface InputParams {
   /** 逃げ道（案 A）: しゃがんだまま，立っている時の大きさの足踏みがこの歩数続いたら立ったとみなす．0 で無効 */
   readonly standEscapeSteps: number;
   /**
+   * しゃがみ歩きから止まらずに立つ判定（案 A の人ごとの版．posture.ts の updateStandWalk）: その人の立った足踏みの
+   * 山の大きさ（帯域通過後の中央値．m/s^2）．0 で無効．キャリブレーションで立った足踏みとしゃがみ歩きの両方が測れて，
+   * 2 つの差が十分な時だけ値が入る
+   */
+  readonly standWalkPeakStanding: number;
+  /** 同じく，その人のしゃがみ歩きの山の大きさ（帯域通過後の中央値．m/s^2）．0 で無効 */
+  readonly standWalkPeakCrouching: number;
+  /**
+   * 同じく，しゃがみ歩きの間に，山の大きさが 2 つの中央値の境目（幾何平均）より立った足踏みの側に入った歩が
+   * この数だけ続いたら立ったとみなす．0 で無効（山の大きさの 2 項目が 0 の時も無効）
+   */
+  readonly standWalkSteps: number;
+  /**
    * ゆっくりした・静止の無いしゃがみ（漏れ付きの長い積分．posture.ts の updateSlowCrouch）を，頭の回転の平均（deg/s）が
    * これ未満の時だけ使う．0 で無効
    */
@@ -227,6 +240,11 @@ export const DEFAULT_INPUT_PARAMS: InputParams = {
   // 逃げ道（案 A）は使わない: 20261024-175827_3uehweky のしゃがみ歩きは帯域通過後の山が 5〜9 m/s^2 と，
   // 立った足踏み（1〜2.4 m/s^2）より大きく，しゃがんだ状態から流すと 2 区間とも数歩で「立った」になった
   standEscapeSteps: 0,
+  // しゃがみ歩きから止まらずに立つ判定は，人ごとの山の大きさが分かった時（キャリブレーション）だけ使う．
+  // 山の大きさは既定では 0（無効）．歩数だけは既定で決めておき，キャリブレーションの値が入った時に効く
+  standWalkPeakStanding: 0,
+  standWalkPeakCrouching: 0,
+  standWalkSteps: 4,
   // 準備の間のしゃがみの回転の平均は 11〜25 deg/s，漏れ付きの積分が 0.2 m 下がった時のうち見回し・頷き・記録の後の
   // 体の動きは 53〜95 deg/s（4 人分）．間を取って 40
   postureSlowGyroDps: 40,

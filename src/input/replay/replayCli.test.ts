@@ -72,6 +72,47 @@ describe("parseCliArgs", () => {
     expect(o.errors).toHaveLength(1);
   });
 
+  it("--calib 等の既定は無効・空", () => {
+    expect(parseCliArgs([])).toMatchObject({ calib: false, calibScales: [], calibMsSpecs: [] });
+  });
+
+  it("--calib・--calib-scale（カンマ区切り）・--calib-ms（何度でも）を読む", () => {
+    const o = parseCliArgs([
+      "a.jsonl",
+      "--calib",
+      "--calib-scale",
+      "0.5, 2",
+      "--calib-scale",
+      "3",
+      "--calib-ms",
+      "long:crouchWalk=8000",
+      "--calib-ms",
+      "stand=1000",
+    ]);
+    expect(o).toMatchObject({
+      paths: ["a.jsonl"],
+      calib: true,
+      calibScales: [0.5, 2, 3],
+      calibMsSpecs: ["long:crouchWalk=8000", "stand=1000"],
+      errors: [],
+    });
+  });
+
+  it.each([["0"], ["-1"], ["abc"], ["NaN"], ["Infinity"], [""]])(
+    "--calib-scale の不正な倍率（%j）は errors に入れ，正しいものだけ使う",
+    (bad) => {
+      const o = parseCliArgs(["--calib-scale", `2,${bad}`]);
+      expect(o.calibScales).toEqual([2]);
+      expect(o.errors).toHaveLength(1);
+    },
+  );
+
+  it("値の無い --calib-scale・--calib-ms は errors", () => {
+    expect(parseCliArgs(["--calib-scale"]).errors).toContain("--calib-scale の値がありません");
+    expect(parseCliArgs(["--calib-scale"]).calibScales).toEqual([]);
+    expect(parseCliArgs(["--calib-ms"]).errors).toEqual(["--calib-ms の値がありません"]);
+  });
+
   it("値の無い --set・知らないオプションは errors", () => {
     expect(parseCliArgs(["--set"]).errors).toEqual(["--set の値がありません"]);
     expect(parseCliArgs(["--foo"]).errors).toEqual(["知らないオプション: --foo"]);
@@ -146,6 +187,26 @@ describe("loadLogs・runReplayCli（一時フォルダ）", () => {
 
   it("--no-default で組が無ければそう伝える", async () => {
     expect(await runReplayCli([dir, "--no-default"])).toBe("比べるしきい値の組がありません");
+  });
+
+  it("--calib で calib の列とキャリブレーションの表を足す（--no-default でも組になる）", async () => {
+    const out = await runReplayCli([
+      path.join(dir, "b_labeled.jsonl"),
+      "--no-default",
+      "--calib",
+      "--calib-scale",
+      "2",
+      "--calib-ms",
+      "long:stand=1000",
+    ]);
+    expect(out).toContain("× しきい値 3 組: calib, calib×2, long");
+    expect(out).toContain("-- b_labeled のキャリブレーション");
+    expect(out).not.toContain("比べるしきい値の組がありません");
+  });
+
+  it("--calib-ms の誤りは結果の前に出す", async () => {
+    const out = await runReplayCli([dir, "--calib-ms", "x:walk=1"]);
+    expect(out.split("\n")[0]).toContain("--calib-ms x:walk=1: 知らない区間: walk");
   });
 
   it("--help・引数の誤りは使い方を返す（例外にしない）", async () => {

@@ -22,10 +22,19 @@ import type { AcquiredDevices } from "../lobby/permissions";
 import { createStartScene } from "../lobby/startScene";
 import { TRAINING_BACKGROUND_CSS, TRAINING_BOX_CSS } from "../lobby/trainingTheme";
 import { createScreenWakeLock } from "../lobby/wakeLock";
+import { createHandMarkers } from "../scenes/common/handMarkers";
 import { createPlanFingerprintFromHash } from "../share/monitorIds";
 import { loadPlanFromHash } from "../share/planHash";
 import { DEMO_SCHOOL } from "../share/samples/demoSchool";
+import { createDrillScene, type DrillScene } from "./drillScene";
 import { resolveDebug, resolveStereo } from "./launchMode";
+import {
+  type AppliedLobbyParams,
+  createMotionSampleBuffer,
+  describeLobbyParams,
+  replacingOverrides,
+  resolveLobbyParams,
+} from "./lobbyCalibrationParams";
 import {
   createMonitorSender,
   loadStudentId,
@@ -34,7 +43,6 @@ import {
   monitorPitchOfDirection,
   monitorYawOfDirection,
 } from "./monitorSender";
-import { createScenarioPlaceholder } from "./placeholderScenes";
 import { withResolvedRoute } from "./resolvedRoute";
 import { yawOnly } from "./yawOnlyCalibration";
 
@@ -120,10 +128,18 @@ export function startApp(): void {
 
   // ?app だけなら実機のセンサー（device），?app&input=mock なら PC のキーボード・ドラッグ（mock）
   const inputKind = parseInputKind(window.location.search) ?? "device";
+  // ロビーの間の motion のサンプル（区間から判定の値を求めるため．ロビーを出たら捨てる．上限つき）
+  const lobbySamples = createMotionSampleBuffer();
+  let collectingLobbySamples = false;
   const input = createInputSource({
     kind: inputKind,
     calibration: null,
     target: renderer.domElement,
+    observer: {
+      onMotion: (sample) => {
+        if (collectingLobbySamples) lobbySamples.push(sample);
+      },
+    },
   });
 
   const factories: Partial<Record<SceneId, () => Scene>> = {
@@ -153,12 +169,27 @@ export function startApp(): void {
       }),
     lobby: () =>
       createLobbyScene({
+        createHandMarkers,
         debug,
+        // 準備の合図（3・2・1）の短い音
+        audioContext,
         isPaused: () => orientationGuide.visible,
         // 見守り画面が同じロビーの板を描けるよう，板の内容が変わるたびに送る（送れなくてもロビーは変わらない）
         onPanelView: (view) => monitor.notifyLobby(view),
+        // 見守り画面が PC の読み上げで同じ文を読めるよう，読み上げた文を送る
+        onNarrate: (text, rate) => monitor.notifySpeech(text, rate),
       }),
-    scenario: () => createScenarioPlaceholder({ debug, isPaused: () => orientationGuide.visible }),
+    scenario: () => {
+      const scene = createDrillScene({
+        maxAnisotropy: Math.min(renderer.capabilities.getMaxAnisotropy(), 8),
+        debug,
+        isPaused: () => orientationGuide.visible,
+        // ?debug の時，ロビーの練習から求めた判定の値を左上に出す
+        debugInfo: () => describeLobbyParams(lobbyParams),
+      });
+      drillScene = scene;
+      return scene;
+    },
     debrief: () =>
       createDebriefScene({
         theme: { backgroundCss: TRAINING_BACKGROUND_CSS, boxCss: TRAINING_BOX_CSS },
@@ -171,8 +202,8 @@ export function startApp(): void {
   // 今の画面がゴーグルの付け外しの案内か（案内からの goTo には，もう案内を挟まない）．
   // 案内の画面は既存の画面の ID を借りるため，ID で画面を見分ける処理（見守りへの送信等）はこれも見る
   let currentIsGuide = false;
-  // 見守りへ送る値のうち，カメラから取れないもの（避難の画面に入った時刻（performance.now() の ms）と最新の姿勢）
-  let drillStartMs = 0;
+  // 見守りへ送る値のうち，カメラから取れないもの（避難の画面の非常ベルからの秒数・階と最新の姿勢）
+  let drillScene: DrillScene | null = null;
   let latestPosture: Posture = "standing";
 
   // 見守りの中継へ送る（#p= の後ろの room= と，ビルドの VITE_MONITOR_RELAY_URL がある時だけ．無ければ何もしない）．
@@ -191,12 +222,12 @@ export function startApp(): void {
       // 生徒の画面で今描いているカメラの，ワールドでの位置と向き（rig の位置・体の向き・頭の向きを反映したもの）
       camera.getWorldPosition(monitorPosition);
       camera.getWorldDirection(monitorDirection);
-      // 避難の画面は今は仮で階を持たないため，開始地点の階を送る（避難の画面ができたらそこから取る）
-      monitorSnapshot.floor = (session.plan ?? DEMO_SCHOOL).drill.start.floor;
+      const drill = inLobby ? null : drillScene;
+      monitorSnapshot.floor = drill?.floor() ?? (session.plan ?? DEMO_SCHOOL).drill.start.floor;
       monitorSnapshot.posture = latestPosture;
-      // 仮の避難の画面には非常ベルが無いため，画面に入った時を 0 秒とする（避難の画面ができたら非常ベルからの秒数にする）
-      // ロビーは非常ベルの前なので負の数にする（見守り画面はロビーの間 t を使わない）
-      monitorSnapshot.t = inLobby ? -1 : (performance.now() - drillStartMs) / 1000;
+      // 避難の画面では非常ベルからの秒数を送る．ロビーと非常ベルの前は負の数にする
+      // （見守り画面はロビーの間 t を使わず，負の t では赤い表示を出さない）
+      monitorSnapshot.t = drill?.alarmSeconds() ?? -1;
       monitorSnapshot.x = monitorPosition.x;
       monitorSnapshot.z = monitorPosition.z;
       monitorSnapshot.yaw = monitorYawOfDirection(monitorDirection.x, monitorDirection.z);
@@ -240,6 +271,9 @@ export function startApp(): void {
     },
   };
 
+  // 見守り画面が同じ効果音・ナレーションを鳴らせるよう，バスに流れた Cue をそのまま送る（audio/ の購読とは別．送れなくても音は変わらない）
+  ctx.bus.on("cue", (event) => monitor.notifyCue(event.cue));
+
   // ゴーグルの付け外しの案内の画面．案内の後に本来の画面（next）へ goTo で進む
   const createGuide = (kind: GoggleSwitch, next: SceneId): Scene =>
     kind === "takeOff"
@@ -253,12 +287,17 @@ export function startApp(): void {
       current = null;
       currentIsGuide = false;
       currentStereo = false;
+      drillScene = null;
       // 前の画面の音は次の画面へ持ち越さない（購読は続けるので，次の画面の enter で流した cue は鳴る）
       drillAudio?.stopAll();
+      // 見守り画面でも前の画面の音と読み上げを止める
+      monitor.notifyAudioStop();
+      // サンプルをためるのはロビーの間だけ（入るたびに空から始め，出たら捨てる）
+      lobbySamples.clear();
+      collectingLobbySamples = id === "lobby";
       // 中継へは許可を取った後（ホームに入る時）につなぐ．つながるのを待たない
       // （案内の画面は id が行き先の画面なので，案内に入る時は数えない）
       if (guide === null && id === "home") monitor.start();
-      if (guide === null && id === "scenario") drillStartMs = performance.now();
       const factory = guide === null ? factories[id] : () => createGuide(guide, id);
       if (factory === undefined) {
         console.warn(`未実装の画面です: ${id}`);
@@ -283,12 +322,36 @@ export function startApp(): void {
 
   // ロビーが Session.calibration を書いたら（「もう一度」で書き直した時も）入力に渡し，正面をリセットする
   let appliedCalibration: CalibrationProfile | null = null;
+  // ロビーの区間から求めて判定に反映した値（「もう一度」で区間が前回のままなら使い回す）
+  let lobbyParams: AppliedLobbyParams | null = null;
   const applyCalibration = (source: InputSource, calibration: CalibrationProfile): void => {
     appliedCalibration = calibration;
-    // device: 正面（yawOffset）と手順の区間（segments）を渡す（非推奨のしきい値は yawOnly で外す）．
-    // mock: センサーの向きが無いため今の向きを正面にする
-    if (source.tracker !== null) source.tracker.setCalibration(yawOnly(calibration));
-    else source.recenter();
+    // mock: センサーの向きが無いため今の向きを正面にする（判定をしないためしきい値も使わない）
+    const tracker = source.tracker;
+    if (tracker === null) {
+      source.recenter();
+      return;
+    }
+    // device・replay: 正面（yawOffset）と手順の区間（segments）を渡す（非推奨のしきい値は yawOnly で外す）
+    tracker.setCalibration(yawOnly(calibration));
+    // 判定のしきい値は，ロビーの間にためたサンプルと区間から input/ の calibrateParams() で求めて上書きする
+    // （開発用のゴーグルのページと同じ使い方．測れなかった項目は上書きに入らず既定値のまま．理由は notes）
+    const next = resolveLobbyParams(
+      lobbySamples.snapshot(),
+      calibration.segments ?? [],
+      lobbyParams,
+    );
+    if (next !== lobbyParams) {
+      tracker.setParams(
+        replacingOverrides(lobbyParams?.result.overrides ?? null, next.result.overrides),
+      );
+      // 前のしきい値で進めていた体の判定の途中の状態を捨てる（姿勢と頭の向きは保つ）
+      tracker.reset();
+      lobbyParams = next;
+    }
+    // 求め終えたらサンプルは要らない（説明の間もためないようにする）
+    collectingLobbySamples = false;
+    lobbySamples.clear();
   };
 
   const resize = (): void => {

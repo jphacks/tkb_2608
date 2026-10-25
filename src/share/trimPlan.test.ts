@@ -49,6 +49,9 @@ function shiftDrill(drill: DrillSetup, dx: number, dz: number): DrillSetup {
     spread: {
       ...drill.spread,
       extraFires: drill.spread.extraFires.map((f) => ({ ...f, cell: m(f.cell) })),
+      ...(drill.spread.extraSmokes === undefined
+        ? {}
+        : { extraSmokes: drill.spread.extraSmokes.map((f) => ({ ...f, cell: m(f.cell) })) }),
     },
   };
 }
@@ -160,6 +163,19 @@ describe("trimVoidMargins", () => {
     expect(trimmed.drill.assembly).toEqual(BASE_DRILL.assembly);
     expect(trimmed.drill.route).toEqual(BASE_DRILL.route);
     expect(trimmed.drill.spread.extraFires).toEqual(extraFires);
+  });
+
+  it("煙の発生源（extraSmokes）の位置もずらす", () => {
+    const extraSmokes = [{ cell: ref(2, 1), atSeconds: 15 }];
+    const trimmed = trimVoidMargins(
+      paddedBase({ top: 2, left: 3 }, { spread: { ...BASE_DRILL.spread, extraSmokes } }),
+    );
+    expect(trimmed.drill.spread.extraSmokes).toEqual(extraSmokes);
+  });
+
+  it("煙の発生源の項目が無い校舎は，切り詰めた後も項目が無いまま", () => {
+    const trimmed = trimVoidMargins(paddedBase({ top: 1, left: 1 }));
+    expect(trimmed.drill.spread).not.toHaveProperty("extraSmokes");
   });
 
   it("位置以外の訓練条件（モード・向き・速さ・制限時間）と校舎の名前・教室は変えない", () => {

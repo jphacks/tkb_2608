@@ -2,17 +2,39 @@
 // 最小限の空間（床の格子・距離の目安の柱・正面の目印）を StereoCamera で左右 2 画面に描き，
 // createInputSource({ kind: "device" }) の判定で歩く・しゃがむ・見回す感覚を確かめる．
 // 判定の状態は 3D 空間の中の板（canvas テクスチャ）に出す（HTML の重ね表示は片目にしか見えないため）．
+// 開始の後に 10 秒のカウントダウン（装着の間）を挟んで短いキャリブレーション（約 15 秒．gogglesCalibration.ts）を行い，求めたしきい値で判定する（?calib=0 でしない）．
 // scenes/・render/・main.ts には依存しない（dev ページなので three.js は直接使う）
 import * as THREE from "three";
+import type { CalibrationSegment } from "../../core/types";
+import { type CalibrationResult, calibrateParams } from "../body/calibration";
+import { standWalkBoundary } from "../body/posture";
 import type { DeviceTracker } from "../deviceTracker";
 import { createInputSource } from "../inputSource";
 import { paramsFromSearch } from "../params";
-import type { InputRecord, StateRecord } from "../recorder/records";
+import {
+  buildSchedule,
+  locate,
+  type ProtocolEvent,
+  type ProtocolSchedule,
+  scheduleEvents,
+  takeDueEvents,
+} from "../recorder/protocolSchedule";
+import { type InputRecord, roundTo, type StateRecord } from "../recorder/records";
 import { probeSensorPermission } from "../sensors/sensorSource";
+import type { MotionSample } from "../sensors/types";
 import { AudioCues } from "./audioCues";
 import { DetectLogger, paramsRecord } from "./detectLog";
 import { rememberDevPage } from "./devPages";
 import { type DevRecording, startDevRecording } from "./devRecording";
+import {
+  CALIBRATION_COUNTDOWN_TEXT,
+  calibratedOverrides,
+  calibrationProtocolSteps,
+  describeCalibratedParams,
+  describeMeasurements,
+  gogglesCalibrationFromSearch,
+  isCalibrationKind,
+} from "./gogglesCalibration";
 
 rememberDevPage("goggles.html");
 
@@ -97,17 +119,52 @@ stereo.eyeSep = 0.064;
 // ---- 判定の状態の板（カメラの子にして視界の下の方に固定する．両目に同じ位置で見える） ----
 const hudCanvas = document.createElement("canvas");
 hudCanvas.width = 1024;
-hudCanvas.height = 320;
+hudCanvas.height = 420;
 const hudCtx = hudCanvas.getContext("2d");
 const hudTexture = new THREE.CanvasTexture(hudCanvas);
 hudTexture.colorSpace = THREE.SRGBColorSpace;
 const hud = new THREE.Mesh(
-  new THREE.PlaneGeometry(0.8, 0.25),
+  new THREE.PlaneGeometry(0.8, 0.33),
   new THREE.MeshBasicMaterial({ map: hudTexture, transparent: true, depthTest: false }),
 );
-hud.position.set(0, -0.33, -1);
+hud.position.set(0, -0.3, -1);
 hud.renderOrder = 10;
 camera.add(hud);
+
+// ---- 開始の後のカウントダウンの板（カメラの子にして視界の正面の中央に固定する．両目の視界の中央に見える） ----
+const centerCanvas = document.createElement("canvas");
+centerCanvas.width = 512;
+centerCanvas.height = 384;
+const centerCtx = centerCanvas.getContext("2d");
+const centerTexture = new THREE.CanvasTexture(centerCanvas);
+centerTexture.colorSpace = THREE.SRGBColorSpace;
+const centerBoard = new THREE.Mesh(
+  new THREE.PlaneGeometry(0.4, 0.3),
+  new THREE.MeshBasicMaterial({ map: centerTexture, transparent: true, depthTest: false }),
+);
+centerBoard.position.set(0, 0, -1);
+centerBoard.renderOrder = 11;
+centerBoard.visible = false;
+camera.add(centerBoard);
+
+/** 中央の板に数字と添え書きを描く */
+function drawCenterBoard(sec: number): void {
+  if (centerCtx === null) return;
+  const ctx = centerCtx;
+  const w = centerCanvas.width;
+  ctx.clearRect(0, 0, w, centerCanvas.height);
+  ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
+  ctx.fillRect(0, 0, w, centerCanvas.height);
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = "#fff";
+  ctx.font = "bold 220px sans-serif";
+  ctx.fillText(String(sec), w / 2, 160);
+  ctx.fillStyle = "#fc6";
+  ctx.font = "bold 44px sans-serif";
+  ctx.fillText(CALIBRATION_COUNTDOWN_TEXT, w / 2, 330);
+  centerTexture.needsUpdate = true;
+}
 
 // ---- 入力と記録 ----
 const cues = new AudioCues();
@@ -136,11 +193,44 @@ function onState(r: StateRecord): void {
 }
 const logger = new DetectLogger(record, onState);
 
+/** URL のしきい値（キャリブレーションで求めた値より優先する） */
+const urlParams = paramsFromSearch(location.search);
+const calibOptions = gogglesCalibrationFromSearch(location.search);
+
+/** キャリブレーションの進み具合．null はしていない（?calib=0・開始の前） */
+interface CalibrationRun {
+  phase: "running" | "finishing" | "done";
+  readonly schedule: ProtocolSchedule;
+  readonly events: readonly ProtocolEvent[];
+  /** 手順の時刻 0（performance.now() の ms） */
+  readonly t0: number;
+  cursor: number;
+  lastCountdownKey: number;
+  /** 区間の始まりの時刻（ms．センサーのサンプルの t と同じ時計） */
+  readonly starts: Map<string, number>;
+  readonly segments: CalibrationSegment[];
+  /** キャリブレーションの間のサンプル（準備の間も含む．重力の向きと帯域通過を落ち着かせるため） */
+  readonly samples: MotionSample[];
+  result: CalibrationResult | null;
+  /** 視界の板に出す案内（running・finishing の間） */
+  lines: string[];
+}
+let calib: CalibrationRun | null = null;
+let calibTimer: ReturnType<typeof setInterval> | null = null;
+/** 開始の後のカウントダウン（キャリブレーションの前．null はしていない） */
+let countdown: { readonly t0: number; lastSec: number } | null = null;
+let countdownTimer: ReturnType<typeof setInterval> | null = null;
+
 const input = createInputSource({
   kind: "device",
   calibration: null,
-  params: paramsFromSearch(location.search),
-  observer: { onMotion: (s, t) => logger.onMotion(s.t, t) },
+  params: urlParams,
+  observer: {
+    onMotion: (s, t) => {
+      logger.onMotion(s.t, t);
+      if (calib?.phase === "running") calib.samples.push(s);
+    },
+  },
 });
 const tracker = input.tracker as DeviceTracker;
 
@@ -161,12 +251,21 @@ function drawHud(now: number, walkSpeed: number): void {
       : soundBox.checked && !soundUnlocked
         ? "音: タップで有効"
         : "";
-  const lines = [
-    `${b.posture.posture === "crouching" ? "しゃがむ" : "立つ"}  ${LOCO_TEXT[b.locomotion.mode]}  ${walkSpeed.toFixed(2)} m/s`,
-    `歩 ${b.step.stepCount}  除外 ${b.step.rejectedCount}  最後の歩 ${Number.isFinite(b.step.lastStepT) ? `${((now - b.step.lastStepT) / 1000).toFixed(1)} 秒前` : "-"}`,
-    changeAgo,
-    notice,
-  ];
+  const state = `${b.posture.posture === "crouching" ? "しゃがむ" : "立つ"}  ${LOCO_TEXT[b.locomotion.mode]}  ${walkSpeed.toFixed(2)} m/s`;
+  // キャリブレーションの間は案内を大きく出し，判定の状態は下に小さく出す
+  const lines =
+    countdown !== null
+      ? ["キャリブレーションの前", CALIBRATION_COUNTDOWN_TEXT, "", notice, state, ""]
+      : calib !== null && calib.phase !== "done"
+        ? [calib.lines[0] ?? "", calib.lines[1] ?? "", calib.lines[2] ?? "", notice, state, ""]
+        : [
+            state,
+            `歩 ${b.step.stepCount}  除外 ${b.step.rejectedCount}  最後の歩 ${Number.isFinite(b.step.lastStepT) ? `${((now - b.step.lastStepT) / 1000).toFixed(1)} 秒前` : "-"}${Number.isNaN(standWalkBoundary(tracker.params)) ? "" : `  立歩 ${b.posture.walkCount}/${tracker.params.standWalkSteps}`}`,
+            changeAgo,
+            notice,
+            calib === null ? "" : describeCalibratedParams(tracker.params, calib.result),
+            calib?.result == null ? "" : describeMeasurements(calib.result.measurements),
+          ];
   const key = lines.join("|");
   if (key === hudKey) return;
   hudKey = key;
@@ -177,14 +276,185 @@ function drawHud(now: number, walkSpeed: number): void {
   ctx.fillStyle = "#fff";
   ctx.font = "bold 72px sans-serif";
   ctx.fillText(lines[0], 24, 84);
-  ctx.font = "48px sans-serif";
+  ctx.font = "44px sans-serif";
   ctx.fillText(lines[1], 24, 160);
   ctx.fillStyle = "#9cf";
   ctx.font = "40px sans-serif";
   ctx.fillText(lines[2], 24, 222);
   ctx.fillStyle = "#fc6";
   ctx.fillText(lines[3], 24, 284);
+  ctx.fillStyle = "#cfc";
+  ctx.font = "34px sans-serif";
+  ctx.fillText(lines[4], 24, 340);
+  ctx.fillText(lines[5], 24, 392);
   hudTexture.needsUpdate = true;
+}
+
+// ---- キャリブレーション ----
+/** 準備の終わりに鳴らす 3・2・1 の合図（秒） */
+const COUNTDOWN = [3, 2, 1];
+
+/**
+ * 開始の後，スマホをゴーグルに入れて装着する間のカウントダウン（startDelayMs．視界の中央に 10, 9, ..., 1 を出す）．
+ * この間も判定とセンサーの記録は動くが，キャリブレーションのサンプルには入れない（calib がまだ無いため）
+ */
+function startCountdown(): void {
+  countdown = { t0: performance.now(), lastSec: -1 };
+  centerBoard.visible = true;
+  hudKey = "";
+  cues.speak(
+    `${CALIBRATION_COUNTDOWN_TEXT}．${Math.ceil(calibOptions.startDelayMs / 1000)}秒後に始めます`,
+  );
+  countdownTimer = setInterval(countdownTick, 50);
+  countdownTick();
+}
+
+function countdownTick(): void {
+  const c = countdown;
+  if (c === null) return;
+  const remainingMs = calibOptions.startDelayMs - (performance.now() - c.t0);
+  if (remainingMs <= 0) {
+    if (countdownTimer !== null) clearInterval(countdownTimer);
+    countdownTimer = null;
+    countdown = null;
+    centerBoard.visible = false;
+    hudKey = "";
+    startCalibration();
+    return;
+  }
+  const sec = Math.ceil(remainingMs / 1000);
+  if (sec === c.lastSec) return;
+  c.lastSec = sec;
+  drawCenterBoard(sec);
+  if (soundBox.checked) cues.beep(sec <= 3 ? 880 : 660, 80, 0.2);
+}
+
+function calibTitle(e: ProtocolEvent): string {
+  return e.segment?.step.title ?? "";
+}
+
+function startCalibration(): void {
+  const schedule = buildSchedule(
+    calibrationProtocolSteps(calibOptions.lengths),
+    calibOptions.prepMs / 1000,
+  );
+  calib = {
+    phase: "running",
+    schedule,
+    events: scheduleEvents(schedule),
+    t0: performance.now(),
+    cursor: 0,
+    lastCountdownKey: -1,
+    starts: new Map(),
+    segments: [],
+    samples: [],
+    result: null,
+    lines: ["キャリブレーション", "", ""],
+  };
+  calibTimer = setInterval(calibTick, 50);
+  calibTick();
+}
+
+function calibTick(): void {
+  const c = calib;
+  if (c === null || c.phase !== "running") return;
+  const now = performance.now();
+  const elapsed = now - c.t0;
+  const taken = takeDueEvents(c.events, c.cursor, elapsed);
+  c.cursor = taken.cursor;
+  for (const e of taken.due) {
+    const kind = e.segment?.step.label ?? "";
+    switch (e.kind) {
+      case "prep":
+        cues.speak(`次は${calibTitle(e)}．${e.segment?.step.instruction ?? ""}`);
+        break;
+      case "start":
+        c.starts.set(kind, now);
+        cues.beep(1320, 400);
+        break;
+      case "end": {
+        const startMs = c.starts.get(kind);
+        if (startMs !== undefined && isCalibrationKind(kind)) {
+          c.segments.push({ kind, startMs, endMs: now, outcome: "completed" });
+        }
+        cues.beep(660, 120);
+        setTimeout(() => cues.beep(660, 120), 180);
+        break;
+      }
+      case "done":
+        finishCalibration(c);
+        return;
+      default:
+        break;
+    }
+  }
+  const pos = locate(c.schedule, elapsed);
+  const total = c.schedule.segments.length;
+  if (pos.phase === "prep") {
+    const sec = Math.ceil(pos.remainingMs / 1000);
+    c.lines = [
+      `次: ${pos.segment.step.title}`,
+      pos.segment.step.instruction,
+      `準備 ${sec}  [${pos.segment.index + 1}/${total}]`,
+    ];
+    const key = pos.segment.index * 10 + sec;
+    if (COUNTDOWN.includes(sec) && key !== c.lastCountdownKey) {
+      c.lastCountdownKey = key;
+      cues.beep(880, 100);
+    }
+  } else if (pos.phase === "active") {
+    c.lines = [
+      pos.segment.step.title,
+      pos.segment.step.instruction,
+      `${Math.ceil(pos.remainingMs / 1000)}  [${pos.segment.index + 1}/${total}]`,
+    ];
+  }
+}
+
+/**
+ * 区間が終わったら値を求め，立ち上がって正面を向く時間（finishMs）の後に判定に反映する．
+ * 前処理の設定と上書きの基準は，その時の判定のしきい値（既定値に URL の値を重ねたもの）
+ */
+function finishCalibration(c: CalibrationRun): void {
+  if (calibTimer !== null) clearInterval(calibTimer);
+  calibTimer = null;
+  c.phase = "finishing";
+  c.result = calibrateParams(c.samples, c.segments, tracker.params);
+  c.lines = ["おわり", "立ち上がって正面を向いてください", ""];
+  cues.speak("おわりです．立ち上がって正面を向いてください");
+  setTimeout(() => applyCalibration(c), calibOptions.finishMs);
+}
+
+function applyCalibration(c: CalibrationRun): void {
+  if (c.result === null) return;
+  // 既定値 → キャリブレーションの値 → URL のしきい値の順に重ねる（URL で指定した項目は URL の値のまま）
+  tracker.setParams(calibratedOverrides(c.result.overrides, urlParams));
+  // キャリブレーションの間に動いた分を捨て，立った姿勢・正面・原点から始める
+  tracker.reset();
+  tracker.body.posture.posture = "standing";
+  input.recenter();
+  position.set(0, 0, 0);
+  c.phase = "done";
+  hudKey = "";
+  const now = performance.now();
+  record({
+    type: "mark",
+    t: roundTo(now, 3) ?? 0,
+    kind: "calibration",
+    note: JSON.stringify({
+      segments: c.segments.map((s) => ({
+        ...s,
+        startMs: roundTo(s.startMs, 3),
+        endMs: roundTo(s.endMs, 3),
+      })),
+      overrides: c.result.overrides,
+      measurements: c.result.measurements,
+      notes: c.result.notes,
+    }),
+  });
+  record(paramsRecord(now, tracker.params));
+  cues.beep(1320, 200);
+  cues.speak("求めた値で判定します");
 }
 
 // ---- 動き（仮: 頭のヨーの向きへ進み，姿勢で目の高さを変える） ----
@@ -294,6 +564,10 @@ function start(fromTap: boolean): void {
       r.recorder.record(paramsRecord(performance.now(), tracker.params));
       overlay.hidden = true;
       hudKey = "";
+      if (calibOptions.enabled) {
+        if (calibOptions.startDelayMs > 0) startCountdown();
+        else startCalibration();
+      }
     },
     () => {
       startButton.disabled = false;

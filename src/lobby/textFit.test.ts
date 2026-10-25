@@ -1,7 +1,15 @@
 // 板の文字を枠に収める計算（Issue #110 の決定事項: 枠に収まるまで自動で小さくし，下限でも収まらなければ「…」にする）
 
 import { describe, expect, it } from "vitest";
-import { ellipsize, type FitTextOptions, fitText, type MeasureText, wrapText } from "./textFit";
+import {
+  centerTextInBox,
+  ellipsize,
+  type FitBox,
+  type FitTextOptions,
+  fitText,
+  type MeasureText,
+  wrapText,
+} from "./textFit";
 
 /** 1 文字 = fontPx の幅（等幅）として測る */
 const mono: MeasureText = (text, fontPx) => [...text].length * fontPx;
@@ -126,6 +134,83 @@ describe("fitText", () => {
     for (const bad of [Number.NaN, 0]) {
       const f = fitText("あいう", options({ maxWidth: bad, maxHeight: bad }), mono);
       expect(f.lines.length).toBeGreaterThanOrEqual(1);
+    }
+  });
+});
+
+describe("centerTextInBox", () => {
+  const box = (patch: Partial<FitBox> = {}): FitBox => ({
+    x: 10,
+    y: 20,
+    width: 400,
+    height: 100,
+    ...patch,
+  });
+
+  it("文字の中心は枠の真ん中", () => {
+    const out = centerTextInBox("3", box(), 200, mono);
+    expect(out.x).toBe(10 + 200);
+    expect(out.y).toBe(20 + 50);
+  });
+
+  it("幅に余裕があれば，枠の高さ × 0.9 の大きさ（maxFontPx より小さい時）", () => {
+    expect(centerTextInBox("3", box(), 200, mono).fontPx).toBe(90);
+  });
+
+  it("maxFontPx が高さ × 0.9 より小さければ maxFontPx", () => {
+    expect(centerTextInBox("3", box(), 60, mono).fontPx).toBe(60);
+  });
+
+  it("heightRatio を渡すと高さ × その割合を上限にする", () => {
+    expect(centerTextInBox("3", box(), 200, mono, 0.5).fontPx).toBe(50);
+  });
+
+  it("幅に収まらなければ，幅に収まるまで小さくする", () => {
+    // 4 文字 × 90 px = 360 > 幅 200 → 90 × 200 / 360 = 50
+    const out = centerTextInBox("1234", box({ width: 200 }), 200, mono);
+    expect(out.fontPx).toBe(50);
+    expect(mono("1234", out.fontPx)).toBeLessThanOrEqual(200);
+  });
+
+  it("大きさは整数（切り捨て）", () => {
+    const out = centerTextInBox("3", box({ height: 33 }), 200, mono);
+    expect(Number.isInteger(out.fontPx)).toBe(true);
+    expect(out.fontPx).toBe(29);
+  });
+
+  it("1 px 未満にはしない", () => {
+    const out = centerTextInBox("1234567890", box({ width: 1, height: 1 }), 200, mono);
+    expect(out.fontPx).toBe(1);
+  });
+
+  it("空の文字列でも落ちず，枠の高さで決める", () => {
+    const out = centerTextInBox("", box(), 200, mono);
+    expect(out.fontPx).toBe(90);
+  });
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY])(
+    "測った幅が有限でない（%s）なら幅では縮めない",
+    (w) => {
+      const out = centerTextInBox("3", box(), 200, () => w);
+      expect(out.fontPx).toBe(90);
+    },
+  );
+
+  it.each([0, -10, Number.NaN])("maxFontPx が不正（%s）なら枠の高さを上限にする", (max) => {
+    expect(centerTextInBox("3", box(), max, mono).fontPx).toBe(90);
+  });
+
+  it.each([0, -1, Number.NaN])("heightRatio が不正（%s）なら既定の 0.9", (ratio) => {
+    expect(centerTextInBox("3", box(), 200, mono, ratio).fontPx).toBe(90);
+  });
+
+  it("幅・高さが 0・負・NaN でも有限の値を返し，1 px 以上", () => {
+    for (const b of [box({ width: 0 }), box({ height: -5 }), box({ width: Number.NaN })]) {
+      const out = centerTextInBox("3", b, 200, mono);
+      expect(Number.isFinite(out.x)).toBe(true);
+      expect(Number.isFinite(out.y)).toBe(true);
+      expect(Number.isFinite(out.fontPx)).toBe(true);
+      expect(out.fontPx).toBeGreaterThanOrEqual(1);
     }
   });
 });

@@ -61,6 +61,8 @@ import { createSavePanel } from "./savePanel";
 import { createSharePanel } from "./sharePanel";
 import { createSpreadPanel } from "./spreadPanel";
 import { countSpreadAt, createSpreadCache } from "./spreadPreview";
+import { canvasToGridPoint } from "./underlay";
+import { createUnderlayPanel } from "./underlayPanel";
 
 /** 画面の隅に並べる校舎の誤りの件数（残りは件数だけ出す） */
 const SHOWN_ERRORS = 5;
@@ -149,6 +151,12 @@ const STYLE = `
 .editor__warning { color: #ffc56b; white-space: pre-line; }
 .editor__warning[hidden], .editor__spread-time[hidden] { display: none; }
 .editor__row input[type="range"] { flex: 1; min-width: 0; }
+.editor__canvas--aligning { cursor: move; }
+.editor__photo-only {
+  position: absolute; left: 8px; bottom: 8px; padding: 4px 10px; border-radius: 4px;
+  background: rgba(16, 20, 28, 0.85); border: 1px solid #5b9bff; font-size: 13px; pointer-events: none;
+}
+.editor__photo-only[hidden] { display: none; }
 `;
 
 /**
@@ -183,11 +191,34 @@ export function startEditor(demoPlan: SchoolPlan = DEMO_SCHOOL): void {
   const planName = el("p", "editor__name");
   side.append(title, planName);
 
+  // 下敷き（E1）．道具箱の下の方に置くが，道具を選んだ時にモードを終えるため先に作る．
+  // 通知の帯・描き直しはこの後に作るので，呼ばれた時に引く
+  const underlayPanel = createUnderlayPanel({
+    gridSize: () => editingFloor(state),
+    onChange: () => render(),
+    onAligningChange: (aligning) => {
+      // 合わせ始める時に塗っている途中なら，そこで塗り終える
+      if (aligning && state.stroke !== null) state = endStroke(state);
+      canvas.classList.toggle("editor__canvas--aligning", aligning);
+      renderRooms();
+      render();
+      persist();
+    },
+    notify: (message) => showNotice(message, LONG_NOTICE_MS),
+    storage,
+  });
+
+  /** 道具を選ぶ（下敷きを合わせている途中なら，合わせ終えて塗る操作に戻す） */
+  const pickTool = (tool: EditorTool): void => {
+    underlayPanel.setAligning(false);
+    update(selectTool(state, tool));
+  };
+
   side.append(heading("パーツ"));
   const partList = el("div", "editor__tools");
   const partButtons = PART_TOOLS.map((part) => {
     const button = toolButton(part.label, part.kind === "void" ? null : CELL_COLORS[part.kind]);
-    button.addEventListener("click", () => update(selectTool(state, { kind: part.kind })));
+    button.addEventListener("click", () => pickTool({ kind: part.kind }));
     partList.appendChild(button);
     return { kind: part.kind, button };
   });
@@ -220,7 +251,7 @@ export function startEditor(demoPlan: SchoolPlan = DEMO_SCHOOL): void {
   const markerList = el("div", "editor__tools");
   const markerButtons = MARKER_TOOLS.map((marker) => {
     const b = toolButton(marker.label, marker.color);
-    b.addEventListener("click", () => update(selectTool(state, { kind: marker.kind })));
+    b.addEventListener("click", () => pickTool({ kind: marker.kind }));
     markerList.appendChild(b);
     return { kind: marker.kind, button: b };
   });
@@ -246,7 +277,7 @@ export function startEditor(demoPlan: SchoolPlan = DEMO_SCHOOL): void {
   // 正解経路（E5）．通知の帯はこの後に作るので，呼ばれた時に引く
   const routePanel = createRoutePanel(
     {
-      onSelectTool: () => update(selectTool(state, { kind: "route" })),
+      onSelectTool: () => pickTool({ kind: "route" }),
       onSuggest: () => {
         const result = suggestRoute(state, spreadOf);
         update(result.state);
@@ -358,6 +389,8 @@ export function startEditor(demoPlan: SchoolPlan = DEMO_SCHOOL): void {
   sizeHint.textContent = `1〜${MAX_GRID_SIZE} マス．左上をそろえて残るマスは保ち，増えたマスは「何もない」になる．空のマス目は幅・奥行きの値で作る`;
   side.append(sizeRow, resizeRow, blankRow, sizeHint);
 
+  side.appendChild(underlayPanel.element);
+
   // 上から見た図
   const canvas = el("canvas", "editor__canvas");
   const hoverBox = el("div", "editor__hover");
@@ -365,7 +398,18 @@ export function startEditor(demoPlan: SchoolPlan = DEMO_SCHOOL): void {
   const noticeBox = el("div", "editor__notice");
   noticeBox.hidden = true;
   noticeBox.setAttribute("role", "status");
-  main.append(canvas, hoverBox, errorBox, noticeBox);
+  const photoOnlyBox = el("div", "editor__photo-only");
+  photoOnlyBox.textContent = "写真だけを表示中（Space を離すと戻る）";
+  photoOnlyBox.hidden = true;
+  main.append(canvas, hoverBox, errorBox, photoOnlyBox, noticeBox);
+  /** Space を押している間は，マスの塗りと延焼のプレビューを隠して下敷きの写真だけを見せる */
+  let photoOnly = false;
+  const setPhotoOnly = (next: boolean): void => {
+    if (next === photoOnly) return;
+    photoOnly = next;
+    photoOnlyBox.hidden = !photoOnly;
+    render();
+  };
   const ctx = canvas.getContext("2d");
   let noticeTimer: number | undefined;
 
@@ -404,8 +448,18 @@ export function startEditor(demoPlan: SchoolPlan = DEMO_SCHOOL): void {
     const rect = canvas.getBoundingClientRect();
     return canvasToCell(layout, editingFloor(state), e.clientX - rect.left, e.clientY - rect.top);
   };
+  const gridPointAt = (e: PointerEvent | WheelEvent) => {
+    const rect = canvas.getBoundingClientRect();
+    return canvasToGridPoint(layout, e.clientX - rect.left, e.clientY - rect.top);
+  };
   canvas.addEventListener("pointerdown", (e) => {
     if (e.button !== 0) return;
+    // 下敷きを合わせている間は，マス目の外でもドラッグで写真を動かす（塗り・置く・経路の操作はしない）
+    if (underlayPanel.isAligning()) {
+      if (underlayPanel.beginDrag(gridPointAt(e), e.shiftKey))
+        canvas.setPointerCapture(e.pointerId);
+      return;
+    }
     const cell = cellAt(e);
     if (cell === null) return;
     // 訓練条件はクリックで 1 マスずつ置く・外す（ドラッグで続けると，足す・外すが混ざって分かりにくいため）
@@ -427,7 +481,11 @@ export function startEditor(demoPlan: SchoolPlan = DEMO_SCHOOL): void {
   canvas.addEventListener("pointermove", (e) => {
     const cell = cellAt(e);
     hover = cell;
-    if (cell !== null && state.stroke !== null && isRouteTool(state.tool)) {
+    if (underlayPanel.isAligning()) {
+      // 写真が動けば onChange で描き直す．動かない時もマウスの下のマスの表示を直す
+      underlayPanel.dragTo(gridPointAt(e));
+      render();
+    } else if (cell !== null && state.stroke !== null && isRouteTool(state.tool)) {
       const result = continueRouteStroke(state, cell);
       update(result.state);
       if (result.reason !== null) showNotice(result.reason);
@@ -435,6 +493,7 @@ export function startEditor(demoPlan: SchoolPlan = DEMO_SCHOOL): void {
     else render();
   });
   const finish = () => {
+    underlayPanel.endDrag();
     if (state.stroke !== null) update(endStroke(state));
   };
   canvas.addEventListener("pointerup", finish);
@@ -444,10 +503,29 @@ export function startEditor(demoPlan: SchoolPlan = DEMO_SCHOOL): void {
     hover = null;
     render();
   });
+  // ホイールで下敷きの大きさを変える（合わせている間だけ．ページのスクロールは止める）
+  canvas.addEventListener(
+    "wheel",
+    (e) => {
+      if (underlayPanel.zoomAt(gridPointAt(e), e.deltaY)) e.preventDefault();
+    },
+    { passive: false },
+  );
 
   window.addEventListener("keydown", (e) => {
+    if (e.code === "Space" && !isTextEntry(e.target)) {
+      // 写真が無い（表示していない）時は何もしない．ある時はスクロール・フォーカス中のボタンの押下を止める
+      if (underlayPanel.overlay() === null) return;
+      e.preventDefault();
+      setPhotoOnly(true);
+      return;
+    }
     // 文字の入力中は入力欄の元に戻すに任せる
     if (e.target instanceof HTMLInputElement) return;
+    if (e.key === "Escape" && underlayPanel.isAligning()) {
+      underlayPanel.setAligning(false);
+      return;
+    }
     if (!(e.ctrlKey || e.metaKey)) return;
     const key = e.key.toLowerCase();
     if (key === "z" && !e.shiftKey) {
@@ -458,6 +536,14 @@ export function startEditor(demoPlan: SchoolPlan = DEMO_SCHOOL): void {
       update(redo(state));
     }
   });
+
+  window.addEventListener("keyup", (e) => {
+    if (e.code !== "Space" || !photoOnly) return;
+    e.preventDefault();
+    setPhotoOnly(false);
+  });
+  // 押したまま別の窓へ移ると keyup が届かないので，フォーカスを失った時も戻す
+  window.addEventListener("blur", () => setPhotoOnly(false));
 
   new ResizeObserver(() => render()).observe(main);
 
@@ -496,11 +582,11 @@ export function startEditor(demoPlan: SchoolPlan = DEMO_SCHOOL): void {
       const b = toolButton(room.name, roomColor(index));
       b.setAttribute(
         "aria-pressed",
-        String(isSameTool(state.tool, { kind: "classroom", room: index })),
+        String(
+          !underlayPanel.isAligning() && isSameTool(state.tool, { kind: "classroom", room: index }),
+        ),
       );
-      b.addEventListener("click", () =>
-        update(selectTool(state, { kind: "classroom", room: index })),
-      );
+      b.addEventListener("click", () => pickTool({ kind: "classroom", room: index }));
       roomList.appendChild(b);
     });
     if (state.plan.rooms.length === 0) {
@@ -527,11 +613,13 @@ export function startEditor(demoPlan: SchoolPlan = DEMO_SCHOOL): void {
     // 大きさを変えてマウスの下のマスが外に出た時は消す
     if (hover !== null && !(hover.x < floor.width && hover.z < floor.depth)) hover = null;
     planName.textContent = state.plan.name;
+    // 下敷きを合わせている間は，どの道具も選んでいない見た目にする（塗れると思わせないように）
+    const aligning = underlayPanel.isAligning();
     for (const { kind, button: b } of partButtons) {
-      b.setAttribute("aria-pressed", String(state.tool.kind === kind));
+      b.setAttribute("aria-pressed", String(!aligning && state.tool.kind === kind));
     }
     for (const { kind, button: b } of markerButtons) {
-      b.setAttribute("aria-pressed", String(state.tool.kind === kind));
+      b.setAttribute("aria-pressed", String(!aligning && state.tool.kind === kind));
     }
     const facing = facingOfYaw(state.plan.drill.startYaw);
     for (const { facing: f, button: b } of facingButtons) {
@@ -553,7 +641,7 @@ export function startEditor(demoPlan: SchoolPlan = DEMO_SCHOOL): void {
         isEmptyRouteUnreachable(state.plan, spreadOf(state.plan));
     }
     routePanel.sync(
-      isRouteTool(state.tool),
+      !aligning && isRouteTool(state.tool),
       state.plan.drill.route.length,
       routeCheck,
       routeUnreachable,
@@ -597,6 +685,8 @@ export function startEditor(demoPlan: SchoolPlan = DEMO_SCHOOL): void {
           ? null
           : { spread, floorIndex: EDIT_FLOOR, atSeconds: previewSeconds },
         { cells: state.plan.drill.route, badSteps: routeCheck.badSteps },
+        underlayPanel.overlay(),
+        photoOnly,
       );
     }
 
@@ -670,6 +760,25 @@ function markersAt(state: EditorState, cell: CellXZ): MarkerKind[] {
 function arrivalText(name: string, seconds: number): string {
   return Number.isFinite(seconds) ? `${name} ${Math.round(seconds)} 秒` : `${name}は着かない`;
 }
+
+/** 文字を打つ欄（Space を空白の入力に使う欄）か．チェックボックス・スライダー等は含めない（Space で写真だけを見られるように） */
+function isTextEntry(target: EventTarget | null): boolean {
+  if (target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) return true;
+  if (!(target instanceof HTMLInputElement)) return false;
+  return !NON_TEXT_INPUT_TYPES.has(target.type);
+}
+
+/** 文字を打たない input の種類 */
+const NON_TEXT_INPUT_TYPES: ReadonlySet<string> = new Set([
+  "checkbox",
+  "radio",
+  "range",
+  "button",
+  "submit",
+  "reset",
+  "file",
+  "color",
+]);
 
 function isSameTool(a: EditorTool, b: EditorTool): boolean {
   if (a.kind === "classroom" && b.kind === "classroom") return a.room === b.room;

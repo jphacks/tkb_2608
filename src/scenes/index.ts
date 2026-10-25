@@ -1,5 +1,6 @@
 // 空間の一覧（URL パラメータで選んだ 1 つだけを作る）
 
+import { DEMO_SCHOOL } from "../share/samples/demoSchool";
 import { createElevatorScene, isElevatorSpace } from "./elevator/elevator";
 import { createElevatorWalkWorld } from "./elevator/elevatorWalk";
 import { createRoomScene, isRoomSpace } from "./room/room";
@@ -19,8 +20,9 @@ const SPACE_FACTORIES: Partial<Record<SpaceId, SpaceFactory>> = {
   train: createTrainScene,
   elevator: createElevatorScene,
   "school-parts": createSchoolPartsScene,
-  // SchoolPlan の 1 フロアから組み立てた校舎（今はデモの校舎）
-  school: (options) => createSchoolScene(options),
+  // SchoolPlan の 1 フロアから組み立てた校舎（今はデモの校舎）．単独で開いた時は赤い表示を自分で判定して出す
+  // （体験の流れ（app/）は createSchoolScene を直接呼び，redEdge.setActive で指示する）
+  school: (options) => createSchoolScene(options, DEMO_SCHOOL, { autoRedEdge: true }),
 };
 
 /** 実装済みの空間の id */

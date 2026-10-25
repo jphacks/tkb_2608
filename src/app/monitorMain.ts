@@ -1,6 +1,7 @@
 // 見守り画面（?monitor#p=…&room=…）の組み立て．URL から部屋の ID・校舎・校舎の指紋を読み，scenes/school/ の校舎の 3D を
-// monitor/ に渡して始める（画面を持つモジュール同士は直接 import しないため，つなぐのは app/．SPEC_01「見守り」）
+// monitor/ に渡して始める．音は audio/ から作って渡す（画面を持つモジュール同士は直接 import しないため，つなぐのは app/．SPEC_01「見守り」）
 import * as THREE from "three";
+import { createDrillAudio, createSpeech, unlockSpeech } from "../audio";
 import type { DrillEvaluation, DrillTrack } from "../core/drill";
 import { createEventBus } from "../core/event-bus";
 import type { AppEvent } from "../core/events";
@@ -20,7 +21,12 @@ import { TRAINING_BACKGROUND_CSS, TRAINING_BOX_CSS } from "../lobby/trainingThem
 import { MONITOR_MESSAGES } from "../monitor/monitorDisplay";
 import { showMonitorNotice, startMonitorScreen } from "../monitor/monitorScreen";
 import { createMonitorRelayUrl, resolveRelayBaseUrl } from "../monitor/relayUrl";
-import type { MonitorLobbyWorld, MonitorResultView, MonitorWorld } from "../monitor/types";
+import type {
+  MonitorAudio,
+  MonitorLobbyWorld,
+  MonitorResultView,
+  MonitorWorld,
+} from "../monitor/types";
 import { SCHOOL_EYE_HEIGHT } from "../scenes/school/schoolPlanLayout";
 import { createSchoolScene } from "../scenes/school/schoolPlanScene";
 import { createPlanFingerprintFromHash, getRoomIdFromHash } from "../share/monitorIds";
@@ -147,6 +153,55 @@ function createMonitorResult(plan: SchoolPlan): MonitorResultView {
   };
 }
 
+/** 見守り画面の AudioContext を作る（使えないブラウザでは null．効果音は鳴らさず読み上げだけ行う） */
+function createAudioContext(): AudioContext | null {
+  const Context =
+    window.AudioContext ??
+    (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (Context === undefined) return null;
+  try {
+    return new Context();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * audio/ の体験の音（生徒の端末と同じ createDrillAudio）と読み上げを，見守り画面の音の口にする．
+ * drillAudio には見守り画面の中だけのバスを渡すので，ナレーションの終わりの signal はどこにも届かない（生徒の端末へ返さない）
+ */
+function createMonitorAudio(): MonitorAudio {
+  let context: AudioContext | null = null;
+  const speech = createSpeech();
+  const drillAudio = createDrillAudio({
+    bus: createEventBus<AppEvent>(),
+    audioContext: () => context,
+    speech,
+  });
+  return {
+    enable() {
+      // クリックの処理の中で作って再開する（自動再生の制限で，クリックの外では鳴らせないため）
+      context ??= createAudioContext();
+      void context?.resume().catch(() => {});
+      unlockSpeech();
+    },
+    playCue: (cue) => drillAudio.handleCue(cue),
+    speak(text, rate) {
+      speech.speak(text, rate, () => {});
+    },
+    stopAll() {
+      drillAudio.stopAll();
+      speech.cancel();
+    },
+    dispose() {
+      drillAudio.dispose();
+      speech.cancel();
+      void context?.close().catch(() => {});
+      context = null;
+    },
+  };
+}
+
 /** 見守り画面を起動する（main.ts の ?monitor から呼ぶ） */
 export async function startMonitorApp(): Promise<void> {
   const hash = window.location.hash;
@@ -181,5 +236,6 @@ export async function startMonitorApp(): Promise<void> {
     createWorld: (maxAnisotropy) => createMonitorWorld(plan, maxAnisotropy),
     createLobby: createMonitorLobby,
     result: createMonitorResult(plan),
+    audio: createMonitorAudio(),
   });
 }

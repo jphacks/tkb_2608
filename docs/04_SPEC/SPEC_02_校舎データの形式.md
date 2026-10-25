@@ -108,6 +108,11 @@ export interface SpreadSettings {
   readonly smokeSecondsPerCell: number;
   /** 教員が手で足した延焼箇所（ES1．無ければ空）．atSeconds にそのマスが燃え始める */
   readonly extraFires: readonly { readonly cell: CellRef; readonly atSeconds: number }[];
+  /**
+   * 煙だけが出る場所（煙の発生源．無ければ省くか空）．atSeconds にそのマスから煙が出始め，smokeSecondsPerCell で広がる．
+   * 発生源のマスは燃えない．省けるのは，この項目が無い古いデータ・テストの校舎をそのまま読めるようにするため
+   */
+  readonly extraSmokes?: readonly { readonly cell: CellRef; readonly atSeconds: number }[];
 }
 ```
 
@@ -152,6 +157,7 @@ export interface SpreadSettings {
 
 - 防火シャッターは非常ベルの時点で閉じているものとして扱う．人はくぐり戸を通れる（S4 で，手で押して開ける動作を足す）
 - 火・煙の広がりは上下左右の 4 方向．火元からの「マスの数 × 秒数」で各マスに着く時刻が決まる（`src/sim/` が `SpreadMap` として計算する．SPEC_01「受け渡すデータ」）
+- 煙は，燃えている各マス（火が着いた時刻から）と煙の発生源（`extraSmokes`．`atSeconds` から）の両方から，1 マス `smokeSecondsPerCell` 秒で広がる．各マスに着く時刻はそれらのうち最も早いもの．広がる条件（壁・防火シャッター・`outdoor` で止まる）は火と同じ．煙の発生源のマスは燃えない（火元から離れた廊下に「煙だけが流れ込んでいる」場面を作るため）．マス目の外・無い階を指す発生源は計算では無視し，`validatePlan` が誤りにする
 - 煙の濃さは，煙が着いてからの経過時間で増やす．天井近くほど濃く，しゃがむと視界が晴れる（F4．見せ方は `scenes/school/` が決める）
 
 ## URL と QR への埋め込み (URL Embedding)
@@ -193,6 +199,7 @@ https://<配信先>/?app#p=<埋め込みデータ>&room=<部屋の ID>
 
 - 壁をまたぐ経路（ドアを通らずに教室から廊下へ抜ける等）は `validatePlan` では確かめない（壁の規則は `src/sim/walls.ts` にあり，`share/` からは使わないため）．エディタが経路を確かめる時に `src/sim/` の関数で見る（`src/editor/routeCheck.ts` が `wallBetween()` 等で一歩ずつ確かめ，壁をまたぐ一歩を図に出す．QR を出すのは止めない）
 - `encodePlan` は中身を確かめない．エディタは QR を出す前に `validatePlan` を呼ぶ
+- 後から足した項目（`drill.spread.extraSmokes`）は，無いデータを「空」として読む（項目は省いたまま返す）．足したのは省いてよい項目だけなので `version` は 1 のまま．この項目を知らない古いアプリで新しいデータを開くと，知らない項目として捨てられ，煙の発生源の無い校舎になる
 - `?app` だけで `#p=` が無い時は，同梱のデモの校舎（`src/share/samples/`）で起動する（デモと開発で QR を使わずに試せるようにする）
 - フラグメントからの読み出しは `src/share/planHash.ts` の `loadPlanFromHash()` が行い，app/ は起動時に結果を `Session.plan`・`Session.planLoadError` に書いてから開始画面へ進む．フラグメントは `URLSearchParams` の形で読む（`#x=1&p=...` のように他の値と並べてもよい）
 
@@ -226,7 +233,7 @@ https://<配信先>/?app#p=<埋め込みデータ>&room=<部屋の ID>
 - 生徒用の URL は `src/share/shareUrl.ts` の `createShareLink()` が次の順で作る．エディタは結果が `ok` の時だけ QR を出し，そうでなければ `reasons` を理由として出す
 
   1. `validatePlan` で確かめる（切り詰める前の校舎で行い，誤りの座標をエディタで見えている座標のまま出す）
-  2. `trimVoidMargins()`（`src/share/trimPlan.ts`）で，階ごとに外側の `void` の行・列を切り詰め，火元・開始地点・集合場所・正解経路・`extraFires` の座標を合わせてずらす．残すのは「`void` でないマス」と「マス目の中にある位置」を含む最小の矩形（`void` の上に置いた火元を落とさない）．全部 `void` の階は切り詰めない．切り詰めるのは送る URL だけで，編集中の校舎は変えない
+  2. `trimVoidMargins()`（`src/share/trimPlan.ts`）で，階ごとに外側の `void` の行・列を切り詰め，火元・開始地点・集合場所・正解経路・`extraFires`・`extraSmokes` の座標を合わせてずらす．残すのは「`void` でないマス」と「マス目の中にある位置」を含む最小の矩形（`void` の上に置いた火元を落とさない）．全部 `void` の階は切り詰めない．切り詰めるのは送る URL だけで，編集中の校舎は変えない
   3. `encodePlan` で埋め込み，`<配信先>?app#p=...` を作って URL 全体の長さを測る．フラグメントは `URLSearchParams` の形で組む（後から `room=` 等を並べられる）
 
 - QR コードの生成にはライブラリ `qrcode-generator` を使う（依存が無く，型を同梱している．誤り訂正のレベルは M）
@@ -297,6 +304,8 @@ E1 で写真を下敷きにし，マス目に位置・大きさ・回転を合�
 ```
 
 - **縮尺**: 教員が E1 で写真をマス目に合わせるので，切り出した画像の範囲がそのままマス目に対応する．AI に寸法を推測させない
+- **切り出し**: `src/editor/underlayPanel.ts` の `cropToGrid(grid)` が，合わせた写真のうちマス目（`width` × `depth` マス）に重なる範囲を PNG で返す（長い辺を 2048 px にそろえる．写真の外は白．不透明度は 1．位置合わせの計算は `src/editor/underlay.ts`）．段階 1 ではボタンを出さない
+- **下敷き（E1）の扱い**: 写真と位置合わせは `SchoolPlan` に入れず，URL・QR・元に戻すの履歴にも載せない．写真は保存しない（再読み込みで消える）．位置・大きさ・回転・線の濃さだけを localStorage（キー `tkb2608.editor.underlay`）に覚え，同じ写真（ファイル名と画素数が同じ）を選び直した時に使う
 - **AI への出力の指定**: マス目は「URL と QR への埋め込み」の 1 マス 1 文字の表（`.`・`c`・`h` 等）で，`depth` 行 × `width` 文字の文字列として出させる．教室の区切りと名前は別に JSON で出させる．同じ表を使うので，変換は `share/` の関数を使い回せる
 - **サーバー関数が要る**: 画像を読める LLM の API キーはブラウザに置けないため，AI の仕組みはサーバー関数（Cloudflare Pages Functions．`functions/api/floor-draft.ts` 等）を呼ぶ．送るのは切り出した画像とマス目の大きさだけで，校舎のデータは送らない．送る内容と応答の型は `shared/api.ts` に置く
 - **生徒の体験は変わらない**: 下書きはエディタの中だけの機能．生徒の端末に渡るのは，教員が直した後のいつもの `SchoolPlan` だけ．体験中の通信は見守りの中継（SPEC_01「見守り」．任意で，保存しない）だけで，下書きのサーバー関数には触れない

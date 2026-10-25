@@ -1446,3 +1446,279 @@ describe("createMonitorSender（つなぎ直した時の lobby・track の送り
     expect(socket.notices().map((n) => n.type)).toEqual(["hello", "phase", "track"]);
   });
 });
+
+// ---- 音の合図（cue・speech・stopAudio）．仕様: SPEC_01「見守り」段階 1「知らせ」の表と「音」 ----
+
+describe("createMonitorSender（音の合図）", () => {
+  const NARRATION = {
+    type: "narration",
+    id: "fire-announcement",
+    params: { roomName: "3年1組" },
+  } as const;
+  const SOUND = {
+    type: "sound",
+    id: "fire-crackle",
+    action: "play",
+    loop: true,
+    anchorId: "fire-0",
+  } as const;
+  /** 制御文字の書き換え（\u0001 → 6 文字）で JSON が 4 KiB を超える params */
+  const HUGE_PARAMS = Object.fromEntries(
+    Array.from({ length: 8 }, (_, i) => [`k${i}`, "\u0001".repeat(100)]),
+  );
+
+  it("つながっている時は cue（narration・sound）をそのまま送る", async () => {
+    const env = await connected();
+    env.sender.notifyCue(NARRATION);
+    env.sender.notifyCue(SOUND);
+    env.sender.notifyCue({ type: "sound", id: "fire-crackle", action: "stop" });
+    expect(noticesOfType(env.last(), "cue")).toEqual([
+      { type: "cue", studentId: STUDENT_ID, cue: NARRATION },
+      { type: "cue", studentId: STUDENT_ID, cue: SOUND },
+      {
+        type: "cue",
+        studentId: STUDENT_ID,
+        cue: { type: "sound", id: "fire-crackle", action: "stop" },
+      },
+    ]);
+  });
+
+  it("送った cue の JSON は見守り画面の parseMonitorNotice で読める", async () => {
+    const env = await connected();
+    env.sender.notifyCue(NARRATION);
+    const text = env.last().sent.at(-1)?.data;
+    expect(typeof text).toBe("string");
+    expect(parseMonitorNotice(text as string)).toEqual({
+      type: "cue",
+      studentId: STUDENT_ID,
+      cue: NARRATION,
+    });
+  });
+
+  it("happening は送らない", async () => {
+    const env = await connected();
+    env.sender.notifyCue({ type: "happening", id: "smoke", params: { strength: 1 } });
+    env.sender.notifyCue({ type: "happening", id: "shake" });
+    expect(noticesOfType(env.last(), "cue")).toHaveLength(0);
+  });
+
+  it.each<[string, unknown]>([
+    ["id が 65 文字", { type: "narration", id: "a".repeat(65) }],
+    ["id が空", { type: "sound", id: "", action: "play" }],
+    ["action が不正", { type: "sound", id: "bell", action: "pause" }],
+    ["loop が真偽値でない", { type: "sound", id: "bell", action: "play", loop: "yes" }],
+    [
+      "anchorId が 65 文字",
+      { type: "sound", id: "bell", action: "play", anchorId: "a".repeat(65) },
+    ],
+    [
+      "params が 9 個",
+      {
+        type: "narration",
+        id: "n",
+        params: Object.fromEntries(Array.from({ length: 9 }, (_, i) => [`k${i}`, 1])),
+      },
+    ],
+    ["params の値が NaN", { type: "narration", id: "n", params: { a: Number.NaN } }],
+    [
+      "params の値が Infinity",
+      { type: "narration", id: "n", params: { a: Number.POSITIVE_INFINITY } },
+    ],
+    ["params の値がオブジェクト", { type: "narration", id: "n", params: { a: {} } }],
+    [
+      "params の文字の値が 101 文字",
+      { type: "narration", id: "n", params: { a: "a".repeat(101) } },
+    ],
+    ["null", null],
+  ])("形に合わない cue（%s）は送らず，例外も出さない", async (_label, cue) => {
+    const env = await connected();
+    expect(() => env.sender.notifyCue(cue as never)).not.toThrow();
+    expect(noticesOfType(env.last(), "cue")).toHaveLength(0);
+  });
+
+  it("JSON にして 4 KiB を超える cue は送らない（その後の合図は送る）", async () => {
+    const env = await connected();
+    env.sender.notifyCue({ type: "narration", id: "n", params: HUGE_PARAMS });
+    expect(noticesOfType(env.last(), "cue")).toHaveLength(0);
+    env.sender.notifyCue(NARRATION);
+    expect(noticesOfType(env.last(), "cue")).toHaveLength(1);
+  });
+
+  it("4 KiB に収まる上限ぎりぎりの cue（日本語）は送る", async () => {
+    const env = await connected();
+    const params = Object.fromEntries(
+      Array.from({ length: 8 }, (_, i) => [`${"か".repeat(31)}${i}`, "あ".repeat(100)]),
+    );
+    env.sender.notifyCue({ type: "narration", id: "い".repeat(64), params });
+    const sent = env.last().sent.at(-1)?.data as string;
+    expect(new TextEncoder().encode(sent).length).toBeLessThanOrEqual(4096);
+    expect(noticesOfType(env.last(), "cue")).toHaveLength(1);
+  });
+
+  it("つながっている時は speech を文と速さのまま送る", async () => {
+    const env = await connected();
+    env.sender.notifySpeech("体の正面を向いて，そのまま動かないでください", 1.05);
+    env.sender.notifySpeech("a", 0.1);
+    env.sender.notifySpeech("あ".repeat(500), 10);
+    expect(noticesOfType(env.last(), "speech")).toEqual([
+      {
+        type: "speech",
+        studentId: STUDENT_ID,
+        text: "体の正面を向いて，そのまま動かないでください",
+        rate: 1.05,
+      },
+      { type: "speech", studentId: STUDENT_ID, text: "a", rate: 0.1 },
+      { type: "speech", studentId: STUDENT_ID, text: "あ".repeat(500), rate: 10 },
+    ]);
+  });
+
+  it.each<[string, unknown, unknown]>([
+    ["文が 501 文字", "あ".repeat(501), 1],
+    ["文が空", "", 1],
+    ["文が文字でない", 1, 1],
+    ["速さが 0.09", "a", 0.09],
+    ["速さが 10.01", "a", 10.01],
+    ["速さが NaN", "a", Number.NaN],
+    ["速さが Infinity", "a", Number.POSITIVE_INFINITY],
+    ["速さが文字", "a", "1"],
+  ])("形に合わない speech（%s）は送らず，例外も出さない", async (_label, text, rate) => {
+    const env = await connected();
+    expect(() => env.sender.notifySpeech(text as string, rate as number)).not.toThrow();
+    expect(noticesOfType(env.last(), "speech")).toHaveLength(0);
+  });
+
+  it("つながっている時は stopAudio を送る（呼ぶたびに）", async () => {
+    const env = await connected();
+    env.sender.notifyAudioStop();
+    env.sender.notifyAudioStop();
+    expect(noticesOfType(env.last(), "stopAudio")).toEqual([
+      { type: "stopAudio", studentId: STUDENT_ID },
+      { type: "stopAudio", studentId: STUDENT_ID },
+    ]);
+  });
+
+  it("start の前・指紋を待つ間・つながる前（CONNECTING）の合図は捨て，つながった後にも送り直さない", async () => {
+    const env = setup();
+    const callAll = () => {
+      env.sender.notifyCue(NARRATION);
+      env.sender.notifySpeech("a", 1);
+      env.sender.notifyAudioStop();
+    };
+    callAll();
+    env.sender.start();
+    callAll();
+    await flush();
+    callAll();
+    env.last().open();
+    expect(
+      env
+        .last()
+        .notices()
+        .map((n) => n.type),
+    ).toEqual(["hello", "phase"]);
+  });
+
+  it("切れている間の合図は捨て，つなぎ直した後は hello と今の phase だけ", async () => {
+    const env = await connected();
+    env.sender.setPhase("drill");
+    env.sender.notifyCue(SOUND);
+    env.last().drop();
+    env.sender.notifyCue(NARRATION);
+    env.sender.notifySpeech("a", 1);
+    env.sender.notifyAudioStop();
+    vi.advanceTimersByTime(MONITOR_RECONNECT_DELAY_MS);
+    env.last().open();
+    expect(env.sockets).toHaveLength(2);
+    expect(env.last().notices()).toEqual([
+      expect.objectContaining({ type: "hello", studentId: STUDENT_ID }),
+      { type: "phase", studentId: STUDENT_ID, phase: "drill" },
+    ]);
+  });
+
+  it("ロビーの間に送った speech も，つなぎ直した時に送り直さない", async () => {
+    const env = await connected();
+    env.sender.notifySpeech("しゃがんでください", 1);
+    env.last().drop();
+    vi.advanceTimersByTime(MONITOR_RECONNECT_DELAY_MS);
+    env.last().open();
+    expect(noticesOfType(env.last(), "speech")).toHaveLength(0);
+  });
+
+  it.each([
+    ["住所が未設定", { relayUrl: undefined }],
+    ["room= が無い", { hash: "#p=xyz" }],
+  ])("何もしない送る側（%s）でも例外を出さず，何も作らない", async (_label, override) => {
+    const env = setup(override);
+    env.sender.start();
+    await flush();
+    expect(() => {
+      env.sender.notifyCue(NARRATION);
+      env.sender.notifyCue({ type: "happening", id: "smoke" });
+      env.sender.notifySpeech("a", 1);
+      env.sender.notifySpeech("", Number.NaN);
+      env.sender.notifyAudioStop();
+    }).not.toThrow();
+    expect(env.createSocket).not.toHaveBeenCalled();
+  });
+
+  it("send が例外を投げても外へ出さない", async () => {
+    const env = await connected();
+    env.last().sendError = new Error("InvalidStateError");
+    expect(() => {
+      env.sender.notifyCue(NARRATION);
+      env.sender.notifySpeech("a", 1);
+      env.sender.notifyAudioStop();
+    }).not.toThrow();
+    expect(env.errors.length).toBeGreaterThan(0);
+  });
+
+  it("dispose の後は例外を出さず，何も送らない", async () => {
+    const env = await connected();
+    const socket = env.last();
+    const before = socket.sent.length;
+    env.sender.dispose();
+    expect(() => {
+      env.sender.notifyCue(NARRATION);
+      env.sender.notifySpeech("a", 1);
+      env.sender.notifyAudioStop();
+    }).not.toThrow();
+    expect(socket.sent).toHaveLength(before);
+  });
+
+  it("Cue の読み出しで例外が出ても（壊れたオブジェクト）外へ出さない", async () => {
+    const env = await connected();
+    const broken = {
+      get type(): string {
+        throw new Error("getter");
+      },
+    };
+    expect(() => env.sender.notifyCue(broken as never)).not.toThrow();
+    expect(noticesOfType(env.last(), "cue")).toHaveLength(0);
+  });
+});
+
+describe("createMonitorSender（4 KiB の確かめ）", () => {
+  it("JSON にして 4 KiB を超える lobby（制御文字の書き換え）は送らない", async () => {
+    const env = await connected();
+    const huge = "\u0001".repeat(300);
+    env.sender.notifyLobby(lobbyView({ title: huge, body: huge, caption: huge }));
+    expect(noticesOfType(env.last(), "lobby")).toHaveLength(0);
+    env.sender.notifyLobby(lobbyView());
+    expect(noticesOfType(env.last(), "lobby")).toHaveLength(1);
+  });
+
+  it("送った知らせはすべて UTF-8 で 4096 バイト以下", async () => {
+    const env = await connected();
+    env.sender.notifyLobby(
+      lobbyView({ title: "あ".repeat(300), body: "い".repeat(300), caption: "う".repeat(300) }),
+    );
+    env.sender.notifySpeech("え".repeat(500), 1);
+    for (const s of env.last().sent) {
+      if (typeof s.data === "string") {
+        expect(new TextEncoder().encode(s.data).length).toBeLessThanOrEqual(4096);
+      }
+    }
+    expect(noticesOfType(env.last(), "lobby")).toHaveLength(1);
+    expect(noticesOfType(env.last(), "speech")).toHaveLength(1);
+  });
+});

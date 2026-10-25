@@ -1,5 +1,6 @@
-// 見守り画面（monitor/）の中で使う型．校舎の 3D（scenes/school/）・ロビー（lobby/）・結果画面（debrief/）は app/ が組み立てて渡す
+// 見守り画面（monitor/）の中で使う型．校舎の 3D（scenes/school/）・ロビー（lobby/）・結果画面（debrief/）・音（audio/）は app/ が組み立てて渡す
 import type { ColorRepresentation, Fog, FogExp2, Object3D, Vector3 } from "three";
+import type { Cue } from "../core/cue";
 import type { DrillEvaluation, DrillTrack } from "../core/drill";
 import type { CellRef } from "../core/schoolPlan";
 import type { Posture } from "../core/types";
@@ -65,4 +66,24 @@ export interface MonitorResultView {
   show(drill: { readonly track: DrillTrack; readonly evaluation: DrillEvaluation }): void;
   /** 出していれば消す */
   hide(): void;
+}
+
+/**
+ * 見守り画面で生徒と同じ音を鳴らす口（app/ が audio/ から作る）．
+ * ナレーションの終わりの signal 等は見守り画面の中で閉じ，生徒の端末へは何も返さない
+ */
+export interface MonitorAudio {
+  /**
+   * 音を使えるようにする（AudioContext を作って再開し，読み上げを有効にする）．
+   * ブラウザの自動再生の制限のため，クリックの処理の中で 1 回呼ぶ
+   */
+  enable(): void;
+  /** 生徒の端末と同じ Cue で効果音・ナレーションを鳴らす */
+  playCue(cue: Cue): void;
+  /** 文を読み上げる（前の読み上げは止める） */
+  speak(text: string, rate: number): void;
+  /** 鳴っている音と読み上げをすべて止める */
+  stopAll(): void;
+  /** すべて止めて片付ける（ページを離れる時） */
+  dispose(): void;
 }
