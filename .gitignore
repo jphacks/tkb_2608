@@ -29,10 +29,16 @@ __pycache__/
 .env
 .env.*
 !.env.example
+# wrangler pages dev（npm run functions:dev）が読む秘密の値（GEMINI_API_KEY 等）．雛形 .dev.vars.example のみ追跡する
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
 
 # Node.js の依存パッケージ・ビルド出力・テストのカバレッジ（Vite + Vitest．docs/02_ENV/ENV_01）
 node_modules/
 dist/
+# wrangler pages dev がリポジトリ直下に作るローカルの状態（relay/ のものは relay/.gitignore）
+.wrangler/
 coverage/
 
 # 開発時に実機（スマホ）から開発サーバーへ送られたログ・センサーの記録（ENV_01「実機のログの確認」）

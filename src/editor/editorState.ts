@@ -6,12 +6,15 @@ import type {
   DrillMode,
   DrillSetup,
   Floor,
+  FloorDraft,
   Room,
   SchoolPlan,
 } from "../core/schoolPlan";
+import { validateFloor } from "../share/validatePlan";
 import { proposeRoute, type SpreadMap } from "../sim";
 import { type CellXZ, isAdjacent } from "../sim/grid";
-import { ROUTE_REASONS, routeStepRejection } from "./routeCheck";
+import { isWalkableKind } from "../sim/walls";
+import { checkRoute, ROUTE_REASONS, routeStepRejection } from "./routeCheck";
 
 /** 塗る道具．教室の時はどの教室（SchoolPlan.rooms の添字）で塗るかを持つ */
 export type PaintTool =
@@ -284,6 +287,96 @@ export function startBlank(state: EditorState, width: number, depth: number): Ed
  */
 export function openPlan(state: EditorState, plan: SchoolPlan): EditorState {
   return commit(endStroke(state), plan);
+}
+
+/** 配置の下書き（ES3）を当てた結果．当てられなかった時は state は元のままで，reason に理由を持つ */
+export interface DraftResult {
+  readonly state: EditorState;
+  /** 当てられなかった理由（画面に出す日本語の 1 文）．当てられた時は null */
+  readonly reason: string | null;
+  /** 置き換えで条件を満たさなくなり，外した（置き直しが要る）訓練条件の名前（「火元」「集合場所」等）．無ければ空 */
+  readonly removed: readonly string[];
+}
+
+/** 下書きを当てる時の案内の文 */
+export const DRAFT_REASONS = {
+  invalid: (detail: string) => `下書きの形が正しくないため，当てられませんでした（${detail}）`,
+  tooLarge: `下書きのマス目が大きすぎます（幅・奥行きは 1〜${MAX_GRID_SIZE} マス）`,
+  badRoomName: "下書きの教室の名前が空です",
+} as const;
+
+/**
+ * 配置の下書き（FloorDraft）を確かめる（validatePlan と同じ階のマス目の検査に，大きさの上限と教室の名前を足したもの）．
+ * 当てられる時は null，当てられない時は理由
+ */
+export function draftRejection(draft: FloorDraft): string | null {
+  const floor: Floor = { level: EDIT_FLOOR + 1, ...pickFloorShape(draft) };
+  const errors = validateFloor(floor, EDIT_FLOOR, draft.rooms.length);
+  if (errors.length > 0) return DRAFT_REASONS.invalid(errors[0]);
+  if (draft.width > MAX_GRID_SIZE || draft.depth > MAX_GRID_SIZE) return DRAFT_REASONS.tooLarge;
+  if (draft.rooms.some((r) => typeof r.name !== "string" || r.name.trim() === "")) {
+    return DRAFT_REASONS.badRoomName;
+  }
+  return null;
+}
+
+/**
+ * 今の階のマス目（大きさ・cells・roomOf）と教室の一覧を下書きに置き換える（1 回分の「元に戻す」になる）．
+ * 段階 1 は 1 フロアなので，教室の一覧は下書きの教室に丸ごと置き換える．
+ * 置き換えで条件を満たさなくなった訓練条件は外す: 床（人の入れるマス）でなくなった火元・追加の延焼箇所，
+ * 屋外でなくなった集合場所，確かめ（checkRoute）に通らなくなった正解経路（丸ごと空にする）．
+ * 開始地点は 1 つ必ず要るので外さず，教室でなくなった時は removed で知らせる（validatePlan の誤りとしても見える）
+ */
+export function applyFloorDraft(state: EditorState, draft: FloorDraft): DraftResult {
+  const settled = endStroke(state);
+  const reason = draftRejection(draft);
+  if (reason !== null) return { state: settled, reason, removed: [] };
+  const plan = settled.plan;
+  const floor: Floor = { ...editingFloor(settled), ...pickFloorShape(draft) };
+  const drill = plan.drill;
+  const onFloor = (ref: CellRef): boolean => ref.floor === EDIT_FLOOR;
+  const kindOf = (ref: CellRef): CellKind | null =>
+    isInsideFloor(floor, ref) ? floor.cells[ref.z * floor.width + ref.x] : null;
+  const removed: string[] = [];
+
+  const fireOrigins = drill.fireOrigins.filter(
+    (ref) => !onFloor(ref) || isWalkableKind(kindOf(ref)),
+  );
+  if (fireOrigins.length !== drill.fireOrigins.length) removed.push("火元");
+  const extraFires = drill.spread.extraFires.filter(
+    (fire) => !onFloor(fire.cell) || isWalkableKind(kindOf(fire.cell)),
+  );
+  if (extraFires.length !== drill.spread.extraFires.length) removed.push("追加の延焼箇所");
+  const assembly = drill.assembly.filter((ref) => !onFloor(ref) || kindOf(ref) === "outdoor");
+  if (assembly.length !== drill.assembly.length) removed.push("集合場所");
+  if (onFloor(drill.start) && kindOf(drill.start) !== "classroom") removed.push("開始地点");
+
+  const nextDrill: DrillSetup = {
+    ...drill,
+    fireOrigins,
+    assembly,
+    spread: { ...drill.spread, extraFires },
+  };
+  const check = checkRoute(nextDrill, EDIT_FLOOR, floor);
+  const route = check.empty || check.problems.length === 0 ? drill.route : [];
+  if (route !== drill.route) removed.push("正解経路");
+
+  const next: SchoolPlan = {
+    ...replaceFloor(plan, floor),
+    rooms: draft.rooms.map((r) => ({ name: r.name.trim() })),
+    drill: { ...nextDrill, route },
+  };
+  return { state: commit(settled, next), reason: null, removed };
+}
+
+/** 下書きのうち階のマス目に当てる項目（配列は書き換えられないよう写す） */
+function pickFloorShape(draft: FloorDraft): Omit<Floor, "level"> {
+  return {
+    width: draft.width,
+    depth: draft.depth,
+    cells: [...draft.cells],
+    roomOf: [...draft.roomOf],
+  };
 }
 
 /**

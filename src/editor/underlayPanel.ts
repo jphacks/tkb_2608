@@ -43,7 +43,18 @@ export const UNDERLAY_TEXT = {
     "写真は白黒にして，図面の線だけをマスの塗りの上に重ねる（紙の白は透ける）．線が薄い時は濃くする",
   notImage: "を画像として読み込めません．PNG・JPEG 等の写真のファイルを選んでください",
   invalidNumber: `位置は数で，幅は ${MIN_UNDERLAY_WIDTH_CELLS}〜${MAX_UNDERLAY_WIDTH_CELLS} マスで入れてください`,
+  draftHint:
+    "マス目に合わせた写真から，部屋の配置で今の階のマス目を塗り直す（元に戻すで戻せる）．写真は表示したままなので，重ねて見ながら直す",
+  draftBusy: "下書きを作っています…（数十秒かかることがある）",
 } as const;
+
+/** 下書き（ES3）のボタンの受け渡し先 */
+export interface UnderlayDraftAction {
+  /** ボタンに出す名前（FloorDraftProvider.label） */
+  readonly label: string;
+  /** 押された時の処理（確認・切り出し・下書き・当てはめ）．終わるまでボタンを止める */
+  readonly run: () => Promise<void>;
+}
 
 /** 操作の受け渡し先 */
 export interface UnderlayPanelOptions {
@@ -57,6 +68,8 @@ export interface UnderlayPanelOptions {
   readonly notify: (message: string) => void;
   /** 前回の位置を覚える Storage（使えなければ null） */
   readonly storage: PlanStorageLike | null;
+  /** 下書きを作るボタン（ES3）．null ならボタンを出さない */
+  readonly draft?: UnderlayDraftAction | null;
 }
 
 /** 下敷きの道具箱 */
@@ -79,7 +92,7 @@ export interface UnderlayPanel {
   zoomAt(point: GridPoint, deltaY: number): boolean;
   /**
    * マス目の範囲（grid）に重なる写真を切り出した画像（ES3 の FloorDraftProvider.createDraft の image）．
-   * 写真が無い・作れない時は null．段階 1 ではボタンを出さず，下書きを足す時に呼ぶ
+   * 写真が無い・作れない時は null．「下書きを作る」のボタン（options.draft）から呼ばれる
    */
   cropToGrid(grid: GridSize): Promise<Blob | null>;
 }
@@ -207,6 +220,25 @@ export function createUnderlayPanel(options: UnderlayPanelOptions): UnderlayPane
   bindField(widthInput, "widthCells");
   bindField(rotationInput, "rotationDeg");
 
+  const draft = options.draft ?? null;
+  /** 下書きを作っている途中か（その間はボタンを止める） */
+  let drafting = false;
+  const draftButton = button(draft?.label ?? "");
+  draftButton.addEventListener("click", () => {
+    if (draft === null || drafting || loaded === null) return;
+    drafting = true;
+    sync();
+    void draft.run().finally(() => {
+      drafting = false;
+      sync();
+    });
+  });
+  const draftRow = row();
+  draftRow.appendChild(draftButton);
+  const draftHint = hint(UNDERLAY_TEXT.draftHint);
+  draftRow.hidden = draft === null;
+  draftHint.hidden = draft === null;
+
   const modeHint = hint(UNDERLAY_TEXT.idleHint);
   const storageNote = hint(UNDERLAY_TEXT.storageNote);
   element.append(
@@ -218,6 +250,8 @@ export function createUnderlayPanel(options: UnderlayPanelOptions): UnderlayPane
     alignRow,
     ...fieldRows,
     modeHint,
+    draftRow,
+    draftHint,
     storageNote,
   );
 
@@ -380,6 +414,9 @@ export function createUnderlayPanel(options: UnderlayPanelOptions): UnderlayPane
     alignButton.textContent = aligning ? "合わせ終える" : "下敷きを合わせる";
     alignButton.setAttribute("aria-pressed", String(aligning));
     modeHint.textContent = aligning ? UNDERLAY_TEXT.aligningHint : UNDERLAY_TEXT.idleHint;
+    draftButton.disabled = !has || drafting;
+    draftButton.title = has ? "" : "先に下敷きの写真を選んでください";
+    draftHint.textContent = drafting ? UNDERLAY_TEXT.draftBusy : UNDERLAY_TEXT.draftHint;
   }
 
   sync();

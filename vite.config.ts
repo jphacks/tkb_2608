@@ -16,6 +16,9 @@ export default defineConfig(({ mode }) => ({
     host: "127.0.0.1",
     // スマホの実機確認は cloudflared の Quick Tunnel 経由で開く（docs/02_ENV/ENV_02）
     allowedHosts: [".trycloudflare.com"],
+    // 配置の下書き（ES3）のサーバー関数（functions/）は Vite では動かないため，npm run functions:dev
+    // （wrangler pages dev．127.0.0.1:8788）へ流す．起動していなければ下書きのボタンが失敗の理由を出すだけ
+    proxy: { "/api": "http://127.0.0.1:8788" },
     // 動きの記録用（npm run dev:record）は WebSocket を切り，ファイルの変更で記録中のページが再読み込みされないようにする
     // （HMR の full-reload は開いている全ページに届くため，別の人が src/ を編集すると protocol.html が最初に戻っていた）
     ...(mode === "record" ? { ws: false as const } : {}),

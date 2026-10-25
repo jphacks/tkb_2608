@@ -81,8 +81,8 @@ export function validatePlan(plan: SchoolPlan): readonly string[] {
   return errors;
 }
 
-/** 1 つの階のマス目の検査（大きさ・配列の長さ・マスの種類・教室の添字） */
-function validateFloor(floor: Floor, index: number, roomCount: number): string[] {
+/** 1 つの階のマス目の検査（大きさ・配列の長さ・マスの種類・教室の添字）．エディタの配置の下書き（ES3）の検査にも使う */
+export function validateFloor(floor: Floor, index: number, roomCount: number): string[] {
   const label = `${index + 1} つ目の階`;
   const errors: string[] = [];
   if (!isPositiveInteger(floor.level))
