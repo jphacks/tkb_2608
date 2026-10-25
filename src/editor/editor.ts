@@ -1,5 +1,6 @@
 // 教員用エディタ（?editor）の画面の薄い殻．道具箱・上から見た図（Canvas 2D）・校舎の誤りの表示を DOM で組み，
-// マウスとキーの操作を editorState.ts の純粋な関数に渡して，返ってきた状態で描き直す．VR・three.js は使わない
+// マウスとキーの操作を editorState.ts の純粋な関数に渡して，返ってきた状態で描き直す．VR・three.js は使わない．
+// 3D で確かめる view モードは，app/ から受け取った PlanPreview（planPreview.ts）にマップの場所を貸して表示させる
 import type { FloorDraft, FloorDraftProvider, SchoolPlan } from "../core/schoolPlan";
 import { createRoomId } from "../share/monitorIds";
 import { DEMO_SCHOOL } from "../share/samples/demoSchool";
@@ -56,6 +57,7 @@ import {
   ROUTE_TOOL_LABEL,
   roomColor,
 } from "./editorStyle";
+import type { PlanPreview, PlanPreviewSession } from "./planPreview";
 import { browserPlanStorage, loadSavedPlan, PLAN_STORAGE_MESSAGES, savePlan } from "./planStorage";
 import { createRoomIdResolver } from "./roomStorage";
 import { checkRoute, isEmptyRouteUnreachable, type RouteCheck } from "./routeCheck";
@@ -163,13 +165,26 @@ const STYLE = `
   background: rgba(16, 20, 28, 0.85); border: 1px solid #5b9bff; font-size: 13px; pointer-events: none;
 }
 .editor__photo-only[hidden] { display: none; }
+.editor__preview { position: absolute; inset: 0; }
+.editor__preview[hidden] { display: none; }
+.editor__view-toggle {
+  position: absolute; right: 8px; top: 8px; padding: 6px 14px; font-weight: bold;
+  background: #2f5d9e; border-color: #5b9bff; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+}
+.editor__view-toggle:hover:not(:disabled) { background: #3a6db5; }
+.editor__side--locked { opacity: 0.45; }
 `;
 
 /** エディタの起動の設定 */
 export interface EditorOptions {
   /** 配置の下書きを作る仕組み（ES3）．渡した時だけ下敷きの欄に下書きのボタンを出す．エディタは中身を知らない */
   readonly draftProvider?: FloorDraftProvider | null;
+  /** 編集中の校舎を 3D で見せる部品（view モード）．渡した時だけマップの右上に切り替えのボタンを出す．エディタは中身を知らない */
+  readonly planPreview?: PlanPreview | null;
 }
+
+/** マップの右上の切り替えのボタンの文字（edit は編集中，view は 3D を見ている間） */
+const VIEW_TOGGLE_LABELS = { edit: "3D で見る", view: "編集に戻る" } as const;
 
 /** 下書きを当てる前の確認の文 */
 const DRAFT_CONFIRM =
@@ -480,6 +495,26 @@ export function startEditor(demoPlan: SchoolPlan = DEMO_SCHOOL, options: EditorO
   const ctx = canvas.getContext("2d");
   let noticeTimer: number | undefined;
 
+  // view モード（3D で確かめる）．マップと同じ場所に 3D を出し，切り替えのボタンは両モードで同じ要素・同じ位置に置く
+  const planPreview = options.planPreview ?? null;
+  /** 3D を表示している間の表示（編集中は null）．null でない間は塗り・キー操作を受け付けない */
+  let previewSession: PlanPreviewSession | null = null;
+  const previewBox = el("div", "editor__preview");
+  previewBox.hidden = true;
+  const viewToggle = button(VIEW_TOGGLE_LABELS.edit);
+  viewToggle.classList.add("editor__view-toggle");
+  viewToggle.setAttribute("aria-pressed", "false");
+  if (planPreview !== null) {
+    main.insertBefore(previewBox, hoverBox);
+    main.appendChild(viewToggle);
+    viewToggle.addEventListener("click", () => {
+      if (previewSession === null) enterView(planPreview);
+      else exitView();
+      // Space・Enter でボタンが押し直されて切り替わらないよう，フォーカスを外す
+      viewToggle.blur();
+    });
+  }
+
   /** 置けなかった理由などを数秒（ms）だけ出す */
   const showNotice = (message: string, ms = NOTICE_MS): void => {
     noticeBox.textContent = message;
@@ -583,6 +618,8 @@ export function startEditor(demoPlan: SchoolPlan = DEMO_SCHOOL, options: EditorO
   );
 
   window.addEventListener("keydown", (e) => {
+    // 3D を見ている間のキーは 3D の操作に使う（元に戻す等で見ていない校舎を変えないように）
+    if (previewSession !== null) return;
     if (e.code === "Space" && !isTextEntry(e.target)) {
       // 写真が無い（表示していない）時は何もしない．ある時はスクロール・フォーカス中のボタンの押下を止める
       if (underlayPanel.overlay() === null) return;
@@ -608,12 +645,63 @@ export function startEditor(demoPlan: SchoolPlan = DEMO_SCHOOL, options: EditorO
   });
 
   window.addEventListener("keyup", (e) => {
+    if (previewSession !== null) return;
     if (e.code !== "Space" || !photoOnly) return;
     e.preventDefault();
     setPhotoOnly(false);
   });
   // 押したまま別の窓へ移ると keyup が届かないので，フォーカスを失った時も戻す
   window.addEventListener("blur", () => setPhotoOnly(false));
+
+  /**
+   * view モードに入る．今の校舎（塗っている途中なら塗り終えたもの）で 3D を作り，マップの代わりに出す．
+   * 校舎に誤りがある時は作らずに理由を案内の帯に出す．編集の状態と元に戻すの履歴は変えない
+   */
+  function enterView(preview: PlanPreview): void {
+    underlayPanel.setAligning(false);
+    setPhotoOnly(false);
+    const settled = endStroke(state);
+    if (settled !== state) update(settled);
+    const errors = validatePlan(state.plan);
+    if (errors.length > 0) {
+      const more = errors.length > 1 ? `（ほか ${errors.length - 1} 件は右下）` : "";
+      showNotice(`校舎に誤りがあるため 3D で見られません．${errors[0]}${more}`, LONG_NOTICE_MS);
+      return;
+    }
+    // QR の窓はマップ全体に重なるため閉じる
+    sharedPlan = null;
+    sharePanel.hide();
+    previewBox.hidden = false;
+    try {
+      previewSession = preview.open(previewBox, state.plan);
+    } catch (error) {
+      previewBox.hidden = true;
+      const message = error instanceof Error && error.message !== "" ? `（${error.message}）` : "";
+      showNotice(`3D を作れませんでした${message}`, LONG_NOTICE_MS);
+      return;
+    }
+    hover = null;
+    canvas.hidden = true;
+    hoverBox.hidden = true;
+    // 道具箱は見えたまま触れないようにする（3D に出ている校舎と編集中の校舎がずれないように）
+    side.inert = true;
+    side.classList.add("editor__side--locked");
+    viewToggle.textContent = VIEW_TOGGLE_LABELS.view;
+    viewToggle.setAttribute("aria-pressed", "true");
+  }
+
+  /** 編集に戻る．3D の表示を解放し，マップと道具箱を元に戻す */
+  function exitView(): void {
+    previewSession?.dispose();
+    previewSession = null;
+    previewBox.hidden = true;
+    canvas.hidden = false;
+    side.inert = false;
+    side.classList.remove("editor__side--locked");
+    viewToggle.textContent = VIEW_TOGGLE_LABELS.edit;
+    viewToggle.setAttribute("aria-pressed", "false");
+    render();
+  }
 
   new ResizeObserver(() => render()).observe(main);
 
