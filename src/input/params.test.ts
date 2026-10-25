@@ -22,7 +22,12 @@ function calib(over: Partial<CalibrationProfile>): CalibrationProfile {
 
 describe("DEFAULT_INPUT_PARAMS・INPUT_PARAM_KEYS", () => {
   // 0 で無効にできる項目（ON/OFF・逃げ道の歩数）と，符号つきの位置（m）の項目．Issue #48 で足した仕様
-  const ZERO_ALLOWED = new Set<string>(["standEscapeSteps", "headRotCompensation"]);
+  const ZERO_ALLOWED = new Set<string>([
+    "standEscapeSteps",
+    "headRotCompensation",
+    "standWalkPeakStanding",
+    "standWalkPeakCrouching",
+  ]);
   const SIGNED = new Set<string>(["headLeverXM", "headLeverYM", "headLeverZM"]);
 
   it("既定値はすべて有限で，0 で無効・符号つきの項目を除いて正の数（値そのものは調整中のため確かめない）", () => {

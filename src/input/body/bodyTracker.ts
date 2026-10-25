@@ -21,8 +21,10 @@ import {
   type PostureState,
   resetPostureMotion,
   resetSlowCrouch,
+  resetStandWalk,
   shouldSuppressSteps,
   updatePosture,
+  updateStandWalk,
 } from "./posture";
 import {
   createRotationCompState,
@@ -143,6 +145,7 @@ export function resetBody(s: BodyState): void {
   resetLocomotion(s.locomotion);
   resetPostureMotion(s.posture);
   resetSlowCrouch(s.posture);
+  resetStandWalk(s.posture);
   s.lastT = Number.NaN;
   s.av = Number.NaN;
   s.bp = Number.NaN;
@@ -270,6 +273,16 @@ export function updateBody(s: BodyState, sample: MotionSample, params: InputPara
     );
     onPostureStep(s.posture, t, s.step.lastStepPeak, standingHigh, params);
   }
+  // しゃがみ歩きから止まらずに立つ（人ごとの山の大きさが分かっている時だけ．頭の回転は足踏みの判定と同じしきい値で見る）
+  updateStandWalk(
+    s.posture,
+    t,
+    bp,
+    s.step.lastStepT,
+    s.locomotion.mode !== "stopped",
+    s.locomotion.mode !== "stopped" ? s.step.lastGyroRelaxedT : s.step.lastGyroHighT,
+    params,
+  );
   updateLocomotion(s.locomotion, t, dtSec, params);
   // 静止時のノイズは，止まっていて頭も回っていない時の，基準のしきい値未満の値だけで見積もる．
   // 以前は「今のしきい値」未満の値をすべて入れていたため，頷き（帯域通過後 2〜4 m/s^2）の間にノイズが育ち，
