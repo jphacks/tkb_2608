@@ -31,6 +31,7 @@ import {
   tickTrack,
   type WarningTimer,
 } from "./drillProgress";
+import { routeFacingYaw } from "./pcMode";
 import { withResolvedRoute } from "./resolvedRoute";
 
 export interface DrillSceneOptions {
@@ -44,6 +45,11 @@ export interface DrillSceneOptions {
   readonly debugInfo?: () => string;
   /** true なら ① 授業中の教室を飛ばし，② 非常ベルと校内放送から始める（デモ用の起動．app/ が渡す） */
   readonly skipClassroom?: boolean;
+  /**
+   * PC モード（Issue #205）の時に渡す．controls（操作の説明．1 行ずつ）を画面の左下に出し続け，
+   * 開始の向きを正解経路の少し先へ向ける（校舎データの開始の向きが壁の正面だと，PC では見回し方が分からず迷うため）
+   */
+  readonly pc?: { readonly controls: readonly string[] } | null;
 }
 
 /** 避難の画面．見守りの送信が読む値も返す */
@@ -91,6 +97,7 @@ export function createDrillScene(options: DrillSceneOptions): DrillScene {
   let space: SchoolSpace | null = null;
   let walker: SpaceWalker | null = null;
   let debugRoot: HTMLPreElement | null = null;
+  let controlsRoot: HTMLDivElement | null = null;
   let unsubscribe: (() => void) | null = null;
   let previousBackground: SceneContext["stage"]["world"]["background"] = null;
   let previousFog: SceneContext["stage"]["world"]["fog"] = null;
@@ -196,9 +203,14 @@ export function createDrillScene(options: DrillSceneOptions): DrillScene {
       unsubscribe = ctx.bus.onAny((event) => {
         if (isGameEvent(event)) pendingEvents.push(event);
       });
+      const pc = options.pc ?? null;
+      const startYaw =
+        pc === null
+          ? built.startYaw
+          : (routeFacingYaw(drill.plan.drill.start, drill.route) ?? built.startYaw);
       walker = new SpaceWalker(
         createSchoolWalkWorld(built),
-        { position: built.startPosition, bodyYaw: built.startYaw },
+        { position: built.startPosition, bodyYaw: startYaw },
         (event) => ctx.bus.emit(event),
       );
       walker.applyTo(rig);
@@ -211,6 +223,16 @@ export function createDrillScene(options: DrillSceneOptions): DrillScene {
           "padding:8px;pointer-events:none;white-space:pre-wrap;background:rgba(16,20,28,0.75);" +
           "color:#f2f4f8;font:11px/1.4 ui-monospace,monospace;border-radius:6px;";
         ctx.stage.overlay.appendChild(debugRoot);
+      }
+
+      if (pc !== null) {
+        controlsRoot = document.createElement("div");
+        controlsRoot.style.cssText =
+          "position:absolute;left:12px;bottom:12px;margin:0;padding:8px 12px;pointer-events:none;" +
+          "background:rgba(16,20,28,0.72);color:#f2f4f8;border-radius:8px;" +
+          'font:14px/1.6 system-ui,-apple-system,"Hiragino Sans",sans-serif;white-space:pre-line;';
+        controlsRoot.textContent = pc.controls.join("\n");
+        ctx.stage.overlay.appendChild(controlsRoot);
       }
 
       const started = startScenario(drill.definition);
@@ -311,6 +333,8 @@ export function createDrillScene(options: DrillSceneOptions): DrillScene {
       walker = null;
       debugRoot?.remove();
       debugRoot = null;
+      controlsRoot?.remove();
+      controlsRoot = null;
       setup = null;
       scenarioState = null;
       pendingEvents = [];

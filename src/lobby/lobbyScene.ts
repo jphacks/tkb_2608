@@ -8,7 +8,8 @@
 // ゴーグル装着中なので画面のタッチは使わない（各手順は制限時間で既定値に進むため詰まらない）．
 // 開始ボタン・見え方の調整のボタンを待つ間に手がしばらく見つからなければ，手を目の前に出すよう案内する
 // （自動では進まない．handPrompt.ts）．
-// debug が有効な時だけ，注視での開始と Enter / Space による飛ばしを使える（デバッグ用．見え方の調整のボタンも同じ）
+// debug が有効な時だけ，注視での開始と Enter / Space による飛ばしを使える（デバッグ用．見え方の調整のボタンも同じ）．
+// PC モード（pc．Issue #205）では開始ボタン・見え方の調整・動きの練習を飛ばして訓練の説明だけを行い，Enter / Space で次のページへ進める
 
 import type { Object3D } from "three";
 import type { FrameInfo, Scene, SceneContext } from "../core/scene";
@@ -156,10 +157,18 @@ export interface LobbySceneOptions {
    */
   readonly onNarrate?: (text: string, rate: number) => void;
   /**
+   * PC モード（マウス・キーボードで体験する）．true の時は開始ボタン・見え方の調整・動きの練習（キャリブレーション）を飛ばし，
+   * 入ってすぐ訓練の説明を始める（PC の入力はしきい値を使わず，ゴーグルも無いため）．説明は Enter / Space で次へ進められる
+   */
+  readonly pc?: boolean;
+  /**
    * 準備の合図（3・2・1 と計測の始まり）の短い音を鳴らす AudioContext（省略可．無い・null の時は音を出さず，指示板の数字だけ）
    */
   readonly audioContext?: () => AudioContext | null;
 }
+
+/** PC モードで説明の板の補足に出す，ページの進め方 */
+export const PC_BRIEFING_HINT = "Enter で次へ";
 
 /** 指示の板が頭の向きに追いつく速さ（1/秒）．見回した時に一瞬遅れて追いつく様子が分かるよう緩めにする */
 const PANEL_FOLLOW_RATE = 1.2;
@@ -209,6 +218,7 @@ export function createLobbyScene(options: LobbySceneOptions): Scene {
   const briefingConfig = options.briefingConfig ?? DEFAULT_BRIEFING_CONFIG;
   const pacingConfig = options.narrationPacingConfig ?? DEFAULT_NARRATION_PACING_CONFIG;
   const debug = options.debug ?? false;
+  const pc = options.pc ?? false;
   // 注視はデバッグ用．本実装は input/ の PlayerInput.hands（手と自動開始は gateConfig.startMode で決まる）
   const sources: StartGateSources = { gaze: debug };
   // 見え方の調整も，開始ボタンを手で押す設定の時は時間ではなくボタンで終える（制限時間は無い．開始ボタンと同じ）
@@ -224,6 +234,7 @@ export function createLobbyScene(options: LobbySceneOptions): Scene {
       instruction.progressLabel,
       instruction.remainingSeconds === null ? null : `残り ${instruction.remainingSeconds} 秒`,
       hold === null ? null : `そのまま あと ${hold} 秒`,
+      pc ? PC_BRIEFING_HINT : null,
     ]
       .filter((s) => s !== null)
       .join("　");
@@ -404,12 +415,14 @@ export function createLobbyScene(options: LobbySceneOptions): Scene {
       ctx.stage.rig.rotation.set(0, 0, 0);
 
       // デバッグ用（本実装は input/ の PlayerInput.hands）
+      // 押し続けた時の繰り返し（repeat）は数えない．結果画面で押した Enter の続きで説明を読まずに飛ばさないため
       const onKeyDown = (event: KeyboardEvent): void => {
+        if (event.repeat) return;
         if ((event.key === "Enter" || event.key === " ") && active !== null) {
           active.skipRequested = true;
         }
       };
-      if (debug) window.addEventListener("keydown", onKeyDown);
+      if (debug || pc) window.addEventListener("keydown", onKeyDown);
 
       active = {
         ctx,
@@ -448,6 +461,17 @@ export function createLobbyScene(options: LobbySceneOptions): Scene {
           handMarkers.dispose();
         },
       };
+
+      if (pc) {
+        // 正面は app/ が Session.calibration を受けて今の向きに合わせる（mock は recenter だけ）．
+        // 入るたびに新しい値を書き，「同じ訓練をもう一度」でも正面を合わせ直す
+        const state = startCalibration(ctx.session.calibration);
+        ctx.session.calibration = toCalibrationProfile(state, Date.now());
+        button.object.visible = false;
+        handMarkers.object.visible = false;
+        active.gate = skipStartGate(INITIAL_START_GATE);
+        active.briefing = startBriefing(state.reused);
+      }
     },
 
     update(frame) {

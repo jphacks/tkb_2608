@@ -205,12 +205,57 @@ function createMonitorAudio(): MonitorAudio {
   };
 }
 
+/** 見守り画面を単独で（room= を付けずに）開いた時の説明（1 段落ずつ） */
+export const MONITOR_INTRO_LINES: readonly string[] = [
+  "教員が PC で，生徒の体験の様子（目線・位置・姿勢と，避難の後の結果）をその場で見る画面です",
+  "エディタで校舎を作って「QR コードを出す」を押し，QR コードの横の「見守り画面を開く」から開くと，その QR コードで体験している生徒とつながります",
+  "この URL だけでは見られる体験がありません．体験は PC でも試せます",
+];
+
+/** 見守り画面を単独で開いた時の説明を出す（体験・エディタへの入口も置く） */
+function showMonitorIntro(): void {
+  document.body.style.margin = "0";
+  document.body.style.background = "#10141c";
+  const root = document.createElement("div");
+  root.style.cssText =
+    "max-width:640px;margin:10vh auto;padding:24px 28px;border-radius:12px;background:rgba(255,255,255,0.06);" +
+    'color:#f2f4f8;font:16px/1.7 system-ui,-apple-system,"Hiragino Sans",sans-serif;';
+  const title = document.createElement("h1");
+  title.textContent = "見守り画面について";
+  title.style.cssText = "font-size:1.3rem;margin:0 0 12px;";
+  root.appendChild(title);
+  for (const line of MONITOR_INTRO_LINES) {
+    const p = document.createElement("p");
+    p.textContent = line;
+    p.style.margin = "0 0 10px";
+    root.appendChild(p);
+  }
+  const path = window.location.pathname === "" ? "/" : window.location.pathname;
+  const links = document.createElement("div");
+  links.style.cssText = "display:flex;flex-wrap:wrap;gap:12px;margin-top:16px;";
+  for (const [label, href] of [
+    ["PC で体験する", `${path}?app&pc`],
+    ["校舎を作る（エディタ）", `${path}?editor`],
+    ["トップへ", path],
+  ] as const) {
+    const a = document.createElement("a");
+    a.href = href;
+    a.textContent = label;
+    a.style.cssText =
+      "padding:10px 20px;border-radius:8px;background:#3a4252;color:#f2f4f8;font-weight:bold;text-decoration:none;";
+    links.appendChild(a);
+  }
+  root.appendChild(links);
+  document.body.appendChild(root);
+}
+
 /** 見守り画面を起動する（main.ts の ?monitor から呼ぶ） */
 export async function startMonitorApp(): Promise<void> {
   const hash = window.location.hash;
   const roomId = getRoomIdFromHash(hash);
   if (roomId === null) {
-    showMonitorNotice(MONITOR_MESSAGES.noRoom);
+    // 単独で開いた時（審査員がトップから辿った等）は，何を見る画面かと開き方を説明する（Issue #205）
+    showMonitorIntro();
     return;
   }
   const relayBase = resolveRelayBaseUrl(import.meta.env.VITE_MONITOR_RELAY_URL);
