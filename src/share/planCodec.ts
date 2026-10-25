@@ -1,5 +1,6 @@
 // SchoolPlan と URL の埋め込みデータ（`?app#p=<埋め込みデータ>`）の変換（SPEC_02「URL と QR への埋め込み」）．
-// JSON（cells は 1 マス 1 文字，roomOf はランレングス）→ deflate-raw で圧縮 → base64url．ブラウザ API は CompressionStream だけを使う
+// JSON（cells は 1 マス 1 文字，roomOf はランレングス）→ deflate-raw で圧縮 → base64url．ブラウザ API は CompressionStream だけを使う．
+// JSON の段階（planToJson・planFromJson）は，ファイルと localStorage への保存（planFile.ts）でも使う
 import type {
   CellRef,
   DrillMode,
@@ -32,8 +33,8 @@ export type DecodePlanResult =
   | { readonly ok: true; readonly plan: SchoolPlan }
   | ({ readonly ok: false } & PlanLoadError);
 
-/** URL に載せる時の 1 フロア（cells は 1 マス 1 文字，roomOf は [値, 続く数, 値, 続く数, …]） */
-interface EncodedFloor {
+/** URL・ファイルに載せる時の 1 フロア（cells は 1 マス 1 文字，roomOf は [値, 続く数, 値, 続く数, …]） */
+export interface EncodedFloor {
   readonly level: number;
   readonly width: number;
   readonly depth: number;
@@ -41,9 +42,22 @@ interface EncodedFloor {
   readonly roomOf: readonly number[];
 }
 
-/** SchoolPlan を埋め込みデータ（base64url の文字列．`#p=` の後ろに置く）にする */
-export async function encodePlan(plan: SchoolPlan): Promise<string> {
-  const json = JSON.stringify({
+/**
+ * URL・ファイル・localStorage に書く時の SchoolPlan の JSON の形（cells は 1 マス 1 文字，roomOf はランレングス）．
+ * 読み戻しは planFromJson で行う
+ */
+export interface PlanJson {
+  readonly version: SchoolPlan["version"];
+  readonly name: string;
+  readonly cellSize: number;
+  readonly floors: readonly EncodedFloor[];
+  readonly rooms: readonly Room[];
+  readonly drill: DrillSetup;
+}
+
+/** SchoolPlan を JSON に書ける形（PlanJson）にする．中身は確かめない */
+export function planToJson(plan: SchoolPlan): PlanJson {
+  return {
     version: plan.version,
     name: plan.name,
     cellSize: plan.cellSize,
@@ -58,7 +72,66 @@ export async function encodePlan(plan: SchoolPlan): Promise<string> {
     ),
     rooms: plan.rooms.map((room) => ({ name: room.name })),
     drill: plan.drill,
-  });
+  };
+}
+
+/**
+ * planFromJson の結果．invalidPlan の時は形は読めているので，校舎（plan）と誤りの一覧（errors）も持つ
+ * （エディタは誤りのある校舎も開き，誤りを画面に出すため）
+ */
+export type PlanJsonResult =
+  | { readonly ok: true; readonly plan: SchoolPlan }
+  | {
+      readonly ok: false;
+      readonly kind: "invalidPlan";
+      readonly reason: string;
+      readonly plan: SchoolPlan;
+      readonly errors: readonly string[];
+    }
+  | {
+      readonly ok: false;
+      readonly kind: Exclude<PlanLoadFailureKind, "invalidPlan">;
+      readonly reason: string;
+    };
+
+/**
+ * JSON.parse した値（PlanJson の形のはず）を SchoolPlan に戻し，版・形・中身（validatePlan）を確かめる．
+ * 例外は投げない．URL の埋め込みデータ（decodePlan）・ファイル・localStorage の読み込みで同じ検査を使う
+ */
+export function planFromJson(json: unknown): PlanJsonResult {
+  if (isRecord(json) && typeof json.version === "number" && json.version > SUPPORTED_VERSION) {
+    return {
+      ok: false,
+      kind: "unsupportedVersion",
+      reason: "このデータは新しい版のアプリで作られています．新しい版のアプリで開いてください",
+    };
+  }
+
+  let plan: SchoolPlan;
+  try {
+    plan = parsePlan(json);
+  } catch (error) {
+    if (error instanceof ShapeError) {
+      return {
+        ok: false,
+        kind: "corrupted",
+        reason: `校舎のデータの形が正しくありません（${error.path}）`,
+      };
+    }
+    throw error;
+  }
+
+  const errors = validatePlan(plan);
+  if (errors.length > 0) {
+    const rest = errors.length > 1 ? `（ほか ${errors.length - 1} 件）` : "";
+    return { ok: false, kind: "invalidPlan", reason: `${errors[0]}${rest}`, plan, errors };
+  }
+  return { ok: true, plan };
+}
+
+/** SchoolPlan を埋め込みデータ（base64url の文字列．`#p=` の後ろに置く）にする */
+export async function encodePlan(plan: SchoolPlan): Promise<string> {
+  const json = JSON.stringify(planToJson(plan));
   const compressed = await readAll(
     streamOf(new TextEncoder().encode(json)).pipeThrough(new CompressionStream("deflate-raw")),
     Number.POSITIVE_INFINITY,
@@ -94,29 +167,10 @@ export async function decodePlan(text: string): Promise<DecodePlanResult> {
     return corrupted("データの中身を読み取れません");
   }
 
-  if (isRecord(json) && typeof json.version === "number" && json.version > SUPPORTED_VERSION) {
-    return {
-      ok: false,
-      kind: "unsupportedVersion",
-      reason: "このデータは新しい版のアプリで作られています．新しい版のアプリで開いてください",
-    };
-  }
-
-  let plan: SchoolPlan;
-  try {
-    plan = parsePlan(json);
-  } catch (error) {
-    if (error instanceof ShapeError)
-      return corrupted(`校舎のデータの形が正しくありません（${error.path}）`);
-    throw error;
-  }
-
-  const errors = validatePlan(plan);
-  if (errors.length > 0) {
-    const rest = errors.length > 1 ? `（ほか ${errors.length - 1} 件）` : "";
-    return { ok: false, kind: "invalidPlan", reason: `${errors[0]}${rest}` };
-  }
-  return { ok: true, plan };
+  const result = planFromJson(json);
+  // URL の読み込みでは誤りのある校舎を使わないので，校舎と誤りの一覧は渡さない
+  if (!result.ok) return { ok: false, kind: result.kind, reason: result.reason };
+  return result;
 }
 
 const corrupted = (reason: string): DecodePlanResult => ({ ok: false, kind: "corrupted", reason });

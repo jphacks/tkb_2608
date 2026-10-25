@@ -279,6 +279,14 @@ export function startBlank(state: EditorState, width: number, depth: number): Ed
 }
 
 /**
+ * 別の校舎に丸ごと置き換える（ファイルの読み込み・デモの校舎に戻す）．元に戻せる．
+ * 道具が新しい校舎に無い教室を指していれば直す．同じ校舎（同じ参照）なら何もしない
+ */
+export function openPlan(state: EditorState, plan: SchoolPlan): EditorState {
+  return commit(endStroke(state), plan);
+}
+
+/**
  * そのマスに訓練条件の物を置けない理由（置ける時は null）．
  * 火元はマスの種類を問わない（SPEC_02 は火元の種類を決めておらず，validatePlan も範囲だけを確かめるため）
  */
