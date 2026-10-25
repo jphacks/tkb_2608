@@ -22,6 +22,7 @@ import { createInputSource, type InputKind } from "./input/inputSource";
 import { InputPreview } from "./inputPreview";
 import { AVAILABLE_SPACE_IDS, createSpace, createWalkWorld } from "./scenes";
 import { advanceAlarmSeconds, parseAlarmClock } from "./scenes/alarmClock";
+import { createHandMarkers, type HandMarkers } from "./scenes/common/handMarkers";
 import { createDevDoors, type DevDoor, findNearbyDevDoor } from "./scenes/devDoors";
 import { isSchoolSpace } from "./scenes/school/schoolPlanScene";
 import { resolveSpaceId } from "./scenes/spaceParam";
@@ -64,6 +65,8 @@ function startViewer(): void {
 interface WalkSetup {
   readonly rig: THREE.Object3D;
   readonly walker: SpaceWalker;
+  /** 認識した手の印（rig の子．毎フレーム入力の頭の向きと手で動かす．ページを閉じるまで使うので外さない） */
+  readonly handMarkers: HandMarkers;
   /** 近くのドア（確認用．無ければ null） */
   readonly nearbyDoor: () => DevDoor | null;
   /** 近くのドアの開閉を切り替える．切り替えた後の対象を返す（近くに無ければ null） */
@@ -82,6 +85,9 @@ function setupWalk(scene: THREE.Scene, camera: THREE.PerspectiveCamera, space: S
   const rig = new THREE.Object3D();
   rig.add(camera);
   scene.add(rig);
+  // 手の印は目の位置（rig の原点）からの位置に置く．カメラは rig の原点にあり，頭の向きだけを持つため
+  const handMarkers = createHandMarkers();
+  rig.add(handMarkers.object);
 
   const bus = createEventBus<AppEvent>();
   const walker = new SpaceWalker(
@@ -141,7 +147,7 @@ function setupWalk(scene: THREE.Scene, camera: THREE.PerspectiveCamera, space: S
     ];
   };
 
-  return { rig, walker, nearbyDoor, toggleNearbyDoor, statusLines, updateSpace };
+  return { rig, walker, handMarkers, nearbyDoor, toggleNearbyDoor, statusLines, updateSpace };
 }
 
 /**
@@ -158,6 +164,8 @@ function stepAndApply(
   walk.walker.applyTo(walk.rig);
   const { head } = input;
   camera.quaternion.set(head.x, head.y, head.z, head.w);
+  // 見失った手（tracked が false）は隠す．?input=mock ではマウスが右手になる
+  walk.handMarkers.update(head, input.hands, true);
   walk.updateSpace(dt, input.posture);
 }
 
