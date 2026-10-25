@@ -1,8 +1,9 @@
 // 結果画面の地図に重ねるもの（経路・区間・印・教室の名前）を，1 つの階について地図の座標で組み立てる（純粋な関数）．
 // 描画（mapCanvas.ts）はここで作った点を Canvas の座標に変えて描くだけにする
 import type { DrillEvaluation, DrillInterval, DrillSample, DrillTrack } from "../core/drill";
-import type { CellRef, SchoolPlan } from "../core/schoolPlan";
-import { cellCenter, type MapPoint, worldToMap } from "./mapLayout";
+import type { CellRef, Floor, SchoolPlan } from "../core/schoolPlan";
+import { wallBetween } from "../sim";
+import { cellCenter, type MapPoint, worldToMap, yawToMapDirection } from "./mapLayout";
 
 /** 地図の座標の折れ線（点が 1 つだけの時は点として描く） */
 export type MapPolyline = readonly MapPoint[];
@@ -20,6 +21,14 @@ export interface RoomLabel {
   readonly at: MapPoint;
 }
 
+/** マスの境目の線分（地図の座標．(u1, v1) から (u2, v2) へ．格子の線の上にある） */
+export interface MapEdge {
+  readonly u1: number;
+  readonly v1: number;
+  readonly u2: number;
+  readonly v2: number;
+}
+
 /** 1 つの階の地図に重ねるもの（どれも地図の座標） */
 export interface MapOverlay {
   /** 正解経路（緑）．階が切り替わる所で分ける */
@@ -34,11 +43,15 @@ export interface MapOverlay {
   readonly nearFire: readonly MapPoint[];
   /** 開始地点（この階に無ければ null） */
   readonly start: MapPoint | null;
+  /** 開始時に向いている向き（地図の上の長さ 1 の方向．開始地点がこの階に無い・向きが数でない時は null） */
+  readonly startDirection: MapPoint | null;
   /** 集合場所のマス */
   readonly assembly: readonly MapCell[];
   /** 火元のマス */
   readonly fireOrigins: readonly MapCell[];
   readonly roomLabels: readonly RoomLabel[];
+  /** 薄い壁が立つ辺（教室の境界．エディタと同じく sim/ の wallBetween で決める） */
+  readonly walls: readonly MapEdge[];
 }
 
 /** 結果画面で最初に見せる階（開始地点の階．開始地点の階が無い時は 0） */
@@ -130,6 +143,30 @@ export function roomLabels(plan: SchoolPlan, floor: number): RoomLabel[] {
     }));
 }
 
+/**
+ * 薄い壁が立つ辺の一覧（SPEC_02「壁の自動配置」．sim/ の wallBetween の結果そのまま．エディタの図と同じ辺になる）．
+ * マス目の外側の辺（外とマス目の端の間）も含める．縦の線（左右の組）を先に，横の線（上下の組）を後に並べる
+ */
+export function wallEdges(floor: Floor): MapEdge[] {
+  const edges: MapEdge[] = [];
+  // x = -1・z = -1 はマス目の外（左端・上端の外）．外との間にも壁が立つことがある
+  for (let z = 0; z < floor.depth; z++) {
+    for (let x = -1; x < floor.width; x++) {
+      if (wallBetween(floor, { x, z }, { x: x + 1, z })) {
+        edges.push({ u1: x + 1, v1: z, u2: x + 1, v2: z + 1 });
+      }
+    }
+  }
+  for (let x = 0; x < floor.width; x++) {
+    for (let z = -1; z < floor.depth; z++) {
+      if (wallBetween(floor, { x, z }, { x, z: z + 1 })) {
+        edges.push({ u1: x, v1: z + 1, u2: x + 1, v2: z + 1 });
+      }
+    }
+  }
+  return edges;
+}
+
 /** 1 つの階の地図に重ねるものをまとめて組み立てる */
 export function buildMapOverlay(
   plan: SchoolPlan,
@@ -140,6 +177,8 @@ export function buildMapOverlay(
   const { samples } = track;
   const onFloor = (cell: CellRef): boolean => cell.floor === floor;
   const toCell = (cell: CellRef): MapCell => ({ x: cell.x, z: cell.z });
+  const target = plan.floors[floor];
+  const startOnFloor = onFloor(plan.drill.start);
   const nearFire: MapPoint[] = [];
   for (const moment of evaluation.nearFire) {
     if (moment.floor !== floor) continue;
@@ -152,9 +191,11 @@ export function buildMapOverlay(
     offRoute: intervalPolylines(samples, evaluation.offRoute, plan.cellSize, floor),
     smokeStanding: intervalPolylines(samples, evaluation.smokeStanding, plan.cellSize, floor),
     nearFire,
-    start: onFloor(plan.drill.start) ? cellCenter(plan.drill.start) : null,
+    start: startOnFloor ? cellCenter(plan.drill.start) : null,
+    startDirection: startOnFloor ? yawToMapDirection(plan.drill.startYaw) : null,
     assembly: plan.drill.assembly.filter(onFloor).map(toCell),
     fireOrigins: plan.drill.fireOrigins.filter(onFloor).map(toCell),
     roomLabels: roomLabels(plan, floor),
+    walls: target === undefined ? [] : wallEdges(target),
   };
 }

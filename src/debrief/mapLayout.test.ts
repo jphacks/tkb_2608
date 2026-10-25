@@ -2,6 +2,7 @@
 // 基準は docs/04_SPEC/SPEC_02「座標」（マス (x, z) の中心はワールドの ((x + 0.5) * cellSize, (z + 0.5) * cellSize)）と，
 // Issue #91 の決定（地図はマスの単位．1 マスは整数 px・最小 1・最大 40 px・余白 8 px）
 import { describe, expect, it } from "vitest";
+import { yawToGridDirection } from "../editor/editorState";
 import {
   cellCenter,
   DEFAULT_MAP_FIT,
@@ -9,6 +10,7 @@ import {
   type MapLayout,
   mapToCanvas,
   worldToMap,
+  yawToMapDirection,
 } from "./mapLayout";
 
 describe("worldToMap", () => {
@@ -178,4 +180,44 @@ describe("mapToCanvas", () => {
     expect(p.y).toBeGreaterThan(0);
     expect(p.y).toBeLessThan(fit.cssHeight);
   });
+});
+
+// 基準は SPEC_02「座標」の向き（drill.startYaw は rad で 0 が -Z（エディタの上）向き，右回り（画面で時計回り）に増える）．
+// 地図の v は下（+Z）向きなので，0 は v = -1，π/2 は u = +1（右）
+describe("yawToMapDirection", () => {
+  it.each([
+    ["0（上）", 0, 0, -1],
+    ["π/2（右）", Math.PI / 2, 1, 0],
+    ["π（下）", Math.PI, 0, 1],
+    ["-π/2（左）", -Math.PI / 2, -1, 0],
+    ["3π/2（左．1 周を超えない値でも同じ）", (3 * Math.PI) / 2, -1, 0],
+    ["2π（1 周して上）", 2 * Math.PI, 0, -1],
+  ])("%s", (_, yaw, u, v) => {
+    const d = yawToMapDirection(yaw);
+    expect(d?.u).toBeCloseTo(u);
+    expect(d?.v).toBeCloseTo(v);
+  });
+
+  it.each([0.3, 1, -2, 5])("長さは 1（%s rad）", (yaw) => {
+    const d = yawToMapDirection(yaw);
+    expect(d).not.toBeNull();
+    expect(Math.hypot(d?.u ?? 0, d?.v ?? 0)).toBeCloseTo(1);
+  });
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+    "数でない時は null（%s）",
+    (yaw) => {
+      expect(yawToMapDirection(yaw)).toBeNull();
+    },
+  );
+
+  it.each([0, Math.PI / 2, Math.PI, -Math.PI / 2, 0.7, -2.4])(
+    "エディタの開始地点の矢印の向きと同じ（%s rad）",
+    (yaw) => {
+      const d = yawToMapDirection(yaw);
+      const e = yawToGridDirection(yaw);
+      expect(d?.u).toBeCloseTo(e.x);
+      expect(d?.v).toBeCloseTo(e.z);
+    },
+  );
 });
