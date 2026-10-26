@@ -129,15 +129,16 @@ describe("isHandOnButton", () => {
     // 手の形はボタン（0.5 m）より奥の固定の奥行きに描くため，見た目で重なっていれば押せるようにする
     expect(isHandOnButton(IDENTITY, hand({ x: 0, y: 0, z: -0.3 }), center)).toBe(true);
     expect(isHandOnButton(IDENTITY, hand({ x: 0, y: 0, z: -1.2 }), center)).toBe(true);
-    // 1.2 m 先で横に 0.24 m ずれた点は，0.5 m 先では 0.1 m のずれに見える
+    // 1.2 m 先で横に 0.24 m ずれた点は，0.5 m 先のボタンの面では 0.1 m のずれ
     expect(isHandOnButton(IDENTITY, hand({ x: 0.24, y: 0, z: -1.2 }), center)).toBe(true);
     // 0.36 m のずれは 0.5 m 先で 0.15 m（範囲外）
     expect(isHandOnButton(IDENTITY, hand({ x: 0.36, y: 0, z: -1.2 }), center)).toBe(false);
   });
 
-  it("目の後ろや目の位置の点は触れていない", () => {
+  it("目の後ろ・目の位置・目の真横の点は触れていない", () => {
     expect(isHandOnButton(IDENTITY, hand({ x: 0, y: 0, z: 0.5 }), center)).toBe(false);
     expect(isHandOnButton(IDENTITY, hand({ x: 0, y: 0, z: 0 }), center)).toBe(false);
+    expect(isHandOnButton(IDENTITY, hand({ x: 0.5, y: 0, z: 0 }), center)).toBe(false);
   });
 
   it("認識できていない手は位置が合っていても触れていない", () => {

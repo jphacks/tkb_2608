@@ -74,7 +74,7 @@ VR の中で人差し指の先を当てて押すボタンの共通部品．付�
 
 - 部品は `src/scenes/common/handButton.ts` の `createHandButton({ position, label?, config?, onPress? })`．判定は `src/scenes/common/handButtonPress.ts` の純粋な関数（ロビーの開始ボタンの手の判定と同じ）
 - `position` は親（目の位置が原点で Y 軸回りだけに回るもの．rig，または頭の向きに追従する板の pivot）の座標．毎フレーム `update({ head, hands, dt, parentYaw })` を呼ぶ（`parentYaw` は親のヨー角．rig に付けたら省く）．押したら `true` を返し，`onPress` を 1 回だけ呼ぶ
-- 押した扱い: 判定点がボタンの中心から 0.12 m（`radius`）以内にある状態が 1 秒（`holdSeconds`）続いた．離れたら数え直す．判定点は人差し指の先（`HandState.indexTip`）で，指先を持たない入力（PC の `mock`．マウスの位置で押す）と値が有限でない時は手のひらの中心（`position`）（`handPressPoint`．ロビーの開始ボタンも同じ）．出してから `armSeconds` の間はボタンを隠し，当てても数えない（前の画面から手を出したままで押さないため）
+- 押した扱い: 判定点がボタンの範囲にある状態が 1 秒（`holdSeconds`）続いた．離れたら数え直す．範囲は目から見た向きで判定する（目から判定点への線が，ボタンの中心を通り目からの向きに垂直な面と交わる点が，中心から 0.12 m（`radius`）以内．見た目で指先がボタンに重なっていれば押せる．`isHandOverButton`）．手の形はボタンより奥の固定の奥行きに描くため，3 次元の距離では見た目と合わない．判定点は描いた手の形の人差し指の先（`landmarks` の 8 番．`handSightPoint`）で，手の形が無い時は人差し指の先（`HandState.indexTip`），指先を持たない入力（PC の `mock`．マウスの位置で押す）と値が有限でない時は手のひらの中心（`position`）（`handPressPoint`）．ロビーの開始ボタンも同じ．手で押すボタンのある画面（ロビー・結果画面・付け外しの案内）では，手の印の人差し指の先にピンクの球を最前面に出す（`createHandMarkers` の `highlightIndexTip`）．出してから `armSeconds` の間はボタンを隠し，当てても数えない（前の画面から手を出したままで押さないため）
 - `press()` で押したことにできる（タップ・キー等の代わりの操作）．`reset()` で押す前に戻す．出す・隠すは `object.visible` で画面の側が決める
 - 画面を持つモジュール（lobby/・debrief/ 等）は scenes/ を import しないため，app/ が `createHandButton` を渡す（「依存の向き」）．結果画面には `createDebriefVrScene` の `createHandButton`・`createHandMarkers` に渡す
 
@@ -112,7 +112,7 @@ VR の中で人差し指の先を当てて押すボタンの共通部品．付�
 
 | 段階 | 内容 | 次へ進む条件 | 制限時間 |
 | --- | --- | --- | --- |
-| 開始ボタン | 目の前に 3D のボタンを出し，ゴーグルを付けて人差し指の先を当てるよう案内する．認識した手の形（21 点の関節と骨．左右とも同じ色）を出し，人差し指の先にピンクの球を深度を無視して最前面に出す（手の形はボタンより奥の固定の奥行きに描くため，指先がボタンに隠れないように．`highlightIndexTip`）（校舎と共通の部品 `src/scenes/common/handMarkers.ts`．lobby/ は scenes/ を import しないため，app/ が `createLobbyScene` の `createHandMarkers` に渡す）．待つ間はキャリブレーションの時間を数えず，センサーの値も捨てる．手が 10 秒続けて見つからない時は「手を目の前に出して，カメラに映るようにしてください」と案内し，15 秒ごとに読み直す（自動では始めない．`src/lobby/handPrompt.ts`） | 人差し指の先をボタンに 1 秒当てる（`startMode: "hand"`．input/ の `PlayerInput.hands`）．判定点は描いた手の形の人差し指の先（`landmarks` の 8 番．無ければ「手で押すボタン」と同じ `handPressPoint`．`handSightPoint`）で，目から見た向きで判定する（判定点をボタンと同じ目からの距離に置き直し，ボタンの中心から 0.12 m 以内．見た目で指先がボタンに重なっていれば押せる．`isHandOnButton`）．時間で始める方式（`"auto"`．15 秒）も設定で選べる | ― |
+| 開始ボタン | 目の前に 3D のボタンを出し，ゴーグルを付けて人差し指の先を当てるよう案内する．認識した手の形（21 点の関節と骨．左右とも同じ色）を出し，人差し指の先にピンクの球を深度を無視して最前面に出す（手の形はボタンより奥の固定の奥行きに描くため，指先がボタンに隠れないように．`highlightIndexTip`）（校舎と共通の部品 `src/scenes/common/handMarkers.ts`．lobby/ は scenes/ を import しないため，app/ が `createLobbyScene` の `createHandMarkers` に渡す）．待つ間はキャリブレーションの時間を数えず，センサーの値も捨てる．手が 10 秒続けて見つからない時は「手を目の前に出して，カメラに映るようにしてください」と案内し，15 秒ごとに読み直す（自動では始めない．`src/lobby/handPrompt.ts`） | 人差し指の先をボタンに 1 秒当てる（`startMode: "hand"`．input/ の `PlayerInput.hands`）．判定点と範囲は「手で押すボタン」と同じ（描いた手の形の人差し指の先を，目から見た向きで判定する．`handSightPoint`・`isHandOnButton`）．時間で始める方式（`"auto"`．15 秒）も設定で選べる | ― |
 | 見え方の調整 | 左右それぞれの目の画面の中心に緑の丸（輪．十字は付けない）を出し，1 つに重なってくっきり見えるよう，スマホの位置やゴーグルのレンズの幅を合わせるよう案内する．値は作らない．3 秒たったら丸の下（開始ボタンの 0.15 m 下．`ALIGN_BUTTON_OFFSET`）に開始ボタンと同じボタンを出す（`ALIGN_BUTTON_ARM_SECONDS`．開始ボタンからかざしたままの手で押さないため） | ボタンに人差し指の先を 1 秒当てる（開始ボタンと同じ判定・手の印・手が見つからない時の案内）．`startMode: "auto"` の時は時間で進む | ―（`"auto"` の時は 15 秒） |
 | 導入 | これから行う手順を「練習」として案内する | 時間で進む | 4 秒 |
 | 正面 | 3 秒の準備の後，正面を向いて止まる → `yawOffset`．計測中は制限時間の残りではなく「そのまま あと N 秒」（保持の残り．ずれたら 3 に戻る）を出す | 3 秒の間ずれが ±15° 以内 | 8 秒 |

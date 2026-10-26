@@ -207,7 +207,7 @@ export function goggleOffPanel(
     }
     return {
       title,
-      body: "目の前のボタンに人差し指の先を当ててから，ゴーグルを外してスマホの画面を見てください",
+      body: "目の前のボタンに人差し指の先を当ててから（指先のピンクの丸をボタンに重ねる），ゴーグルを外してスマホの画面を見てください",
       caption: handPrompt ? GOGGLE_HAND_PROMPT : "ゴーグルを外して画面をタップしても進みます",
     };
   }
@@ -220,7 +220,7 @@ export function goggleOffPanel(
   }
   return {
     title: "訓練が終わりました",
-    body: "目の前のボタンに人差し指の先を当ててから，ゴーグルを外してスマホの画面を見てください",
+    body: "目の前のボタンに人差し指の先を当ててから（指先のピンクの丸をボタンに重ねる），ゴーグルを外してスマホの画面を見てください",
     caption: handPrompt ? GOGGLE_HAND_PROMPT : "ゴーグルを外して画面をタップしても進みます",
   };
 }
@@ -272,7 +272,7 @@ export function goggleOnConfirmPanel(
   }
   return {
     title,
-    body: `準備ができたら，目の前のボタンに人差し指の先を当ててください．${then}`,
+    body: `準備ができたら，目の前のボタンに人差し指の先を当ててください（指先のピンクの丸をボタンに重ねる）．${then}`,
     caption: handPrompt ? GOGGLE_HAND_PROMPT : "",
   };
 }
