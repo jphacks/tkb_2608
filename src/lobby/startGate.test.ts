@@ -9,6 +9,7 @@ import {
   buttonCenter,
   DEFAULT_START_GATE_CONFIG,
   handPressPoint,
+  handSightPoint,
   INITIAL_START_GATE,
   isDeviceLevel,
   isGazingAtButton,
@@ -122,7 +123,21 @@ describe("isHandOnButton", () => {
 
   it("0.12 m より遠ければ触れていない", () => {
     expect(isHandOnButton(IDENTITY, hand({ x: 0.13, y: 0, z: -0.5 }), center)).toBe(false);
-    expect(isHandOnButton(IDENTITY, hand({ x: 0, y: 0, z: -0.3 }), center)).toBe(false);
+  });
+
+  it("目から見た向きで判定する（ボタンと重なって見えれば，奥行きが違っても触れている）", () => {
+    // 手の形はボタン（0.5 m）より奥の固定の奥行きに描くため，見た目で重なっていれば押せるようにする
+    expect(isHandOnButton(IDENTITY, hand({ x: 0, y: 0, z: -0.3 }), center)).toBe(true);
+    expect(isHandOnButton(IDENTITY, hand({ x: 0, y: 0, z: -1.2 }), center)).toBe(true);
+    // 1.2 m 先で横に 0.24 m ずれた点は，0.5 m 先では 0.1 m のずれに見える
+    expect(isHandOnButton(IDENTITY, hand({ x: 0.24, y: 0, z: -1.2 }), center)).toBe(true);
+    // 0.36 m のずれは 0.5 m 先で 0.15 m（範囲外）
+    expect(isHandOnButton(IDENTITY, hand({ x: 0.36, y: 0, z: -1.2 }), center)).toBe(false);
+  });
+
+  it("目の後ろや目の位置の点は触れていない", () => {
+    expect(isHandOnButton(IDENTITY, hand({ x: 0, y: 0, z: 0.5 }), center)).toBe(false);
+    expect(isHandOnButton(IDENTITY, hand({ x: 0, y: 0, z: 0 }), center)).toBe(false);
   });
 
   it("認識できていない手は位置が合っていても触れていない", () => {
@@ -134,6 +149,38 @@ describe("isHandOnButton", () => {
     const front = hand({ x: 0, y: 0, z: -0.5 });
     expect(isHandOnButton(head, front, buttonCenter(0))).toBe(false);
     expect(isHandOnButton(head, front, buttonCenter(Math.PI / 2))).toBe(true);
+  });
+});
+
+describe("handSightPoint", () => {
+  /** 人差し指の先（番号 8）だけ tip，他は手のひらの位置に置いた 21 点 */
+  function landmarksWithTip(tip: Vec3): Vec3[] {
+    return Array.from({ length: 21 }, (_, i) => (i === 8 ? tip : OFF));
+  }
+
+  it("描いた手の形の人差し指の先があれば，indexTip より優先する", () => {
+    const drawn = { x: 0, y: 0, z: -1.2 };
+    const h: HandState = { ...tipHand(OFF, OFF), landmarks: landmarksWithTip(drawn) };
+    expect(handSightPoint(h)).toEqual(drawn);
+    expect(isHandOnButton(IDENTITY, h, buttonCenter(0))).toBe(true);
+  });
+
+  it("手の形が無ければ handPressPoint と同じ", () => {
+    expect(handSightPoint(tipHand(OFF, ON))).toEqual(ON);
+    expect(handSightPoint(hand(OFF))).toEqual(OFF);
+  });
+
+  it.each(NON_FINITE)("手の形の指先に %s を含む時は handPressPoint を使う", (v) => {
+    const h: HandState = {
+      ...tipHand(OFF, ON),
+      landmarks: landmarksWithTip({ x: v, y: 0, z: -1 }),
+    };
+    expect(handSightPoint(h)).toEqual(ON);
+  });
+
+  it("点が足りない手の形は handPressPoint を使う", () => {
+    const h: HandState = { ...tipHand(OFF, ON), landmarks: [OFF, OFF] };
+    expect(handSightPoint(h)).toEqual(ON);
   });
 });
 

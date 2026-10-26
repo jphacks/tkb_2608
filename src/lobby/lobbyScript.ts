@@ -109,7 +109,7 @@ function describeAlignByButton(prompt: AlignButtonPrompt): LobbyInstruction {
     return {
       key: `align:handPrompt:${prompt.handPrompt}`,
       title: "手が見つかりません",
-      body: `${text}．丸がくっきり見えたら，丸の下のボタンに人差し指の先を 1 秒当ててください${debug}`,
+      body: `${text}．丸がくっきり見えたら，丸の下のボタンに人差し指の先を 1 秒当ててください（指先のピンクの丸がボタンに重なるように）${debug}`,
       narration: `手が見つかりません．${text}`,
       progressLabel: null,
       remainingSeconds: null,
@@ -118,7 +118,7 @@ function describeAlignByButton(prompt: AlignButtonPrompt): LobbyInstruction {
   return {
     key: "align:button",
     title: "見え方を合わせてください",
-    body: `${ALIGN_TEXT}．くっきり見えたら，丸の下のボタンに人差し指の先を 1 秒当ててください${debug}`,
+    body: `${ALIGN_TEXT}．くっきり見えたら，丸の下のボタンに人差し指の先を 1 秒当ててください（指先のピンクの丸がボタンに重なるように）${debug}`,
     narration: `${ALIGN_NARRATION}．くっきり見えたら，ボタンに人差し指の先を当ててください`,
     progressLabel: null,
     remainingSeconds: null,
@@ -237,7 +237,7 @@ export function describeStartGate(
     return {
       key: `startGate:handPrompt:${handPrompt}`,
       title: "手が見つかりません",
-      body: `${text}．映ったら，目の前のボタンに人差し指の先を 1 秒当ててください${debug}`,
+      body: `${text}．映ったら，目の前のボタンに人差し指の先を 1 秒当ててください（指先のピンクの丸がボタンに重なるように）${debug}`,
       narration: `手が見つかりません．${text}`,
       progressLabel: null,
       remainingSeconds: null,
@@ -249,7 +249,7 @@ export function describeStartGate(
   return {
     key: "startGate:hand",
     title: "準備ができたら開始ボタンへ",
-    body: `${prefix}準備ができたら，目の前のボタンに人差し指の先を 1 秒当ててください${debug}`,
+    body: `${prefix}準備ができたら，目の前のボタンに人差し指の先を 1 秒当ててください（指先のピンクの丸がボタンに重なるように）${debug}`,
     narration: `${prefix}準備ができたら，目の前のボタンに人差し指の先を当ててください`,
     progressLabel: null,
     remainingSeconds: null,

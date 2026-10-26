@@ -9,6 +9,9 @@ import {
   HAND_JOINT_COUNT,
   HAND_MARKER_RADIUS,
   HAND_SMOOTHING_SEC,
+  INDEX_TIP_COLOR,
+  INDEX_TIP_INDEX,
+  INDEX_TIP_MARKER_RADIUS,
   isDrawableLandmarks,
 } from "./handMarkers";
 
@@ -501,6 +504,62 @@ describe("createHandMarkers（補間とフェード）", () => {
     markers.update(FRONT, hands(h, UNTRACKED_HAND), true, 0.05);
     expect(opacity(left)).toBe(1);
     expect(opacity(right)).toBeLessThan(1);
+    markers.dispose();
+  });
+});
+
+describe("createHandMarkers（人差し指の先の印）", () => {
+  function tipOf(object: THREE.Object3D, side: "left" | "right"): THREE.Mesh {
+    const tip = object.getObjectByName(`hand-${side}-tip`);
+    if (!(tip instanceof THREE.Mesh)) throw new Error("人差し指の先の印が見つからない");
+    return tip;
+  }
+
+  it("既定では人差し指の先の印を作らない", () => {
+    const markers = createHandMarkers();
+    expect(markers.object.getObjectByName("hand-right-tip")).toBeUndefined();
+    markers.dispose();
+  });
+
+  it("highlightIndexTip の時は，目立つ色の球を深度を無視して最前面に描く", () => {
+    const markers = createHandMarkers({ highlightIndexTip: true });
+    const tip = tipOf(markers.object, "right");
+    const material = tip.material as THREE.MeshBasicMaterial;
+    expect((tip.geometry as THREE.SphereGeometry).parameters.radius).toBe(INDEX_TIP_MARKER_RADIUS);
+    expect(INDEX_TIP_MARKER_RADIUS).toBeGreaterThan(0.008);
+    expect(material.color.getHex()).toBe(INDEX_TIP_COLOR);
+    expect(INDEX_TIP_COLOR).not.toBe(HAND_COLORS.right);
+    expect(material.depthTest).toBe(false);
+    expect(tip.renderOrder).toBeGreaterThan(0);
+    expect(tip.visible).toBe(false);
+    markers.dispose();
+  });
+
+  it("21 点がある手では人差し指の先（番号 8）に置き，21 点が無い手では隠す", () => {
+    const markers = createHandMarkers({ highlightIndexTip: true });
+    const tip = tipOf(markers.object, "right");
+    const h = handWithShape();
+    markers.update(FRONT, hands(UNTRACKED_HAND, h), true);
+    expect(tip.visible).toBe(true);
+    const lm = h.landmarks?.[INDEX_TIP_INDEX];
+    expect(tip.position.x).toBeCloseTo(lm?.x ?? Number.NaN, 6);
+    expect(tip.position.y).toBeCloseTo(lm?.y ?? Number.NaN, 6);
+    expect(tip.position.z).toBeCloseTo(lm?.z ?? Number.NaN, 6);
+    expect(tipOf(markers.object, "left").visible).toBe(false);
+    markers.dispose();
+
+    const ball = createHandMarkers({ highlightIndexTip: true });
+    ball.update(FRONT, hands(UNTRACKED_HAND, hand()), true);
+    expect(tipOf(ball.object, "right").visible).toBe(false);
+    ball.dispose();
+  });
+
+  it("見失った手は手の形と一緒に指先の印も薄くする", () => {
+    const markers = createHandMarkers({ highlightIndexTip: true });
+    const tip = tipOf(markers.object, "right");
+    markers.update(FRONT, hands(UNTRACKED_HAND, handWithShape()), true, 0.016);
+    markers.update(FRONT, hands(UNTRACKED_HAND, UNTRACKED_HAND), true, HAND_FADE_SEC / 2);
+    expect((tip.material as THREE.MeshBasicMaterial).opacity).toBeCloseTo(0.5, 6);
     markers.dispose();
   });
 });
