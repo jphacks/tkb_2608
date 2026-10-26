@@ -132,6 +132,8 @@ export function startApp(): void {
   // 開始画面で取れた機器．カメラは input/ の手の認識に渡す．AudioContext はホームの設定（音量の確認）と audio/ に渡す
   const devices: { current: AcquiredDevices | null } = { current: null };
   const audioContext = (): AudioContext | null => devices.current?.audioContext ?? null;
+  // 手で押すボタンのある画面（ロビー・結果画面・ゴーグルの付け外しの案内）の手の印．人差し指の先で押すので，指先に目立つ印を出す
+  const handButtonMarkers = () => createHandMarkers({ highlightIndexTip: true });
   // 設定の音量の確認で鳴らす非常ベル（audio/ の非常ベルと同じ音）．ホームを作り直しても 1 つを使い回す
   const volumeCheckAlarm = createAlarmSample(audioContext);
   // 体験の音（audio/）．開始画面で機器を取った後に 1 回だけ作り，体験の間ずっとバスの cue を受けて鳴らす．
@@ -208,8 +210,7 @@ export function startApp(): void {
       }),
     lobby: () =>
       createLobbyScene({
-        // 開始ボタン・見え方の調整のボタンを人差し指の先で押すので，指先に目立つ印を出す
-        createHandMarkers: () => createHandMarkers({ highlightIndexTip: true }),
+        createHandMarkers: handButtonMarkers,
         debug,
         // 準備の合図（3・2・1）の短い音
         audioContext,
@@ -251,7 +252,7 @@ export function startApp(): void {
           })
         : createDebriefVrScene({
             createHandButton,
-            createHandMarkers,
+            createHandMarkers: handButtonMarkers,
             handsUsable,
             // mock はマウスで手を動かすため，タップで切り替えると手を動かしただけで切り替わってしまう
             allowTap: inputKind === "device",
@@ -386,7 +387,7 @@ export function startApp(): void {
 
   // ゴーグルの付け外しの案内の画面．案内の手のボタンを押したら本来の画面（next）へ goTo で進む
   const createGuide = (kind: GoggleSwitch, next: SceneId): GoggleGuideScene => {
-    const hand = { createHandButton, createHandMarkers, handsUsable };
+    const hand = { createHandButton, createHandMarkers: handButtonMarkers, handsUsable };
     if (kind === "takeOff") {
       // mock はマウスで手を動かすため，画面のタップで進めると手を動かしただけで進んでしまう
       return createGoggleOffScene({ next, ...hand, allowTap: inputKind === "device" });

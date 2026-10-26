@@ -1,7 +1,7 @@
 // 手で押すボタンの押した判定（Issue #145）．かざし続けたら押す・離れたら数え直す・押せるようになるまで待つ・壊れた値を確かめる
 
 import { describe, expect, it } from "vitest";
-import type { HandState, Quat } from "../../core/types";
+import type { HandState, Quat, Vec3 } from "../../core/types";
 import {
   advanceHandButtonPress,
   DEFAULT_HAND_BUTTON_PRESS_CONFIG,
@@ -10,6 +10,7 @@ import {
   handButtonCenter,
   handButtonProgress,
   handPressPoint,
+  handSightPoint,
   INITIAL_HAND_BUTTON_PRESS,
   isAnyHandOverButton,
   isHandButtonArmed,
@@ -130,6 +131,74 @@ const PALM_IN = { x: 0, y: 0, z: -0.5 };
 const TIP_IN = { x: 0, y: 0, z: -0.5 };
 const FAR = { x: 0, y: 0.3, z: -0.5 };
 const NON_FINITE = [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY];
+
+describe("isHandOverButton（目から見た向きで判定する）", () => {
+  const center = { x: 0, y: 0, z: -0.5 };
+
+  it("ボタンと重なって見えれば，奥行きが違っても入っている", () => {
+    // 手の形はボタン（0.5 m）より奥の固定の奥行き（約 1.2 m）に描くため，見た目で重なっていれば押せるようにする
+    for (const z of [-0.3, -1.2]) {
+      expect(isHandOverButton(IDENTITY, hand({ position: { x: 0, y: 0, z } }), center, 0.12)).toBe(
+        true,
+      );
+    }
+  });
+
+  it("奥の点は，ボタンの面で見たずれで比べる", () => {
+    // 1.2 m 先で横に 0.24 m ずれた点は，0.5 m 先の面では 0.1 m のずれ
+    const near = hand({ position: { x: 0.24, y: 0, z: -1.2 } });
+    // 0.36 m のずれは 0.5 m 先の面で 0.15 m（範囲外）
+    const far = hand({ position: { x: 0.36, y: 0, z: -1.2 } });
+    expect(isHandOverButton(IDENTITY, near, center, 0.12)).toBe(true);
+    expect(isHandOverButton(IDENTITY, far, center, 0.12)).toBe(false);
+  });
+
+  it.each([
+    ["目の後ろ", { x: 0, y: 0, z: 0.5 }],
+    ["目の位置", { x: 0, y: 0, z: 0 }],
+    ["目の真横", { x: 0.5, y: 0, z: 0 }],
+  ])("%sの点は入っていない", (_, position) => {
+    expect(isHandOverButton(IDENTITY, hand({ position }), center, 0.12)).toBe(false);
+  });
+});
+
+describe("handSightPoint", () => {
+  const OUT = { x: 0, y: 0.3, z: -0.5 };
+  /** 人差し指の先（番号 8）だけ tip，他は OUT に置いた 21 点 */
+  const landmarksWithTip = (tip: Vec3): Vec3[] =>
+    Array.from({ length: 21 }, (_, i) => (i === 8 ? tip : OUT));
+
+  it("描いた手の形の人差し指の先があれば，indexTip より優先する", () => {
+    const drawn = { x: 0, y: 0, z: -1.2 };
+    const h = hand({ position: OUT, indexTip: OUT, landmarks: landmarksWithTip(drawn) });
+    expect(handSightPoint(h)).toEqual(drawn);
+    expect(isHandOverButton(IDENTITY, h, { x: 0, y: 0, z: -0.5 }, 0.12)).toBe(true);
+  });
+
+  it("手の形が無ければ handPressPoint と同じ", () => {
+    const tip = { x: 0, y: 0, z: -0.5 };
+    expect(handSightPoint(hand({ position: OUT, indexTip: tip }))).toEqual(tip);
+    expect(handSightPoint(hand({ position: OUT }))).toEqual(OUT);
+  });
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+    "手の形の指先に %s を含む時は handPressPoint を使う",
+    (v) => {
+      const tip = { x: 0, y: 0, z: -0.5 };
+      const h = hand({
+        position: OUT,
+        indexTip: tip,
+        landmarks: landmarksWithTip({ x: v, y: 0, z: -1 }),
+      });
+      expect(handSightPoint(h)).toEqual(tip);
+    },
+  );
+
+  it("点が足りない手の形は handPressPoint を使う", () => {
+    const tip = { x: 0, y: 0, z: -0.5 };
+    expect(handSightPoint(hand({ position: OUT, indexTip: tip, landmarks: [OUT] }))).toEqual(tip);
+  });
+});
 
 describe("handPressPoint", () => {
   it("人差し指の先があればそれを判定点にする", () => {

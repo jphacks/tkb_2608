@@ -29,8 +29,8 @@ export interface StartGateConfig {
   /** ボタンの中心（rig の座標．ヨー角 0 の時）．正面 0.5 m，目の高さ */
   readonly buttonOffset: Vec3;
   /**
-   * 手がボタンに触れているとみなす範囲（m）．判定点（handSightPoint）をボタンと同じ目からの距離に置き直した点から，
-   * ボタンの中心までの距離の上限
+   * 手がボタンに触れているとみなす範囲（m）．目から判定点（handSightPoint）への線が，ボタンの中心を通り視線に垂直な面と
+   * 交わる点から，ボタンの中心までの距離の上限
    */
   readonly handRadius: number;
   readonly handHoldSeconds: number;
@@ -144,7 +144,8 @@ export function handSightPoint(hand: HandState): Vec3 {
 
 /**
  * 手（頭の座標系）の判定点（handSightPoint）がボタンの範囲に入っているか．
- * 目から見た向きで判定する（判定点をボタンと同じ目からの距離に置き直してから，ボタンの中心との距離を比べる）．
+ * 目から見た向きで判定する（目から判定点への線がボタンの面（中心を通り，目からの向きに垂直）と交わる点と，
+ * ボタンの中心との距離を比べる．ボタンと同じ面にある点はそのまま比べるのと同じ）．
  * 手の形はボタンより奥の固定の奥行きに描き，指先の奥行きの見積もりも揺れるため，3 次元の距離で比べると
  * 指先がボタンに重なって見えていても押せないことがある
  */
@@ -156,14 +157,15 @@ export function isHandOnButton(
 ): boolean {
   if (!hand.tracked) return false;
   const p = rotateVec(head, handSightPoint(hand));
-  const len = Math.hypot(p.x, p.y, p.z);
-  const centerLen = Math.hypot(center.x, center.y, center.z);
-  if (!(len > 0) || !Number.isFinite(len) || !(centerLen > 0)) return false;
-  const k = centerLen / len;
+  const along = p.x * center.x + p.y * center.y + p.z * center.z;
+  // 目より後ろ・真横の点はボタンの面と交わらない
+  if (!(along > 0)) return false;
+  const k = (center.x * center.x + center.y * center.y + center.z * center.z) / along;
   const dx = p.x * k - center.x;
   const dy = p.y * k - center.y;
   const dz = p.z * k - center.z;
-  return dx * dx + dy * dy + dz * dz <= config.handRadius * config.handRadius;
+  const d2 = dx * dx + dy * dy + dz * dz;
+  return Number.isFinite(d2) && d2 <= config.handRadius * config.handRadius;
 }
 
 /** 視線がボタンを捉えているか */
