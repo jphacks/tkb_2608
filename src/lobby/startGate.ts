@@ -5,7 +5,8 @@
 //   （カメラが使えない時は開始画面で止めるため，ロビーに来る時は手を認識できる．startPolicy.ts）
 // - "auto"（手が無かった頃の方式．残しておく）: ゴーグルを付ける時間として autoStartSeconds たったら自動で始める
 // - 手（startMode が "hand" の時）: input/ の PlayerInput.hands で，tracked な手の人差し指の先（指先が無い入力では
-//   手のひらの中心）がボタンの範囲に入った状態が handHoldSeconds 続いたら開始
+//   手のひらの中心）がボタンの範囲に入った状態が handHoldSeconds 続いたら開始．範囲は目から見た向きで判定する
+//   （見た目どおり，指先がボタンに重なって見えれば押せる．isHandOnButton）
 // - 注視（デバッグ用．本実装は input/ の PlayerInput.hands）: 視線がボタンを捉えた状態が
 //   gazeHoldSeconds 続いたら開始．装着中に誤って始まらないよう，
 //   端末が横向きでほぼ水平（ゴーグルに入れて前を向いた姿勢）の時だけ数える
@@ -27,7 +28,10 @@ export interface StartGateConfig {
   readonly autoStartSeconds: number;
   /** ボタンの中心（rig の座標．ヨー角 0 の時）．正面 0.5 m，目の高さ */
   readonly buttonOffset: Vec3;
-  /** 手がボタンに触れているとみなす，判定点（人差し指の先．無ければ手のひらの中心）からボタンの中心までの距離の上限（m） */
+  /**
+   * 手がボタンに触れているとみなす範囲（m）．判定点（handSightPoint）をボタンと同じ目からの距離に置き直した点から，
+   * ボタンの中心までの距離の上限
+   */
   readonly handRadius: number;
   readonly handHoldSeconds: number;
   /** 注視しているとみなす，視線とボタンの方向のなす角の上限（rad） */
@@ -123,7 +127,27 @@ export function handPressPoint(hand: HandState): Vec3 {
     : hand.position;
 }
 
-/** 手（頭の座標系）の判定点（handPressPoint）がボタンの範囲に入っているか */
+/** 描いた手の形（21 点）の人差し指の先の番号（MediaPipe の HandLandmarker と同じ） */
+const INDEX_TIP_LANDMARK = 8;
+
+/**
+ * 見た目で重ねる判定点（頭の座標系）．描いた手の形（landmarks）の人差し指の先があればそれを，
+ * 無い・値が有限でない時は handPressPoint を使う．
+ * 手の形は固定の奥行きに描き，indexTip は見積もった奥行きに置くため，見えている指先の向きには landmarks の方が合う
+ */
+export function handSightPoint(hand: HandState): Vec3 {
+  const t = hand.landmarks?.[INDEX_TIP_LANDMARK];
+  return t !== undefined && Number.isFinite(t.x) && Number.isFinite(t.y) && Number.isFinite(t.z)
+    ? t
+    : handPressPoint(hand);
+}
+
+/**
+ * 手（頭の座標系）の判定点（handSightPoint）がボタンの範囲に入っているか．
+ * 目から見た向きで判定する（判定点をボタンと同じ目からの距離に置き直してから，ボタンの中心との距離を比べる）．
+ * 手の形はボタンより奥の固定の奥行きに描き，指先の奥行きの見積もりも揺れるため，3 次元の距離で比べると
+ * 指先がボタンに重なって見えていても押せないことがある
+ */
 export function isHandOnButton(
   head: Quat,
   hand: HandState,
@@ -131,10 +155,14 @@ export function isHandOnButton(
   config: StartGateConfig = DEFAULT_START_GATE_CONFIG,
 ): boolean {
   if (!hand.tracked) return false;
-  const p = rotateVec(head, handPressPoint(hand));
-  const dx = p.x - center.x;
-  const dy = p.y - center.y;
-  const dz = p.z - center.z;
+  const p = rotateVec(head, handSightPoint(hand));
+  const len = Math.hypot(p.x, p.y, p.z);
+  const centerLen = Math.hypot(center.x, center.y, center.z);
+  if (!(len > 0) || !Number.isFinite(len) || !(centerLen > 0)) return false;
+  const k = centerLen / len;
+  const dx = p.x * k - center.x;
+  const dy = p.y * k - center.y;
+  const dz = p.z * k - center.z;
   return dx * dx + dy * dy + dz * dz <= config.handRadius * config.handRadius;
 }
 

@@ -208,7 +208,8 @@ export function startApp(): void {
       }),
     lobby: () =>
       createLobbyScene({
-        createHandMarkers,
+        // 開始ボタン・見え方の調整のボタンを人差し指の先で押すので，指先に目立つ印を出す
+        createHandMarkers: () => createHandMarkers({ highlightIndexTip: true }),
         debug,
         // 準備の合図（3・2・1）の短い音
         audioContext,
